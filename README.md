@@ -115,7 +115,7 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 - Auto-run with depth limit
 - BloodHound integration
 - Evidence tracking with timestamps
-- Color-coded CLI output
+- Colour-coded CLI output
 
 ---
 

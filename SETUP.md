@@ -553,7 +553,7 @@ adpack run discovery --target <dc_ip>
 
 ## Security Considerations
 
-- Only use on authorized targets
+- Only use on authorised targets
 - Protect tool binaries with appropriate permissions
 - Store creds securely
 - Clean up after engagements: `adpack reset state`

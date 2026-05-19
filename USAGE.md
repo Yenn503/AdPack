@@ -562,7 +562,7 @@ adpack run lateral --target 10.0.0.6
 
 Uses techniques from Nightmare Eclipse leaks. Nation-state level techniques. Helps orgs:
 
-1. **Test defenses against APT-level attacks**
+1. **Test defences against APT-level attacks**
 2. **Find blind spots in EDR/AV**
 3. **Check if security controls work**
 4. **Build detection for advanced attacks**
@@ -574,7 +574,7 @@ Uses techniques from Nightmare Eclipse leaks. Nation-state level techniques. Hel
 - Validating security investments against real-world threats
 
 **Responsible use:**
-- Only on authorized targets with explicit permission
+- Only on authorised targets with explicit permission
 - Document all techniques used for client reporting
 - Help client develop detection capabilities
 - Follow responsible disclosure for any new vulnerabilities found
@@ -702,7 +702,7 @@ netexec smb 10.0.0.5 -u user -p password --shares
 
 1. **Start with Discovery**: Always run discovery before other phases
 2. **Validate Early**: Test creds immediately after acquisition
-3. **Use Appropriate Evasion**: Match profile to target defenses
+3. **Use Appropriate Evasion**: Match profile to target defences
 4. **Check State Frequently**: Run `adpack status` to track progress
 5. **Save Evidence**: Enable `save_raw_output` in config
 6. **Test in Labs**: Use VulnAD/GOAD before production engagements
@@ -710,7 +710,7 @@ netexec smb 10.0.0.5 -u user -p password --shares
 
 ## Security Considerations
 
-- Only use on authorized targets
+- Only use on authorised targets
 - Creds stored in plaintext in SQLite
 - Protect state database with appropriate permissions
 - Clean up after engagements: `adpack reset state`
@@ -728,8 +728,8 @@ Nightmare Eclipse techniques mirror real adversary tradecraft. Use to:
 
 **Do not use to:**
 - Cause harm or damage systems
-- Access unauthorized systems
-- Exfiltrate sensitive data without authorization
+- Access unauthorised systems
+- Exfiltrate sensitive data without authorisation
 - Demonstrate capabilities for malicious purposes
 
-Red teams exist to make organizations more secure. These tools should strengthen defenses, not weaken them.
+Red teams exist to make organisations more secure. These tools should strengthen defences, not weaken them.
