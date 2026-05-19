@@ -419,7 +419,7 @@ ls -lh ~/tools/RTCore64.sys
 ### Test adpack
 
 ```bash
-# Initialize database
+# Initialise database
 adpack status
 
 # Check available profiles
