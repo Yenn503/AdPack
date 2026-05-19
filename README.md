@@ -39,7 +39,7 @@ adpack runs AD attacks through 9 phases. Tracks hosts, users, creds, and session
 ### ⚪ Capabilities
 
 - **Smart Phase Tracking** — Detects missing data and suggests what to run next
-- **10 Evasion Profiles** — Includes Nightmare Eclipse zero-days
+- **11 Evasion Profiles** — Includes Nightmare Eclipse zero-days
 - **Multi-Protocol Validation** — Tests creds across SMB, LDAP, WinRM, RDP
 - **Persistent State** — SQLite survives crashes and resumes sessions
 - **One-Command Setup** — `./setup.sh` installs everything
