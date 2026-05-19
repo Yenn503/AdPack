@@ -15,6 +15,9 @@
   <a href="https://github.com/Yenn503/AdPack/releases">
     <img src="https://img.shields.io/badge/Version-0.1.0-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
   </a>
+  <a href="https://app.devin.ai/org/yenn503/wiki/Yenn503/AdPack?branch=main">
+    <img src="https://img.shields.io/badge/Wiki-white?style=for-the-badge&logo=readthedocs&logoColor=black" alt="Devin Wiki">
+  </a>
 </p>
 
 <p align="center">
