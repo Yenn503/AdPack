@@ -39,7 +39,7 @@ adpack runs AD attacks through 9 phases. Tracks hosts, users, creds, and session
 ### ⚪ Capabilities
 
 - **Smart Phase Tracking** — Detects missing data and suggests what to run next
-- **9 Evasion Profiles** — Includes Nightmare Eclipse zero-days
+- **10 Evasion Profiles** — Includes Nightmare Eclipse zero-days
 - **Multi-Protocol Validation** — Tests creds across SMB, LDAP, WinRM, RDP
 - **Persistent State** — SQLite survives crashes and resumes sessions
 - **One-Command Setup** — `./setup.sh` installs everything
@@ -106,7 +106,7 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 - Detects admin rights and checks if lateral movement works
 
 ### Evasion 
-- 9 profiles from basic to zero-day
+- 11 profiles from basic to zero-day
 - Nightmare Eclipse exploits (BlueHammer, UnDefend)
 - BYOVD kernel access and EDR freezing
 - In-memory execution via Donut and BOF
@@ -161,18 +161,21 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 
 ## ⚪ Evasion Profiles
 
-9 profiles from basic to zero-day:
+11 profiles from basic to zero-day:
 
 | Profile | Technique | Detection Risk | Use Case |
 |---------|-----------|:--------------:|----------|
 | `minimal` | Donut + go-mimikatz | 🟡 Medium | Lab environments |
 | `standard` | Donut + go-mimikatz (remote) | 🟡 Medium | Enterprise with Defender |
 | `aggressive` | BOF + nanodump | 🟢 Low | C2 integration |
+| `bof` | BOF injection (standalone) | 🟢 Low | In-memory execution |
 | `fork` | nanodump --fork | 🟢 Low | LSASS process cloning |
 | `byovd` | RTCore64.sys | 🟢 Very Low | Kernel-level PPL bypass |
 | `coldwer` | EDR-Freeze | 🟢 Very Low | EDR blind spot |
 | `undefend` | UnDefend | 🟢 Low | Defender termination |
 | `bluehammer` | CVE-2026-33825 | 🟢 Very Low | Unprivileged SAM dump |
+| `phantomkiller` | BootRepair.sys BYOVD | 🟢 Very Low | PPL-protected EDR kill |
+| `miniplasma` | Cloud Filter EoP (CVE-2020-17103) | 🟢 Very Low | SYSTEM shell + LSASS |
 
 ### ⚫ Nightmare Eclipse Integration
 
@@ -187,13 +190,21 @@ Kills Defender via service dependency exploit. Bypasses tamper protection.
 #### ⚫ ColdWer
 WerFaultSecure PPL bypass. Freezes EDR processes during dump. EDR can't see it.
 
+#### ⚪ PhantomKiller
+Lenovo BootRepair.sys BYOVD. IOCTL 0x222014 terminates any process, including PPL-protected EDR. Signed driver, zero VT detections.
+
+#### ⚫ MiniPlasma
+Cloud Filter API race (CVE-2020-17103). Spawns SYSTEM shell via WER task + named pipe. Used as EoP gateway for LSASS access.
+
 **Example:**
 
 ```bash
-adpack run credential_acq -e bluehammer -t 10.0.0.5  # ⚡ Exploit Defender RPC
-adpack run credential_acq -e coldwer -t 10.0.0.5     # ⚫ Freeze EDR + dump LSASS
-adpack validate                                       # ✅ Validate creds
-adpack run lateral -t 10.0.0.6                       # ⚪ Lateral movement
+adpack run credential_acq -e bluehammer -t 10.0.0.5     # ⚡ Exploit Defender RPC
+adpack run credential_acq -e coldwer -t 10.0.0.5        # ⚫ Freeze EDR + dump LSASS
+adpack run credential_acq -e phantomkiller -t 10.0.0.5  # ⚪ BYOVD EDR kill + LSASS
+adpack run credential_acq -e miniplasma -t 10.0.0.5     # ⚫ SYSTEM shell + LSASS
+adpack validate                                          # ✅ Validate creds
+adpack run lateral -t 10.0.0.6                          # ⚪ Lateral movement
 ```
 
 ---

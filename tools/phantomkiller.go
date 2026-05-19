@@ -91,10 +91,10 @@ func (p phantomKillerTool) DeployViaSMB(ctx context.Context, target NetExecTarge
 	return cmdResultToExecResult(cr), nil
 }
 
-func (p phantomKillerTool) ExecRemote(ctx context.Context, target NetExecTarget, remotePath string, mode PhantomKillerMode) (*ExecutionResult, error) {
+func (p phantomKillerTool) ExecRemote(ctx context.Context, target NetExecTarget, remotePath string, mode PhantomKillerMode, pid int) (*ExecutionResult, error) {
 	cmd := remotePath
-	if mode == PhantomKillerModeKill {
-		cmd += " <pid>"
+	if mode == PhantomKillerModeKill && pid > 0 {
+		cmd += fmt.Sprintf(" %d", pid)
 	}
 	cr, err := NetExec.Run(ctx, target, "-x", []string{fmt.Sprintf(`start /B %s`, cmd)})
 	if err != nil {

