@@ -1,0 +1,57 @@
+# Binaries
+adpack
+adpack.exe
+adpack_linux
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+bin/
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# Dump files
+*.dmp
+*.dump
+
+# Output directories
+/tmp/
+/output/
+*.log
+
+# Configuration (keep example)
+config.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Go
+vendor/
+
+# Docs (not needed)
+docs/adr/
+
+# Tools (don't commit binaries)
+tools/*.exe
+tools/*.dll
+tools/*.sys
+
+# Temporary files
+*.tmp
+*.temp 

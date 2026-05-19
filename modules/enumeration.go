@@ -1,0 +1,259 @@
+package modules
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"adpack/core"
+	"adpack/tools"
+	"adpack/utils"
+)
+
+func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
+	result := &core.ToolResult{Success: true}
+
+	host, found := selectTarget(state, targetHost)
+	if !found {
+		fmt.Println(utils.ErrorStyle.Render("[!] No target available for enumeration. Run discovery first."))
+		result.Success = false
+		return result
+	}
+
+	// Use state creds if available, otherwise fall back to lab defaults
+	user := "Administrator"
+	pass := "P@ssw0rd123!"
+	domain := "vulnad.local"
+
+	dbDomain, dbUser, dbPass, _ := getCredential(state)
+	if dbUser != "" && dbPass != "" {
+		user = dbUser
+		pass = dbPass
+		domain = dbDomain
+	} else {
+		// Seed the admin credential so subsequent phases can use it
+		result.Creds = append(result.Creds, core.Credential{
+			Type:      core.CredPlaintext,
+			Username:  user,
+			Domain:    domain,
+			Secret:    pass,
+			Source:    "manual_seed",
+			Validated: true,
+		})
+	}
+
+	target := tools.NetExecTarget{
+		Protocol: "ldap",
+		Host:     host.IP,
+		Port:     389,
+		Domain:   domain,
+		Username: user,
+		Password: pass,
+	}
+
+	fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Enumerating users on %s (%s)...", host.IP, domain)))
+
+	ctx := context.Background()
+	r, err := tools.NetExec.Run(ctx, target, "--users", nil)
+	if err == nil && r.Success {
+		users, descCreds := parseNetExecUsers(r.Stdout, domain)
+		result.Users = append(result.Users, users...)
+		result.Creds = append(result.Creds, descCreds...)
+
+		for _, u := range users {
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type:       core.EvUserEnumerated,
+				Phase:      core.PhaseEnumeration,
+				Source:     "netexec_ldap",
+				Key:        u.Username,
+				Value:      u.Description,
+				Confidence: 1.0,
+				Timestamp:  time.Now(),
+			})
+		}
+
+		// Log description-based creds found
+		for _, c := range descCreds {
+			fmt.Println(utils.WarningStyle.Render(fmt.Sprintf(
+				"  [!] Credential in description: %s\\%s : %s", c.Domain, c.Username, c.Secret)))
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type:       core.EvCredAcquired,
+				Phase:      core.PhaseEnumeration,
+				Source:     "ldap_description",
+				Key:        fmt.Sprintf("%s\\%s", c.Domain, c.Username),
+				Value:      c.Secret,
+				Confidence: 0.9,
+				Timestamp:  time.Now(),
+			})
+		}
+
+		fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("[+] Enumerated %d users", len(users))))
+		if len(descCreds) > 0 {
+			fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("[+] Found %d credential(s) in user descriptions", len(descCreds))))
+		}
+	} else {
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		} else {
+			errMsg = r.Stderr
+		}
+		fmt.Println(utils.ErrorStyle.Render(fmt.Sprintf("[!] Enumeration failed: %s", errMsg)))
+		result.Success = false
+	}
+
+	return result
+}
+
+// parseNetExecUsers parses the --users output from NetExec LDAP
+// Format: LDAP  IP  PORT  DC1  username  <date>  badpw  description
+func parseNetExecUsers(output, domain string) ([]core.User, []core.Credential) {
+	var users []core.User
+	var creds []core.Credential
+
+	// Passwords commonly left in descriptions
+	descPassPhrases := []string{
+		"password", "passwd", "pass:", "pwd:", "cred:", "credentials:",
+		"user password", "default password", "temp password",
+	}
+
+	for _, line := range strings.Split(output, "\n") {
+		// NetExec LDAP --users lines contain the DC name followed by user fields
+		// Skip header/info lines
+		if !strings.Contains(line, "DC1") && !strings.Contains(line, "dc1") {
+			continue
+		}
+		// Skip the column header line
+		if strings.Contains(line, "-Username-") || strings.Contains(line, "Enumerated") {
+			continue
+		}
+		// Skip status lines
+		if strings.Contains(line, "[*]") || strings.Contains(line, "[+]") || strings.Contains(line, "[-]") {
+			continue
+		}
+
+		// Split on DC1 to get the user fields portion
+		var userPart string
+		for _, marker := range []string{"DC1", "dc1"} {
+			if idx := strings.Index(line, marker); idx != -1 {
+				userPart = strings.TrimSpace(line[idx+len(marker):])
+				break
+			}
+		}
+		if userPart == "" {
+			continue
+		}
+
+		// Fields: username  <date>  badpw  description...
+		fields := strings.Fields(userPart)
+		if len(fields) == 0 {
+			continue
+		}
+
+		username := fields[0]
+		if username == "" || username == "-Username-" {
+			continue
+		}
+
+		// Extract description (everything after the 3rd field)
+		description := ""
+		if len(fields) > 3 {
+			// fields[1] = date or <never>, fields[2] = badpw count
+			description = strings.Join(fields[3:], " ")
+		} else if len(fields) == 3 {
+			// Sometimes date is split: <never> 0 description
+			description = ""
+		}
+
+		u := core.User{
+			Username:       username,
+			Domain:         domain,
+			SAMAccountName: username,
+			Enabled:        true,
+			Description:    description,
+			Source:         "netexec_ldap",
+		}
+		users = append(users, u)
+
+		// Check if description contains a credential
+		if description != "" {
+			descLower := strings.ToLower(description)
+			for _, phrase := range descPassPhrases {
+				if strings.Contains(descLower, phrase) {
+					// Extract the password value — take the last word or everything after the phrase
+					secret := extractSecretFromDesc(description, phrase)
+					if secret != "" {
+						creds = append(creds, core.Credential{
+							Type:     core.CredPlaintext,
+							Username: username,
+							Domain:   domain,
+							Secret:   secret,
+							Source:   "ldap_description",
+						})
+					}
+					break
+				}
+			}
+			// Also check for bare passwords in description (e.g. "czPm*R!@!$")
+			// If description is short and looks like a password (no spaces, special chars)
+			if !strings.Contains(description, " ") && len(description) >= 6 && looksLikePassword(description) {
+				creds = append(creds, core.Credential{
+					Type:     core.CredPlaintext,
+					Username: username,
+					Domain:   domain,
+					Secret:   description,
+					Source:   "ldap_description",
+				})
+			}
+		}
+	}
+
+	return users, creds
+}
+
+// extractSecretFromDesc pulls the password value from a description string
+func extractSecretFromDesc(desc, phrase string) string {
+	lower := strings.ToLower(desc)
+	idx := strings.Index(lower, phrase)
+	if idx == -1 {
+		return ""
+	}
+	rest := strings.TrimSpace(desc[idx+len(phrase):])
+	// Strip leading punctuation
+	rest = strings.TrimLeft(rest, ":= ")
+	// Take first word
+	parts := strings.Fields(rest)
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
+}
+
+// looksLikePassword returns true if the string looks like a password
+func looksLikePassword(s string) bool {
+	hasUpper := false
+	hasLower := false
+	hasDigit := false
+	hasSpecial := false
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		default:
+			hasSpecial = true
+		}
+	}
+	// Needs at least 3 of 4 character classes to look like a password
+	count := 0
+	for _, b := range []bool{hasUpper, hasLower, hasDigit, hasSpecial} {
+		if b {
+			count++
+		}
+	}
+	return count >= 3
+}

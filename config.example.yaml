@@ -1,0 +1,62 @@
+# adpack configuration file
+# Copy this to config.yaml and customize as needed
+
+# Database path for state persistence
+# Default: ~/.adpack/state.db
+db_path: ""
+
+# Target configuration
+target:
+  # Default domain for AD operations
+  domain: "vulnad.local"
+  
+  # Default credentials (optional, can be provided via CLI)
+  username: ""
+  password: ""
+  
+  # Default DC IP (optional, will be discovered if not set)
+  dc_ip: ""
+
+# Tool paths (optional, will search PATH if not specified)
+tools:
+  netexec: "netexec"
+  donut: "donut"
+  nanodump: "nanodump.exe"
+  gomimikatz: "go-mimikatz"
+  pypykatz: "pypykatz"
+  scarecrow: "ScareCrow"
+  undefend: "UnDefend.exe"
+  bluehammer: "FunnyApp.exe"
+
+# Evasion settings
+evasion:
+  # Default evasion profile
+  # Options: minimal, standard, aggressive, bof, fork, byovd, coldwer, undefend, bluehammer
+  default_profile: "standard"
+  
+  # Timeout for remote command execution (seconds)
+  command_timeout: 120
+  
+  # Retry failed operations
+  retry_on_failure: false
+  max_retries: 3
+
+# Output settings
+output:
+  # Enable verbose logging
+  verbose: false
+  
+  # Save raw tool output to files
+  save_raw_output: true
+  raw_output_dir: "./output"
+  
+  # JSON output for automation
+  json_output: false
+
+# Phase settings
+phases:
+  # Skip phases that are already complete
+  skip_completed: true
+  
+  # Auto-advance to next phase on success
+  auto_advance: false
