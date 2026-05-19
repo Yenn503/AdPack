@@ -32,8 +32,8 @@ Installs deps, builds tools, configures environment.
 
 ```bash
 # Install Go 1.25+
-wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.25.10.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.25.10.linux-amd64.tar.gz
 export PATH=$PATH:/usr/local/go/bin
 
 # Install NetExec

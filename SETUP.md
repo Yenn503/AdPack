@@ -68,8 +68,8 @@ Manual install if setup script fails.
 
 ```bash
 # Download and install Go
-wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.25.10.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.25.10.linux-amd64.tar.gz
 
 # Add to PATH
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc

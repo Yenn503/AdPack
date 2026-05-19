@@ -127,12 +127,12 @@ install_go() {
         fi
     fi
     
-    info "Installing Go 1.25.0..."
+    info "Installing Go 1.25.10..."
     cd /tmp
-    wget -q https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
+    wget -q https://go.dev/dl/go1.25.10.linux-amd64.tar.gz
     sudo rm -rf /usr/local/go
-    sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
-    rm go1.25.0.linux-amd64.tar.gz
+    sudo tar -C /usr/local -xzf go1.25.10.linux-amd64.tar.gz
+    rm go1.25.10.linux-amd64.tar.gz
     
     # Add to PATH if not already there
     if ! grep -q "/usr/local/go/bin" "$HOME/.bashrc"; then
@@ -143,7 +143,7 @@ install_go() {
     export PATH=$PATH:/usr/local/go/bin
     export PATH=$PATH:$HOME/go/bin
     
-    success "Go 1.25.0 installed"
+    success "Go 1.25.10 installed"
 }
 
 # Install pipx
