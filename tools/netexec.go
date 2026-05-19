@@ -97,13 +97,6 @@ func (n nxcTool) EnumShares(ctx context.Context, target NetExecTarget) ([]string
 	return shares, nil
 }
 
-func (n nxcTool) Sessions(ctx context.Context, target NetExecTarget) ([]core.Session, error) {
-	_, err := n.Run(ctx, target, "--sessions", nil)
-	if err != nil { return nil, err }
-	var sessions []core.Session
-	return sessions, nil
-}
-
 func (n nxcTool) PutFile(ctx context.Context, target NetExecTarget, localPath, remoteDir string) (utils.CmdResult, error) {
 	return n.Run(ctx, target, "--put-file", []string{localPath, remoteDir})
 }

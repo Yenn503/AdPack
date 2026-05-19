@@ -6,10 +6,11 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
 	"adpack/config"
 	"adpack/core"
+	"adpack/engine"
 	"adpack/modules"
 	"adpack/storage"
 	"adpack/utils"
@@ -20,6 +21,7 @@ var (
 	dbPath  string
 	Cfg     *config.Config
 	DB      *storage.DB
+	Rt      *engine.Runtime
 )
 
 var version = "v0.1.0"
@@ -78,6 +80,7 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 		if err != nil {
 			return fmt.Errorf("open db: %w", err)
 		}
+		Rt = engine.NewRuntime(DB, DB)
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {

@@ -41,12 +41,13 @@ func (n nxcTool) EnumUsers(ctx context.Context, target string) ([]core.User, err
 ```
 adpack/
 ├── cmd/           # CLI commands (one file per command)
-├── core/          # Domain models and business logic
+├── core/          # Domain models, interfaces (EventBus, DAGStore, EventStore)
+├── engine/        # Runtime container, WorkerPool, orchestration wiring
 ├── modules/       # Attack phase implementations
-├── tools/         # External tool wrappers
-├── storage/       # Database layer
-├── utils/         # Shared utilities
-├── tui/           # Interactive interface
+├── tools/         # External tool wrappers + Registry + ExecutorFactory
+├── storage/       # Database layer (SQLite, migrations, DAG/event persistence)
+├── utils/         # Shared utilities (command runner, theme, config)
+├── tui/           # Interactive bubbletea dashboard
 └── config/        # Configuration management
 ```
 
@@ -59,36 +60,38 @@ adpack/
 const PhaseNewPhase Phase = "new_phase"
 ```
 
-2. Create module in `modules/newphase.go`:
-```go
-func RunNewPhase(state *core.ADState, target string) *core.ToolResult {
-    // Implementation
-}
-```
+2. Wire into `core/state.go` dependency map and phase ordering
 
-3. Add command in `cmd/run.go`
+3. Create module in `modules/newphase.go` using tool wrappers
 
-4. Update engine logic in `core/engine.go`
+4. Add CLI command in `cmd/run.go`
 
 ### New Tool Wrapper
 
-1. Create `tools/newtool.go`:
+1. Create `tools/newtool.go` implementing the `Tool` interface:
 ```go
 type newTool struct{}
-var NewTool = newTool{}
 
 func (newTool) Name() string { return "newtool" }
 func (newTool) Available() bool { return utils.ToolAvailable("newtool") }
+func (newTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
+    r := utils.RunCommandCtx(ctx, "newtool", req.Args)
+    return cmdResultToExecResult(r, ""), nil
+}
+func (newTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan StreamOutput, error) {
+    return RunStreamBlocking(ctx, req, newTool{})
+}
+func (newTool) Validate(ctx context.Context) error { return nil }
+func (newTool) Capabilities() []Capability { return nil }
 ```
 
-2. Add context-aware methods:
+2. Register in `tools/bootstrap.go`:
 ```go
-func (n newTool) Run(ctx context.Context, args []string) (utils.CmdResult, error) {
-    return utils.RunCommandCtx(ctx, "newtool", args)
+func RegisterBuiltinTools(r *Registry) {
+    // ...
+    r.Register("newtool", newTool{})
 }
 ```
-
-3. Integrate into relevant module
 
 ### New Evasion Profile
 
@@ -104,9 +107,9 @@ func (n newTool) Run(ctx context.Context, args []string) (utils.CmdResult, error
 }
 ```
 
-2. Implement execution function
+2. Implement execution function referencing tool wrappers by name
 
-3. Add to switch statement in `RunCredentialAcq`
+3. Register new Tool in `tools/bootstrap.go` if it uses a new binary
 
 ## Testing
 

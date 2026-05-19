@@ -134,6 +134,39 @@ func migrate(db *sqlx.DB) error {
 		vuln TEXT DEFAULT '',
 		enrollee TEXT DEFAULT ''
 	);
+	CREATE TABLE IF NOT EXISTS events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		campaign_id TEXT NOT NULL DEFAULT '',
+		trace_id TEXT NOT NULL DEFAULT '',
+		parent_id TEXT NOT NULL DEFAULT '',
+		type TEXT NOT NULL,
+		class INTEGER NOT NULL DEFAULT 0,
+		source TEXT NOT NULL DEFAULT '',
+		payload TEXT NOT NULL DEFAULT '{}',
+		timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE TABLE IF NOT EXISTS execution_nodes (
+		id TEXT PRIMARY KEY,
+		campaign_id TEXT NOT NULL DEFAULT '',
+		parent_id TEXT NOT NULL DEFAULT '',
+		tool TEXT NOT NULL DEFAULT '',
+		phase TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'pending',
+		input TEXT NOT NULL DEFAULT '{}',
+		output TEXT NOT NULL DEFAULT '{}',
+		attempt INTEGER NOT NULL DEFAULT 0,
+		last_error TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		started_at TEXT NOT NULL DEFAULT (datetime('now')),
+		finished_at TEXT
+	);
+	CREATE TABLE IF NOT EXISTS execution_edges (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		parent_id TEXT NOT NULL,
+		child_id TEXT NOT NULL,
+		FOREIGN KEY(parent_id) REFERENCES execution_nodes(id),
+		FOREIGN KEY(child_id) REFERENCES execution_nodes(id)
+	);
 	CREATE TABLE IF NOT EXISTS bloodhound_meta (
 		id INTEGER PRIMARY KEY CHECK(id=1),
 		collected INTEGER DEFAULT 0,
@@ -156,7 +189,22 @@ func migrate(db *sqlx.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_evidence_phase ON evidence(phase);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_unique ON users(username, domain);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_creds_unique ON credentials(type, username, domain, target);
+		CREATE INDEX IF NOT EXISTS idx_events_campaign ON events(campaign_id);
+		CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+		CREATE INDEX IF NOT EXISTS idx_nodes_campaign ON execution_nodes(campaign_id);
+		CREATE INDEX IF NOT EXISTS idx_nodes_status ON execution_nodes(status);
+		CREATE INDEX IF NOT EXISTS idx_edges_parent ON execution_edges(parent_id);
+		CREATE INDEX IF NOT EXISTS idx_edges_child ON execution_edges(child_id);
 	`)
+
+	for _, m := range []string{
+		`ALTER TABLE execution_nodes ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE execution_nodes ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE execution_nodes ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))`,
+	} {
+		db.Exec(m) // best-effort for existing DBs
+	}
+
 	if err != nil {
 		return fmt.Errorf("indexes: %w", err)
 	}

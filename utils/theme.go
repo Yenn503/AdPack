@@ -1,20 +1,23 @@
 package utils
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 var (
-	// Professional color palette for security tooling
-	ColorPrimary   = lipgloss.Color("#0066CC") // Professional Blue
-	ColorSecondary = lipgloss.Color("#5C6BC0") // Indigo
-	ColorSuccess   = lipgloss.Color("#2E7D32") // Forest Green
-	ColorWarning   = lipgloss.Color("#F57C00") // Amber
-	ColorError     = lipgloss.Color("#C62828") // Deep Red
-	ColorMuted     = lipgloss.Color("#757575") // Gray
-	ColorInfo      = lipgloss.Color("#0288D1") // Light Blue
-	ColorHighlight = lipgloss.Color("#1976D2") // Bright Blue
+	// Monochrome UI chrome
+	ColorPrimary      = lipgloss.Color("#FFFFFF") // Pure white
+	ColorSecondary    = lipgloss.Color("#A0A0A0") // Light gray
+	ColorMuted        = lipgloss.Color("#666666") // Medium gray
+	ColorHighlight    = lipgloss.Color("#E0E0E0") // Near-white
+	ColorTextOnPrimary = lipgloss.Color("#1A1A1A") // Dark text on white bg
+
+	// Semantic event colors (unchanged)
+	ColorSuccess = lipgloss.Color("#2E7D32") // Forest Green
+	ColorWarning = lipgloss.Color("#F57C00") // Amber
+	ColorError   = lipgloss.Color("#C62828") // Deep Red
+	ColorInfo    = lipgloss.Color("#0288D1") // Light Blue
 
 	// Common Styles
-	BaseStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0"))
+	BaseStyle = lipgloss.NewStyle().Foreground(ColorHighlight)
 	
 	TitleStyle = lipgloss.NewStyle().
 		Bold(true).

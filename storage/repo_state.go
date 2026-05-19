@@ -199,12 +199,6 @@ func boolInt(b bool) int {
 	return 0
 }
 
-func joinStrings(s []string) string { return strings.Join(s, ",") }
-func splitCSV(s string) []string {
-	if s == "" { return nil }
-	return strings.Split(s, ",")
-}
-
 func (db *DB) ResetPhase(p core.Phase) error {
 	_, err := db.Exec(`INSERT INTO phase_status(phase,status) VALUES(?,0) ON CONFLICT(phase) DO UPDATE SET status=0`, string(p))
 	return err

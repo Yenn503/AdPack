@@ -2,6 +2,7 @@ package tools
 
 import (
 	"adpack/utils"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,12 +14,42 @@ type sysWhispersTool struct{}
 
 var SysWhispers = sysWhispersTool{}
 
-func (sysWhispersTool) Name() string {
-	return "syswhispers"
+func (sysWhispersTool) Name() string { return "syswhispers" }
+
+func (s sysWhispersTool) Available() bool { return s.pythonScript() != "" }
+
+func (s sysWhispersTool) Validate() error {
+	if !s.Available() {
+		return &ToolError{Tool: "syswhispers", Op: "Validate", Err: fmt.Errorf("not available")}
+	}
+	return nil
 }
 
-func (s sysWhispersTool) Available() bool {
-	return s.pythonScript() != ""
+func (sysWhispersTool) Capabilities() []Capability {
+	return []Capability{CapSyscallGen}
+}
+
+func (s sysWhispersTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
+	ch := make(chan ExecutionEvent, 1)
+	go func() {
+		defer close(ch)
+		result, err := s.Run(ctx, req)
+		if err != nil {
+			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
+			return
+		}
+		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
+	}()
+	return ch, nil
+}
+
+func (s sysWhispersTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
+	if len(req.Args) > 0 && req.Args[0] == "project" {
+		sub := req
+		sub.Args = req.Args[1:]
+		return s.GenerateForProject(ctx, sub)
+	}
+	return s.GenerateStubs(ctx, req)
 }
 
 type SysWhispersConfig struct {
@@ -53,18 +84,15 @@ func DefaultSysWhispersConfig(outputDir string, functions []string) SysWhispersC
 	}
 }
 
-var resolveMethodMap = map[string]string{
-	"hells_gate":    "hells",
-	"halos_gate":    "halos",
-	"tartarus_gate": "tartarus",
-	"freshycalls":   "freshy",
-	"recycledgate":  "recycled",
-	"hw_breakpoint": "hwbp",
-	"static":        "static",
-}
-
-func (s sysWhispersTool) GenerateStubs(cfg SysWhispersConfig) utils.CmdResult {
+func (s sysWhispersTool) GenerateStubs(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
 	script := s.pythonScript()
+	if script == "" {
+		return nil, &ToolError{Tool: "syswhispers", Op: "GenerateStubs", Err: fmt.Errorf("script not found")}
+	}
+	cfg := DefaultSysWhispersConfig(req.WorkingDir, req.Args)
+	if v, ok := req.Env["RESOLVE"]; ok {
+		cfg.Resolve = v
+	}
 	fns := strings.Join(cfg.Functions, ",")
 	args := []string{
 		script,
@@ -74,29 +102,32 @@ func (s sysWhispersTool) GenerateStubs(cfg SysWhispersConfig) utils.CmdResult {
 		"--compiler", cfg.Compiler,
 		"--out-dir", cfg.OutputDir,
 	}
-	return utils.RunCommandTimeout(30000000000, "python3", args)
+	cr := utils.RunCommandCtx(ctx, "python3", args)
+	return cmdResultToExecResult(cr), nil
 }
 
-func (s sysWhispersTool) GenerateForProject(projectDir string, functions []string, resolveMethod string) (string, error) {
+func (s sysWhispersTool) GenerateForProject(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
+	projectDir := req.WorkingDir
+	if projectDir == "" {
+		projectDir = "."
+	}
 	absDir, err := filepath.Abs(projectDir)
 	if err != nil {
-		return "", fmt.Errorf("syswhispers: resolving dir: %w", err)
+		return nil, &ToolError{Tool: "syswhispers", Op: "GenerateForProject", Err: fmt.Errorf("resolving dir: %w", err)}
 	}
 	outDir := filepath.Join(absDir, "syscalls")
 	if err := os.MkdirAll(outDir, 0755); err != nil {
-		return "", fmt.Errorf("syswhispers: creating output dir: %w", err)
+		return nil, &ToolError{Tool: "syswhispers", Op: "GenerateForProject", Err: fmt.Errorf("creating output dir: %w", err)}
 	}
-	cfg := DefaultSysWhispersConfig(outDir, functions)
-	if r, ok := resolveMethodMap[resolveMethod]; ok {
-		cfg.Resolve = r
-	} else if resolveMethod != "" {
-		cfg.Resolve = resolveMethod
+	req.WorkingDir = outDir
+	r, err := s.GenerateStubs(ctx, req)
+	if err != nil {
+		return nil, err
 	}
-	r := s.GenerateStubs(cfg)
 	if !r.Success {
-		return "", fmt.Errorf("syswhispers: generation failed: %s", r.Stderr)
+		return nil, &ToolError{Tool: "syswhispers", Op: "GenerateForProject", Err: fmt.Errorf("generation failed: %s", r.Stderr), ExitCode: r.ExitCode}
 	}
-	return outDir, nil
+	return r, nil
 }
 
 func (sysWhispersTool) pythonScript() string {

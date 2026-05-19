@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/spf13/cobra"
 	"adpack/core"
 	"adpack/modules"
@@ -26,12 +26,8 @@ saves results, and repeats until the chain is complete or a phase fails.
 Use --max to limit the number of phases executed. Use --skip-fail to continue
 past failed phases instead of stopping.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		state, err := DB.LoadState()
-		if err != nil {
-			return fmt.Errorf("load state: %w", err)
-		}
-
-		engine := core.NewEngine(state)
+		var state *core.ADState
+		var err error
 
 		// ── Banner ────────────────────────────────────────────────────────
 		fmt.Println()
@@ -60,7 +56,7 @@ past failed phases instead of stopping.`,
 			if err != nil {
 				return fmt.Errorf("reload state: %w", err)
 			}
-			engine = core.NewEngine(state)
+			engine := core.NewEngine(state)
 
 			rec := engine.Evaluate()
 			if rec.Phase == "" {

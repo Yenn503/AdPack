@@ -2,6 +2,7 @@ package tools
 
 import (
 	"adpack/utils"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,15 +16,26 @@ var ScareCrow = scareCrowTool{}
 func (scareCrowTool) Name() string    { return "scarecrow" }
 func (scareCrowTool) Available() bool { return utils.ToolAvailable("ScareCrow") || utils.ToolAvailable("ScareCrow.exe") }
 
+func (scareCrowTool) Validate() error {
+	if !ScareCrow.Available() {
+		return &ToolError{Tool: "scarecrow", Op: "validate", Err: fmt.Errorf("ScareCrow not found")}
+	}
+	return nil
+}
+
+func (scareCrowTool) Capabilities() []Capability {
+	return []Capability{CapShellcodeGen}
+}
+
 type ScareCrowConfig struct {
-	Input      string // raw shellcode file
-	Output     string // output DLL name
-	LoaderType string // "dll", "exe", "control", "service"
-	Domain     string // for fake cert
-	Signed     bool   // sign with fake cert
-	Delay      int    // execution delay seconds
-	SandboxAmsi bool  // enable sandbox/AMSI evasion
-	Obfuscation string // "none", "base64", "aes"
+	Input       string
+	Output      string
+	LoaderType  string
+	Domain      string
+	Signed      bool
+	Delay       int
+	SandboxAmsi bool
+	Obfuscation string
 }
 
 func DefaultScareCrowConfig(input, output string) ScareCrowConfig {
@@ -38,7 +50,29 @@ func DefaultScareCrowConfig(input, output string) ScareCrowConfig {
 	}
 }
 
-func (s scareCrowTool) GenerateLoader(cfg ScareCrowConfig) utils.CmdResult {
+func (s scareCrowTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
+	cfg := DefaultScareCrowConfig(req.Target, req.WorkingDir)
+	if len(req.Args) > 0 {
+		cfg.LoaderType = req.Args[0]
+	}
+	return s.GenerateLoader(ctx, cfg)
+}
+
+func (s scareCrowTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
+	ch := make(chan ExecutionEvent, 1)
+	go func() {
+		defer close(ch)
+		result, err := s.Run(ctx, req)
+		if err != nil {
+			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
+			return
+		}
+		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
+	}()
+	return ch, nil
+}
+
+func (s scareCrowTool) GenerateLoader(ctx context.Context, cfg ScareCrowConfig) (*ExecutionResult, error) {
 	args := []string{
 		"-I", cfg.Input,
 		"-O", cfg.Output,
@@ -57,28 +91,29 @@ func (s scareCrowTool) GenerateLoader(cfg ScareCrowConfig) utils.CmdResult {
 	if cfg.Obfuscation != "" {
 		args = append(args, "-obfu", cfg.Obfuscation)
 	}
-	return s.run(args...)
-}
-
-func (scareCrowTool) run(args ...string) utils.CmdResult {
-	var r utils.CmdResult
-	if utils.ToolAvailable("ScareCrow") {
-		r = utils.RunCommand("ScareCrow", args...)
-	} else if utils.ToolAvailable("ScareCrow.exe") {
-		r = utils.RunCommand("ScareCrow.exe", args...)
-	} else {
-		return utils.CmdResult{Success: false, Stderr: "ScareCrow not found"}
+	cr := s.run(ctx, args...)
+	if !cr.Success {
+		return cmdResultToExecResult(cr), &ToolError{Tool: "scarecrow", Op: "generate", ExitCode: cr.ExitCode, Err: fmt.Errorf("%s", cr.Stderr)}
 	}
-	return r
+	return cmdResultToExecResult(cr), nil
 }
 
-func (s scareCrowTool) WrapShellcode(inputShellcode string) (string, error) {
+func (scareCrowTool) run(ctx context.Context, args ...string) utils.CmdResult {
+	if utils.ToolAvailable("ScareCrow") {
+		return utils.RunCommandCtx(ctx, "ScareCrow", args)
+	} else if utils.ToolAvailable("ScareCrow.exe") {
+		return utils.RunCommandCtx(ctx, "ScareCrow.exe", args)
+	}
+	return utils.CmdResult{Success: false, Stderr: "ScareCrow not found"}
+}
+
+func (s scareCrowTool) WrapShellcode(ctx context.Context, inputShellcode string) (*ExecutionResult, error) {
 	absIn, err := filepath.Abs(inputShellcode)
 	if err != nil {
-		return "", fmt.Errorf("scarecrow: resolving input: %w", err)
+		return nil, &ToolError{Tool: "scarecrow", Op: "wrap", Err: fmt.Errorf("resolving input: %w", err)}
 	}
 	if _, err := os.Stat(absIn); os.IsNotExist(err) {
-		return "", fmt.Errorf("scarecrow: input not found: %s", absIn)
+		return nil, &ToolError{Tool: "scarecrow", Op: "wrap", Err: fmt.Errorf("input not found: %s", absIn)}
 	}
 	ext := filepath.Ext(absIn)
 	base := strings.TrimSuffix(absIn, ext)
@@ -86,9 +121,5 @@ func (s scareCrowTool) WrapShellcode(inputShellcode string) (string, error) {
 	workDir := filepath.Dir(absIn)
 	outputPath := filepath.Join(workDir, outputName)
 	cfg := DefaultScareCrowConfig(absIn, outputPath)
-	r := s.GenerateLoader(cfg)
-	if !r.Success {
-		return "", fmt.Errorf("scarecrow: generation failed: %s", r.Stderr)
-	}
-	return outputPath, nil
+	return s.GenerateLoader(ctx, cfg)
 }

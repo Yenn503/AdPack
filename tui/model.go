@@ -4,19 +4,22 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"adpack/core"
 	"adpack/storage"
 	"adpack/utils"
 )
 
 type view int
+
 const (
 	viewStatus view = iota
 	viewGaps
@@ -36,6 +39,9 @@ type model struct {
 	help          help.Model
 	keys          keyMap
 	statusTable   table.Model
+	gapsList      list.Model
+	recList       list.Model
+	prog          progress.Model
 	width, height int
 	err           error
 }
@@ -71,6 +77,72 @@ var keys = keyMap{
 	Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
+type gapItem struct {
+	gap core.Gap
+}
+
+func (i gapItem) Title() string {
+	return fmt.Sprintf("[%s] %s", strings.ToUpper(i.gap.Severity), i.gap.Phase)
+}
+func (i gapItem) Description() string { return i.gap.Message }
+func (i gapItem) FilterValue() string {
+	return i.gap.Message + " " + string(i.gap.Phase)
+}
+
+type strategyItem struct {
+	name string
+}
+
+func (i strategyItem) Title() string       { return strings.ReplaceAll(i.name, "_", " ") }
+func (i strategyItem) Description() string { return "" }
+func (i strategyItem) FilterValue() string { return i.name }
+
+func newGapsList() list.Model {
+	d := list.NewDefaultDelegate()
+	d.ShowDescription = true
+	s := list.NewDefaultItemStyles(true)
+	s.SelectedTitle = s.SelectedTitle.
+		Foreground(utils.ColorPrimary).
+		BorderLeftForeground(utils.ColorPrimary)
+	s.SelectedDesc = s.SelectedDesc.Foreground(utils.ColorMuted)
+	s.NormalTitle = s.NormalTitle.Foreground(utils.ColorSecondary)
+	d.Styles = s
+	l := list.New([]list.Item{}, d, 0, 0)
+	l.Title = "Detected Workflow Gaps"
+	l.SetShowStatusBar(true)
+	l.SetFilteringEnabled(true)
+	l.SetSpinner(spinner.Dot)
+	return l
+}
+
+func newRecList() list.Model {
+	d := list.NewDefaultDelegate()
+	d.ShowDescription = false
+	s := list.NewDefaultItemStyles(true)
+	s.SelectedTitle = s.SelectedTitle.
+		Foreground(utils.ColorSecondary).
+		BorderLeftForeground(utils.ColorSecondary)
+	s.NormalTitle = s.NormalTitle.Foreground(utils.ColorSecondary)
+	d.Styles = s
+	l := list.New([]list.Item{}, d, 0, 0)
+	l.Title = "Recommended Strategies"
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(false)
+	return l
+}
+
+func newProgress() progress.Model {
+	return progress.New(
+		progress.WithWidth(40),
+		progress.WithScaled(true),
+		progress.WithColors(
+			utils.ColorError,
+			utils.ColorWarning,
+			utils.ColorSuccess,
+		),
+	)
+}
+
 func New(db *storage.DB) tea.Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
@@ -80,23 +152,26 @@ func New(db *storage.DB) tea.Model {
 	if err != nil {
 		state = core.NewADState()
 	}
-	
-	vp := viewport.New(0, 0)
+
+	vp := viewport.New()
 	vp.Style = lipgloss.NewStyle()
 
 	return model{
-		db:       db,
-		state:    state,
-		spinner:  s,
-		viewport: vp,
-		help:     help.New(),
-		keys:     keys,
-		err:      nil,
+		db:        db,
+		state:     state,
+		spinner:   s,
+		viewport:  vp,
+		gapsList:  newGapsList(),
+		recList:   newRecList(),
+		prog:      newProgress(),
+		help:      help.New(),
+		keys:      keys,
+		err:       nil,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return m.spinner.Tick
+	return tea.Batch(m.spinner.Tick, tea.RequestWindowSize)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -110,45 +185,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
-		
-		// Adjust viewport dynamically
-		headerHeight := 8 // Spinner + Tabs + Margins
-		footerHeight := 2 // Help text
+
+		headerHeight := 8
+		footerHeight := 2
 		vpHeight := msg.Height - headerHeight - footerHeight
 		if vpHeight < 0 {
 			vpHeight = 0
 		}
-		
-		m.viewport.Width = msg.Width - 4
-		m.viewport.Height = vpHeight
-		
+
+		m.viewport.SetWidth(msg.Width - 4)
+		m.viewport.SetHeight(vpHeight)
+
+		m.gapsList.SetWidth(msg.Width - 6)
+		m.gapsList.SetHeight(vpHeight)
+
+		m.recList.SetWidth(msg.Width - 6)
+		m.recList.SetHeight(vpHeight)
+
 		m.rebuildTables()
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Status):
 			m.currentView = viewStatus
-			m.rebuildTables()
+			m.rebuildLists()
 		case key.Matches(msg, m.keys.Gaps):
 			m.currentView = viewGaps
-			m.rebuildTables()
+			m.rebuildLists()
 		case key.Matches(msg, m.keys.Next):
 			m.currentView = viewRecommendation
-			m.rebuildTables()
+			m.rebuildLists()
 		case key.Matches(msg, m.keys.Refresh):
 			s, err := m.db.LoadState()
 			if err == nil {
 				m.state = s
 			}
-			m.rebuildTables()
-		case key.Matches(msg, m.keys.RunPhase):
-			if m.state != nil {
-				// We don't execute full blocking tasks here without a command handler, 
-				// but we can log intent or use a message
-			}
+			m.rebuildLists()
 		case key.Matches(msg, m.keys.Tab):
 			idx := 0
 			for i, v := range views {
@@ -158,7 +233,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.currentView = views[(idx+1)%len(views)]
-			m.rebuildTables()
+			m.rebuildLists()
 		}
 
 	case spinner.TickMsg:
@@ -166,7 +241,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	}
 
-	// Update viewport with keypresses if needed
+	switch m.currentView {
+	case viewGaps:
+		m.gapsList, cmd = m.gapsList.Update(msg)
+		cmds = append(cmds, cmd)
+	case viewRecommendation:
+		m.recList, cmd = m.recList.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
 
@@ -175,13 +258,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) renderTabs() string {
 	var tabs []string
-	
+
 	activeTabStyle := lipgloss.NewStyle().
 		Background(utils.ColorPrimary).
-		Foreground(lipgloss.Color("#000000")).
+		Foreground(utils.ColorTextOnPrimary).
 		Padding(0, 2).
 		Bold(true)
-		
+
 	inactiveTabStyle := lipgloss.NewStyle().
 		Foreground(utils.ColorMuted).
 		Padding(0, 2)
@@ -193,14 +276,16 @@ func (m model) renderTabs() string {
 			tabs = append(tabs, inactiveTabStyle.Render(name))
 		}
 	}
-	
+
 	row := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 	return lipgloss.NewStyle().MarginBottom(1).Render(row)
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	if !m.ready {
-		return "\n  Loading..."
+		v := tea.NewView("\n  Loading...")
+		v.AltScreen = true
+		return v
 	}
 
 	var content string
@@ -220,17 +305,19 @@ func (m model) View() string {
 		Foreground(utils.ColorSecondary).
 		MarginTop(1).
 		Render(m.spinner.View() + " ADPack Orchestration Console")
-		
+
 	helpView := m.help.View(m.keys)
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	v := tea.NewView(lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		"",
 		m.renderTabs(),
 		utils.ContainerStyle.Render(m.viewport.View()),
 		"",
 		helpView,
-	)
+	))
+	v.AltScreen = true
+	return v
 }
 
 func (m *model) rebuildTables() {
@@ -254,23 +341,53 @@ func (m *model) rebuildTables() {
 	t := table.New(table.WithColumns(cols), table.WithRows(rows), table.WithFocused(false))
 	s := table.DefaultStyles()
 	s.Header = s.Header.BorderStyle(lipgloss.NormalBorder()).BorderForeground(utils.ColorSecondary).Bold(true)
-	
-	// Better selected row color
 	s.Selected = s.Selected.Foreground(utils.ColorSuccess).Bold(true)
-	
 	t.SetStyles(s)
 	m.statusTable = t
 }
 
+func (m *model) rebuildLists() {
+	m.rebuildTables()
+
+	gaps := m.state.DetectGaps()
+	items := make([]list.Item, len(gaps))
+	for i, g := range gaps {
+		items[i] = gapItem{gap: g}
+	}
+	m.gapsList.SetItems(items)
+
+	engine := core.NewEngine(m.state)
+	rec := engine.Evaluate()
+	stratItems := make([]list.Item, len(rec.Strategies))
+	for i, s := range rec.Strategies {
+		stratItems[i] = strategyItem{name: s}
+	}
+	m.recList.SetItems(stratItems)
+}
+
 func (m model) statusView() string {
 	var b strings.Builder
-	
+
+	completed := 0
+	for _, p := range core.AllPhases {
+		if m.state.Phases[p] == core.PhaseComplete {
+			completed++
+		}
+	}
+	pct := float64(completed) / float64(len(core.AllPhases))
+	m.prog.SetPercent(pct)
+	m.prog.SetWidth(m.width - 10)
+	if m.width-10 < 10 {
+		m.prog.SetWidth(10)
+	}
+
 	stats := fmt.Sprintf("Hosts: %d | Users: %d | Creds: %d (%d val) | Sessions: %d | BH: %v\n\n",
 		len(m.state.Hosts), len(m.state.Users),
 		len(m.state.Creds), countVal(m.state.Creds),
 		len(m.state.Sessions), m.state.BH.Collected)
-		
+
 	b.WriteString(utils.InfoStyle.Render(stats))
+	b.WriteString(fmt.Sprintf("  Campaign: %d/9 phases  %s\n\n", completed, m.prog.View()))
 	b.WriteString(m.statusTable.View())
 	return b.String()
 }
@@ -280,35 +397,26 @@ func (m model) gapsView() string {
 	if len(gaps) == 0 {
 		return utils.SuccessStyle.Render("No gaps detected. Excellent execution.")
 	}
-	var b strings.Builder
-	b.WriteString(utils.TitleStyle.Render("Detected Workflow Gaps") + "\n\n")
-	for _, g := range gaps {
-		sevStyle := utils.ErrorStyle
-		if g.Severity == "medium" {
-			sevStyle = utils.WarningStyle
-		}
-		b.WriteString(fmt.Sprintf("  %s [%s] %s\n", sevStyle.Render(strings.ToUpper(g.Severity)), g.Phase, g.Message))
-	}
-	return b.String()
+	return m.gapsList.View()
 }
 
 func (m model) recView() string {
 	engine := core.NewEngine(m.state)
 	rec := engine.Evaluate()
-	
-	return fmt.Sprintf("%s\n\n%s: %s\n\n%s\n\n%s:\n  - %s",
-		utils.TitleStyle.Render("Recommendation Engine"),
-		utils.InfoStyle.Render("Phase"), 
-		rec.Phase, 
-		rec.Rationale,
-		utils.InfoStyle.Render("Strategies"),
-		strings.Join(rec.Strategies, "\n  - "))
+
+	header := utils.TitleStyle.Render("Recommendation Engine") + "\n\n" +
+		utils.InfoStyle.Render("Next Phase: ") + string(rec.Phase) + "\n\n" +
+		rec.Rationale
+
+	return header + "\n\n" + utils.TitleStyle.Render("Strategies") + "\n\n" + m.recList.View()
 }
 
 func countVal(cc []core.Credential) int {
 	n := 0
 	for _, c := range cc {
-		if c.Validated { n++ }
+		if c.Validated {
+			n++
+		}
 	}
 	return n
 }

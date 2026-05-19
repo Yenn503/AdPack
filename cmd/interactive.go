@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"adpack/tui"
 )
@@ -17,7 +17,7 @@ var interactiveCmd = &cobra.Command{
 		if DB == nil {
 			return fmt.Errorf("database not initialized")
 		}
-		p := tea.NewProgram(tui.New(DB), tea.WithAltScreen())
+		p := tea.NewProgram(tui.New(DB))
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
