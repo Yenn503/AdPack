@@ -184,17 +184,17 @@ Uses techniques from the **Nightmare Eclipse leaks** (disclosed Q1 2026):
 #### ⚡ BlueHammer (CVE-2026-33825)
 Defender RPC bug. Dumps SAM without admin rights via VSS snapshots. No LSASS alerts.
 
-#### ⚪ UnDefend
+#### ⚡ UnDefend
 Kills Defender via service dependency exploit. Bypasses tamper protection.
 
-#### ⚫ ColdWer
+#### ⚡ MiniPlasma
+Cloud Filter API race (CVE-2020-17103). Spawns SYSTEM shell via WER task + named pipe. Used as EoP gateway for LSASS access.
+
+#### ⚡ ColdWer
 WerFaultSecure PPL bypass. Freezes EDR processes during dump. EDR can't see it.
 
-#### ⚪ PhantomKiller
+#### ⚡ PhantomKiller (very recent BYOVD 19/05/2026. Redteamfortress leak. Works on all EDRs)
 Lenovo BootRepair.sys BYOVD. IOCTL 0x222014 terminates any process, including PPL-protected EDR. Signed driver, zero VT detections.
-
-#### ⚫ MiniPlasma
-Cloud Filter API race (CVE-2020-17103). Spawns SYSTEM shell via WER task + named pipe. Used as EoP gateway for LSASS access.
 
 **Example:**
 
