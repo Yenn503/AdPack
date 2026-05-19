@@ -13,6 +13,8 @@ func RegisterBuiltinTools(r *Registry) {
 	r.RegisterTool(ScareCrow)
 	r.RegisterTool(SysWhispers)
 	r.RegisterTool(LDAP)
+	r.RegisterTool(PhantomKiller)
+	r.RegisterTool(MiniPlasma)
 }
 
 func RegisterBuiltinExecutors(r *Registry) {

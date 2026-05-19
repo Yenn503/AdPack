@@ -106,6 +106,12 @@ var EvasionProfiles = struct {
 	// BlueHammer: leak SAM via Defender RPC
 	BlueHammer EvasionProfile
 
+	// PhantomKiller: kill EDR via signed Lenovo kernel driver
+	PhantomKiller EvasionProfile
+
+	// MiniPlasma: Cloud Filter API race SYSTEM shell
+	MiniPlasma EvasionProfile
+
 	// Custom template (fill in fields)
 	Custom EvasionProfile
 }{
@@ -186,6 +192,20 @@ var EvasionProfiles = struct {
 		InjectionTech:  "rpc_exploit",
 		Description:    "Exploit Defender RPC interface to leak SAM hive via VSS snapshot",
 	},
+	PhantomKiller: EvasionProfile{
+		Name:           "phantomkiller",
+		DeliveryMethod: "exe",
+		PayloadSource:  "BootRepair.sys + PhantomKiller.exe",
+		InjectionTech:  "kernel_terminate",
+		Description:    "Load signed Lenovo BootRepair.sys driver, send IOCTL 0x222014 to kill EDR processes, then dump LSASS",
+	},
+	MiniPlasma: EvasionProfile{
+		Name:           "miniplasma",
+		DeliveryMethod: "exe",
+		PayloadSource:  "MiniPlasma.exe",
+		InjectionTech:  "cloud_filter_race",
+		Description:    "Exploit Cloud Filter API AbortHydration race condition (CVE-2020-17103 unpatched) to spawn SYSTEM shell, then dump LSASS",
+	},
 	Custom: EvasionProfile{
 		Name: "custom",
 		Description: "User-defined evasion profile. Set fields individually.",
@@ -212,6 +232,10 @@ func LookupProfile(name string) (EvasionProfile, bool) {
 		return EvasionProfiles.UnDefend, true
 	case "bluehammer":
 		return EvasionProfiles.BlueHammer, true
+	case "phantomkiller":
+		return EvasionProfiles.PhantomKiller, true
+	case "miniplasma":
+		return EvasionProfiles.MiniPlasma, true
 	case "custom":
 		return EvasionProfiles.Custom, true
 	}
@@ -219,5 +243,5 @@ func LookupProfile(name string) (EvasionProfile, bool) {
 }
 
 func ListProfiles() []string {
-	return []string{"minimal", "standard", "aggressive", "bof", "fork", "byovd", "coldwer", "undefend", "bluehammer", "custom"}
+	return []string{"minimal", "standard", "aggressive", "bof", "fork", "byovd", "coldwer", "undefend", "bluehammer", "phantomkiller", "miniplasma", "custom"}
 }

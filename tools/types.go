@@ -20,6 +20,8 @@ const (
 	CapShellcodeGen   Capability = "payload.shellcode"
 	CapSyscallGen     Capability = "evasion.syscall"
 	CapDonut          Capability = "payload.donut"
+	CapEDRKill        Capability = "evasion.edr.kill"
+	CapPrivEsc        Capability = "privilege.escalation"
 	CapNetExec        Capability = "execution.netexec"
 	CapFileTransfer   Capability = "execution.filetransfer"
 )

