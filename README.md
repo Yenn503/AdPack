@@ -28,7 +28,7 @@
 <br>
 
 > [!IMPORTANT]
-> **Authorized Use Only** — This tool is designed for legitimate security assessments and penetration testing with explicit written authorisation. Unauthorised access to computer systems is illegal.
+> **Authorised Use Only** — This tool is designed for legitimate security assessments and penetration testing with explicit written authorisation. Unauthorised access to computer systems is illegal.
 
 <br>
 
