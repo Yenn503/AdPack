@@ -177,7 +177,7 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 | `phantomkiller` | BootRepair.sys BYOVD | 🟢 Very Low | PPL-protected EDR kill |
 | `miniplasma` | Cloud Filter EoP (CVE-2020-17103) | 🟢 Very Low | SYSTEM shell + LSASS |
 
-### ⚫ Nightmare Eclipse Integration
+### ⚫ Evasion & Post-Exploitation (Recent 2026 AV/EDR methods)
 
 Uses techniques from the **Nightmare Eclipse leaks** (disclosed Q1 2026):
 
@@ -188,13 +188,13 @@ Defender RPC bug. Dumps SAM without admin rights via VSS snapshots. No LSASS ale
 Kills Defender via service dependency exploit. Bypasses tamper protection.
 
 #### ⚡ MiniPlasma
-Cloud Filter API race (CVE-2020-17103). Spawns SYSTEM shell via WER task + named pipe. Used as EoP gateway for LSASS access.
+Cloud Filter API race (CVE-2020-17103). Spawns SYSTEM shell via WER task + named pipe. Used as an EoP gateway for LSASS access.
 
 #### ⚡ ColdWer
 WerFaultSecure PPL bypass. Freezes EDR processes during dump. EDR can't see it.
 
 #### ⚡ PhantomKiller (very recent BYOVD 19/05/2026. Redteamfortress leak. Works on all EDRs)
-Lenovo BootRepair.sys BYOVD. IOCTL 0x222014 terminates any process, including PPL-protected EDR. Signed driver, zero VT detections.
+Lenovo BootRepair.sys BYOVD. IOCTL 0x222014 terminates any process, including PPL-protected EDR: signed driver, zero VT detections.
 
 **Example:**
 
