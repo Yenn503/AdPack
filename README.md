@@ -53,7 +53,7 @@ adpack runs AD attacks through 9 phases. Tracks hosts, users, creds, and session
 
 ```bash
 # Clone and install
-git clone https://github.com/Yenn503/adpack.git
+git clone https://github.com/Yenn503/AdPack.git
 cd adpack && ./setup.sh && source ~/.bashrc
 
 # Automated attack chain
