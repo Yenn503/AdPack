@@ -326,18 +326,47 @@ See [config.example.yaml](config.example.yaml) for all available options.
 
 ## ⚪ Testing Environments
 
+Full 9-phase chain validated and working across all environments below.
+
 <table>
 <tr>
-<th width="50%">⚫ VulnAD (Docker)</th>
-<th width="50%">⚪ GOAD (Vagrant)</th>
+<th width="33%">⚫ DreadGOAD (Vagrant)</th>
+<th width="33%">⚪ DreadGOAD-Light (VMware)</th>
+<th width="33%">⚫ VulnAD (Docker)</th>
 </tr>
 <tr>
 <td>
 
 ```bash
+git clone https://github.com/dreadnode/DreadGOAD.git
+cd DreadGOAD && vagrant up
+
+adpack autorun \
+  --target <dc_ip>
+```
+
+</td>
+<td>
+
+```bash
+VMware Workstation
+dc01 (192.168.57.10)
+dc02 (192.168.57.11)
+srv02 (192.168.57.22)
+
+adpack autorun \
+  --domain <domain> \
+  --user Administrator \
+  --password <password> \
+  --target 192.168.57.10
+```
+
+</td>
+<td>
+
+```bash
 docker run -d \
-  -p 389:389 \
-  -p 445:445 \
+  -p 389:389 -p 445:445 \
   vulnerables/vulnad
 
 adpack autorun \
@@ -345,16 +374,16 @@ adpack autorun \
 ```
 
 </td>
-<td>
+</tr>
+<tr>
+<td colspan="3">
+
+**OctoRig** — Lab manager at [github.com/CommonHuman-Lab/OctoRig](https://github.com/CommonHuman-Lab/OctoRig) with VulnAD built in, proxies WinRM ports, and manages multi-VM lab lifecycle:
 
 ```bash
-git clone \
-  https://github.com/Orange-Cyberdefense/GOAD
-
-cd GOAD && vagrant up
-
-adpack autorun \
-  --target <dc_ip>
+git clone https://github.com/CommonHuman-Lab/OctoRig.git
+cd OctoRig && docker compose up -d
+adpack autorun --target 172.17.0.2
 ```
 
 </td>
