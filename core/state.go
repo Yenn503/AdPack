@@ -41,16 +41,18 @@ type ADCSTemplate struct {
 }
 
 type User struct {
-	ID             int    `json:"id" db:"id"`
-	Username       string `json:"username" db:"username"`
-	Domain         string `json:"domain" db:"domain"`
-	SAMAccountName string `json:"sam_account_name" db:"sam_account_name"`
-	SID            string `json:"sid" db:"sid"`
-	Enabled        bool   `json:"enabled" db:"enabled"`
-	IsAdmin        bool   `json:"is_admin" db:"is_admin"`
-	IsDA           bool   `json:"is_da" db:"is_da"`
-	Description    string `json:"description" db:"description"`
-	Source         string `json:"source" db:"source"`
+	ID             int      `json:"id" db:"id"`
+	Username       string   `json:"username" db:"username"`
+	Domain         string   `json:"domain" db:"domain"`
+	SAMAccountName string   `json:"sam_account_name" db:"sam_account_name"`
+	SID            string   `json:"sid" db:"sid"`
+	Enabled        bool     `json:"enabled" db:"enabled"`
+	IsAdmin        bool     `json:"is_admin" db:"is_admin"`
+	IsDA           bool     `json:"is_da" db:"is_da"`
+	Description    string   `json:"description" db:"description"`
+	Source         string   `json:"source" db:"source"`
+	SPNs           []string `json:"spns,omitempty" db:"-"`
+	NoPreauth      bool     `json:"no_preauth" db:"no_preauth"`
 }
 
 type Group struct {

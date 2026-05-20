@@ -201,6 +201,8 @@ func migrate(db *sqlx.DB) error {
 		`ALTER TABLE execution_nodes ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE execution_nodes ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE execution_nodes ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))`,
+		`ALTER TABLE users ADD COLUMN no_preauth INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN spns TEXT NOT NULL DEFAULT ''`,
 	} {
 		db.Exec(m) // best-effort for existing DBs
 	}

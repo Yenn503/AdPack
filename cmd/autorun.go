@@ -120,6 +120,18 @@ past failed phases instead of stopping.`,
 				}
 
 			case core.PhaseCredentialAcq:
+				fmt.Printf("      %s  Kerberos pre-check...\n", utils.InfoStyle.Render("→"))
+				kr := modules.RunKerberos(state, targetHost)
+				for _, u := range kr.Users {
+					DB.SaveUser(u)
+				}
+				for _, c := range kr.Creds {
+					DB.SaveCred(c)
+				}
+				for _, ev := range kr.Evidence {
+					DB.SaveEvidence(ev)
+				}
+
 				result := modules.RunCredentialAcq(state, evasionProfile, targetHost)
 				for _, ev := range result.Evidence {
 					DB.SaveEvidence(ev)
@@ -173,9 +185,7 @@ past failed phases instead of stopping.`,
 				}
 
 			default:
-				fmt.Printf("      %s  Phase not yet automated — marking complete\n",
-					utils.WarningStyle.Render("!"))
-				success = true
+				return fmt.Errorf("phase %q has no implementation", rec.Phase)
 			}
 
 			elapsed := time.Since(start).Round(time.Millisecond)

