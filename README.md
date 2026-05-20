@@ -236,7 +236,7 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 - TUI dashboard and JSON export
 
 ### Credential Operations
-- LSASS dumping with multiple evasion techniques
+- LSASS dumping via nanodump with 11+ evasion pipelines (fork, snapshot, WER, BOF, BYOVD, coldwer, MiniPlasma) and automatic fallback to DCSync via impacket-secretsdump
 - Kerberoasting and AS-REP roasting
 - Multi-protocol validation (SMB, LDAP, WinRM, RDP)
 - Detects admin rights and checks if lateral movement works
