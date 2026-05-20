@@ -18,14 +18,13 @@ adpack is a state-aware AD attack tool for red teams and pentesters. Tracks evid
 
 ## Phase Dependencies
 ```
-discovery → enumeration → credential_acq → session_harvest
-                        → graph_analysis  → privesc
-                                           → lateral → persistence
-                        → credential_acq  → validation
+discovery → enumeration → credential_acq → session_harvest → lateral
+                        → graph_analysis  → privesc        → persistence
+                        → validation
 ```
 
 ## Evasion Profiles
-9 profiles: minimal, standard, aggressive, bof, fork, byovd, coldwer, undefend, bluehammer, custom
+11 profiles: minimal, standard, aggressive, bof, fork, byovd, coldwer, undefend, bluehammer, phantomkiller, miniplasma
 Each selects delivery (donut/bof/exe) + optional pre-conditions (Defender kill, EDR freeze, kernel driver).
 
 ## Tool Ecosystem

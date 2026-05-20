@@ -31,7 +31,7 @@ tools:
 # Evasion settings
 evasion:
   # Default evasion profile
-  # Options: minimal, standard, aggressive, bof, fork, byovd, coldwer, undefend, bluehammer
+  # Options: minimal, standard, aggressive, bof, fork, byovd, coldwer, undefend, bluehammer, phantomkiller, miniplasma
   default_profile: "standard"
   
   # Timeout for remote command execution (seconds)
