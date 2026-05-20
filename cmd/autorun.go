@@ -175,7 +175,31 @@ past failed phases instead of stopping.`,
 					fmt.Printf("      %s  %d session(s) harvested\n", utils.SuccessStyle.Render("✓"), len(result.Sessions))
 				}
 
-			case core.PhaseLateral:
+			case core.PhaseGraphAnalysis:
+				result := modules.RunGraphAnalysis(state, targetHost)
+				if result.Success {
+					for _, c := range result.Computers {
+						DB.SaveComputer(c)
+					}
+					for _, g := range result.GPOs {
+						DB.SaveGPO(g)
+					}
+					for _, t := range result.ADCS {
+						DB.SaveADCSTemplate(t)
+					}
+					for _, ev := range result.Evidence {
+						DB.SaveEvidence(ev)
+					}
+					for _, u := range result.Users {
+						DB.SaveUser(u)
+					}
+					success = true
+					fmt.Printf("      %s  %d computer(s), %d GPO(s), %d ADCS template(s)\n",
+						utils.SuccessStyle.Render("✓"),
+						len(result.Computers), len(result.GPOs), len(result.ADCS))
+				}
+
+		case core.PhaseLateral:
 				result := modules.RunLateral(state, targetHost)
 				if result.Success {
 					for _, ev := range result.Evidence {

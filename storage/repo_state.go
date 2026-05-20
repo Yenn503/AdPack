@@ -209,6 +209,34 @@ func (db *DB) SetPhaseComplete(p core.Phase) error {
 	return err
 }
 
+func (db *DB) SaveComputer(c core.Computer) error {
+	_, err := db.Exec(`INSERT INTO computers(name,domain,sid,operating_system,is_dc) VALUES(?,?,?,?,?)
+		ON CONFLICT(name, domain) DO UPDATE SET sid=excluded.sid,operating_system=excluded.operating_system,is_dc=excluded.is_dc`,
+		c.Name, c.Domain, c.SID, c.OperatingSystem, boolInt(c.IsDC))
+	return err
+}
+
+func (db *DB) SaveGroup(g core.Group) error {
+	_, err := db.Exec(`INSERT INTO groups_t(name,domain,sid,description,member_count) VALUES(?,?,?,?,?)
+		ON CONFLICT(name, domain) DO UPDATE SET sid=excluded.sid,description=excluded.description,member_count=excluded.member_count`,
+		g.Name, g.Domain, g.SID, g.Description, g.MemberCount)
+	return err
+}
+
+func (db *DB) SaveGPO(g core.GPO) error {
+	_, err := db.Exec(`INSERT INTO gpos(name,guid,domain,is_linked,can_edit) VALUES(?,?,?,?,?)
+		ON CONFLICT(name, domain) DO UPDATE SET guid=excluded.guid,is_linked=excluded.is_linked,can_edit=excluded.can_edit`,
+		g.Name, g.GUID, g.Domain, boolInt(g.IsLinked), boolInt(g.CanEdit))
+	return err
+}
+
+func (db *DB) SaveADCSTemplate(t core.ADCSTemplate) error {
+	_, err := db.Exec(`INSERT INTO adcs_templates(name,domain,vuln,enrollee) VALUES(?,?,?,?)
+		ON CONFLICT(name, domain) DO UPDATE SET vuln=excluded.vuln,enrollee=excluded.enrollee`,
+		t.Name, t.Domain, t.Vuln, t.Enrollee)
+	return err
+}
+
 func (db *DB) SaveEvidence(e core.EvidenceEntry) error {
 	_, err := db.Exec(`INSERT INTO evidence(parent_id,type,phase,source,key,value,confidence,raw_output,timestamp) VALUES(?,?,?,?,?,?,?,?,datetime('now'))`,
 		e.ParentID, string(e.Type), string(e.Phase), e.Source, e.Key, e.Value, e.Confidence, e.RawOutput)

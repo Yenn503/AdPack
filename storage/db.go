@@ -195,6 +195,10 @@ func migrate(db *sqlx.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_nodes_status ON execution_nodes(status);
 		CREATE INDEX IF NOT EXISTS idx_edges_parent ON execution_edges(parent_id);
 		CREATE INDEX IF NOT EXISTS idx_edges_child ON execution_edges(child_id);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_computers_unique ON computers(name, domain);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_unique ON groups_t(name, domain);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_gpos_unique ON gpos(name, domain);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_adcs_unique ON adcs_templates(name, domain);
 	`)
 
 	for _, m := range []string{

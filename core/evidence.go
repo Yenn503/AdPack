@@ -31,6 +31,8 @@ type ToolResult struct {
 	Users      []User
 	Groups     []Group
 	Computers  []Computer
+	GPOs       []GPO
+	ADCS       []ADCSTemplate
 	Sessions   []Session
 	Creds      []Credential
 	RawOutput  string
