@@ -88,31 +88,3 @@ func (n nanodumpTool) ParseDump(ctx context.Context, dmpPath string) (*Execution
 	}
 	return cmdResultToExecResult(cr), nil
 }
-
-func (n nanodumpTool) Validate() error {
-	if !n.Available() {
-		return &ToolError{
-			Tool: "nanodump", Op: "Validate",
-			Err: fmt.Errorf("nanodump not found in PATH"),
-		}
-	}
-	return nil
-}
-
-func (n nanodumpTool) Capabilities() []Capability {
-	return []Capability{CapLSASSDump, CapEDRBypass}
-}
-
-func (n nanodumpTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
-	ch := make(chan ExecutionEvent, 1)
-	go func() {
-		defer close(ch)
-		result, err := n.Run(ctx, req)
-		if err != nil {
-			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
-			return
-		}
-		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
-	}()
-	return ch, nil
-}

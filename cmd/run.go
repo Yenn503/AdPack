@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"adpack/core"
@@ -36,6 +38,17 @@ var runCmd = &cobra.Command{
 		state, err := DB.LoadState()
 		if err != nil {
 			return fmt.Errorf("load state: %w", err)
+		}
+
+		// Provider event logging
+		sink := core.ProviderEventSink(core.NoopSink{})
+		if providerLogPath != "" {
+			f, fErr := os.Create(providerLogPath)
+			if fErr != nil {
+				return fmt.Errorf("create provider log: %w", fErr)
+			}
+			defer f.Close()
+			sink = core.NewJSONLSink(f)
 		}
 
 		// Phase header
@@ -119,7 +132,13 @@ var runCmd = &cobra.Command{
 			}
 
 		case core.PhaseSessionHarvest:
-			result := modules.RunSessionHarvest(state, targetHost)
+			provider, pErr := modules.ProviderFromState(state, targetHost, sink)
+			if pErr != nil {
+				fmt.Printf("[!] %v\n", pErr)
+				success = false
+				break
+			}
+			result := modules.RunSessionHarvest(context.Background(), provider, state)
 			success = result.Success
 			if result.Success {
 				for _, ev := range result.Evidence {
@@ -131,7 +150,13 @@ var runCmd = &cobra.Command{
 			}
 
 		case core.PhaseGraphAnalysis:
-			result := modules.RunGraphAnalysis(state, targetHost)
+			provider, pErr := modules.ProviderFromState(state, targetHost, sink)
+			if pErr != nil {
+				fmt.Printf("[!] %v\n", pErr)
+				success = false
+				break
+			}
+			result := modules.RunGraphAnalysis(context.Background(), provider)
 			success = result.Success
 			if result.Success {
 				for _, c := range result.Computers {
@@ -164,7 +189,7 @@ var runCmd = &cobra.Command{
 			}
 
 		case core.PhasePrivEsc:
-			result := modules.RunPrivesc(state, targetHost)
+			result := modules.RunPrivesc(state, targetHost, evasionProfile)
 			success = result.Success
 			if result.Success {
 				for _, ev := range result.Evidence {
@@ -278,6 +303,7 @@ func init() {
 		"Evasion profile for credential acquisition")
 	runCmd.Flags().StringVarP(&targetHost, "target", "t", "",
 		"Target host IP or hostname")
+	runCmd.Flags().StringVar(&providerLogPath, "provider-log", "", "Write provider acquisition events as JSONL to this path")
 	runCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return phaseNames(), cobra.ShellCompDirectiveNoFileComp
 	}

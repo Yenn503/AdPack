@@ -52,6 +52,9 @@ tools/*.exe
 tools/*.dll
 tools/*.sys
 
+# Provider event logs
+*events-*.jsonl
+
 # Temporary files
 *.tmp
 *.temp 

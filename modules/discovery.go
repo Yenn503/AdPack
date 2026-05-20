@@ -12,6 +12,7 @@ import (
 
 func RunDiscovery(state *core.ADState, targetHost string) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
+	ctx := context.Background()
 
 	if targetHost != "" {
 		host := core.Host{
@@ -19,6 +20,27 @@ func RunDiscovery(state *core.ADState, targetHost string) *core.ToolResult {
 			Hostname:  "",
 			Domain:    "",
 			PortsOpen: "389,445",
+		}
+		// Probe via LDAP with available creds to determine if target is a DC
+		for _, c := range state.Creds {
+			if c.Validated && c.Domain != "" && c.Username != "" {
+				probe := tools.NetExecTarget{
+					Protocol: "ldap", Host: targetHost,
+					Domain: c.Domain, Username: c.Username, Password: c.Secret, Hash: c.Hash,
+				}
+				if r, err := tools.NetExec.Run(ctx, probe, "", nil); err == nil && r.Success {
+					host.IsDC = true
+					host.Domain = c.Domain
+					if strings.Contains(r.Stdout, "(name:") {
+						parts := strings.Split(r.Stdout, "(name:")
+						if len(parts) > 1 {
+							name := strings.Split(parts[1], ")")[0]
+							host.Hostname = strings.ToUpper(strings.TrimSpace(name))
+						}
+					}
+					break
+				}
+			}
 		}
 		result.Hosts = append(result.Hosts, host)
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
@@ -54,7 +76,6 @@ func RunDiscovery(state *core.ADState, targetHost string) *core.ToolResult {
 			Protocol: "ldap", Host: ip, Port: 389,
 			Domain: "vulnad.local", Username: "Administrator", Password: "P@ssw0rd123!",
 		}
-		ctx := context.Background()
 		r, err := tools.NetExec.Run(ctx, target, "", nil)
 		if err == nil && r.Success && strings.Contains(r.Stdout, "Pwn3d!") {
 			dcIP = ip

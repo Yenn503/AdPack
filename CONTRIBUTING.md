@@ -18,34 +18,19 @@ Guidelines for contributing code, docs, and bug reports.
 ### Go Code
 
 - Follow standard Go conventions and idioms
-- Run `gofmt` before committing
+- Run `gofmt`, `go vet`, and `staticcheck` before committing
 - Use meaningful variable and function names
-- Add comments for exported functions and complex logic
 - Keep functions focused and under 50 lines when possible
-
-### Example
-
-```go
-// EnumUsers retrieves all domain users via LDAP
-func (n nxcTool) EnumUsers(ctx context.Context, target string) ([]core.User, error) {
-    r := utils.RunCommandCtx(ctx, "netexec", []string{"ldap", target, "--users"})
-    if !r.Success {
-        return nil, fmt.Errorf("netexec ldap enum failed: %s", r.Stderr)
-    }
-    // Parse output...
-}
-```
 
 ## Project Structure
 
 ```
 adpack/
 ├── cmd/           # CLI commands (one file per command)
-├── core/          # Domain models, interfaces (EventBus, DAGStore, EventStore)
-├── engine/        # Runtime container, WorkerPool, orchestration wiring
-├── modules/       # Attack phase implementations
-├── tools/         # External tool wrappers + Registry + ExecutorFactory
-├── storage/       # Database layer (SQLite, migrations, DAG/event persistence)
+├── core/          # Domain models, interfaces (EventBus, provider, identity, evidence)
+├── modules/       # Attack phase implementations + provider layer
+├── tools/         # External tool wrappers (NetExec, nanodump, deploy)
+├── storage/       # Database layer (SQLite, migrations, event persistence)
 ├── utils/         # Shared utilities (command runner, theme, config)
 ├── tui/           # Interactive bubbletea dashboard
 └── config/        # Configuration management
@@ -68,55 +53,39 @@ const PhaseNewPhase Phase = "new_phase"
 
 ### New Tool Wrapper
 
-1. Create `tools/newtool.go` implementing the `Tool` interface:
+1. Create `tools/newtool.go` with a package-level singleton:
 ```go
 type newTool struct{}
 
+var NewTool = newTool{}
+
 func (newTool) Name() string { return "newtool" }
 func (newTool) Available() bool { return utils.ToolAvailable("newtool") }
-func (newTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
-    r := utils.RunCommandCtx(ctx, "newtool", req.Args)
-    return cmdResultToExecResult(r, ""), nil
+func (newTool) Run(ctx context.Context, args []string) (utils.CmdResult, error) {
+    return utils.RunCommandCtx(ctx, "newtool", args), nil
 }
-func (newTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan StreamOutput, error) {
-    return RunStreamBlocking(ctx, req, newTool{})
-}
-func (newTool) Validate(ctx context.Context) error { return nil }
-func (newTool) Capabilities() []Capability { return nil }
 ```
 
-2. Register in `tools/bootstrap.go`:
+2. Import and use the singleton from modules or other tools:
 ```go
-func RegisterBuiltinTools(r *Registry) {
-    // ...
-    r.Register("newtool", newTool{})
+if tools.NewTool.Available() {
+    result, err := tools.NewTool.Run(ctx, []string{"arg1", "arg2"})
 }
 ```
 
 ### New Evasion Profile
 
-1. Add to `modules/credential_acq.go` pipeline map:
-```go
-"profile_name": {
-    Name:        "profile_name",
-    Delivery:    "exe",
-    PayloadType: "tool_name",
-    RemoteExec:  true,
-    ParseFn:     parseOutput,
-    Description: "Profile description",
-}
-```
-
-2. Implement execution function referencing tool wrappers by name
-
-3. Register new Tool in `tools/bootstrap.go` if it uses a new binary
+1. Add to the profile map in `modules/evasion.go` via `registerProfile` and add to `AllProfiles()` list
+2. Wire the profile name as a case in pipeline switching logic in `modules/credential_acq.go`
+3. Register the profile in `BaseProfileFor()` mapping in `modules/evasion.go`
+4. Create tool wrapper in `tools/` if it uses a new binary
 
 ## Testing
 
 ### Running Tests
 
 ```bash
-make test
+go test ./...
 ```
 
 ### Writing Tests

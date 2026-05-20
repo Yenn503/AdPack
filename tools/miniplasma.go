@@ -15,31 +15,6 @@ func (miniPlasmaTool) Available() bool {
 	return utils.ToolAvailable("MiniPlasma.exe") || utils.ToolAvailable("MiniPlasma")
 }
 
-func (miniPlasmaTool) Validate() error {
-	if !MiniPlasma.Available() {
-		return &ToolError{Tool: "MiniPlasma", Op: "validate", Err: fmt.Errorf("MiniPlasma.exe not found")}
-	}
-	return nil
-}
-
-func (miniPlasmaTool) Capabilities() []Capability {
-	return []Capability{CapPrivEsc}
-}
-
-func (m miniPlasmaTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
-	ch := make(chan ExecutionEvent, 1)
-	go func() {
-		defer close(ch)
-		result, err := m.Run(ctx, req)
-		if err != nil {
-			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
-			return
-		}
-		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
-	}()
-	return ch, nil
-}
-
 type MiniPlasmaConfig struct {
 	Binary string
 	Stage  int

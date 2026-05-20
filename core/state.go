@@ -78,6 +78,11 @@ type Session struct {
 	HostID int    `json:"host_id" db:"host_id"`
 	UserID int    `json:"user_id" db:"user_id"`
 	Source string `json:"source" db:"source"`
+
+	// Transient parser fields (not persisted to DB, populated by parseSMBSessions).
+	Username string `json:"username,omitempty"`
+	Host     string `json:"host,omitempty"`      // target IP where session was found
+	SourceIP string `json:"source_ip,omitempty"` // "(from x.x.x.x)" origin
 }
 
 type CredType string

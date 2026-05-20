@@ -2,6 +2,8 @@ package tools
 
 import "fmt"
 
+// ToolError is the canonical error type for tool execution failures.
+// Tool name + operation + exit code + wrapped underlying error.
 type ToolError struct {
 	Tool     string
 	Op       string

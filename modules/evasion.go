@@ -5,6 +5,28 @@ import (
 	"strings"
 )
 
+// AdPack Evasion Profile Model
+// ----------------------------
+// We expose 4 *base* profiles (minimal, standard, aggressive, bypass) that
+// describe the high-level operating posture, plus a set of *named tactic
+// profiles* (undefend, coldwer, byovd, etc.) that pin down a specific
+// upstream technique. Tactic profiles are aliased onto the right base + tool
+// chain so users don't have to remember which underlying primitive each
+// technique uses.
+//
+// Operationally:
+//   - minimal:     in-memory donut → go-mimikatz, no pre-conditions
+//   - standard:    on-disk + remote-exec, mild AMSI bypass, default for enterprise
+//   - aggressive:  full evasion stack (PPID spoof, syscalls, sleep mask) for EDR
+//   - bypass:      pre-flight Defender kill (UnDefend) before primary technique
+//
+// The 8 named tactic profiles each map to a documented upstream technique:
+//   - bof, fork, byovd, coldwer, undefend, bluehammer, phantomkiller, miniplasma
+//   - dcsync (separate ingestion path; not really an evasion profile)
+//
+// `LookupProfile` resolves both base names AND tactic names. Use
+// `BaseProfileFor(name)` if you only want the operating posture.
+
 type EvasionProfile struct {
 	Name string `json:"name" yaml:"name"`
 
@@ -88,6 +110,9 @@ var EvasionProfiles = struct {
 	// Aggressive: full evasion stack for modern EDR (CrowdStrike, Defender, SentinelOne)
 	Aggressive EvasionProfile
 
+	// Bypass: aggressive stack + explicit Defender/EDR neutralisation pre-flight
+	Bypass EvasionProfile
+
 	// BOF-based: use Cobalt Strike/Havoc BOF for in-process execution (most evasive)
 	BOFBased EvasionProfile
 
@@ -147,6 +172,21 @@ var EvasionProfiles = struct {
 		CallStackSpoof: true,
 		DirectSyscalls: true,
 		Description:    "Full evasion for mature EDR environments (CrowdStrike/SentinelOne)",
+	},
+	Bypass: EvasionProfile{
+		Name:           "bypass",
+		AmsiBypass:     "hardware",
+		EtwPatch:       true,
+		SyscallMethod:  "recycledgate",
+		SleepMask:      "ekko",
+		DeliveryMethod: "go_binary",
+		PayloadSource:  "go-mimikatz",
+		InjectionTech:  "apc_early_bird",
+		PPIDSpoof:      "explorer.exe",
+		ParentProcess:  "notepad.exe",
+		CallStackSpoof: true,
+		DirectSyscalls: true,
+		Description:    "Aggressive stack with Defender/EDR neutralisation pre-flight (UnDefend kill before primary technique)",
 	},
 	BOFBased: EvasionProfile{
 		Name:           "bof",
@@ -220,6 +260,8 @@ func LookupProfile(name string) (EvasionProfile, bool) {
 		return EvasionProfiles.Standard, true
 	case "aggressive":
 		return EvasionProfiles.Aggressive, true
+	case "bypass":
+		return EvasionProfiles.Bypass, true
 	case "bof":
 		return EvasionProfiles.BOFBased, true
 	case "fork":
@@ -243,5 +285,42 @@ func LookupProfile(name string) (EvasionProfile, bool) {
 }
 
 func ListProfiles() []string {
-	return []string{"minimal", "standard", "aggressive", "bof", "fork", "byovd", "coldwer", "undefend", "bluehammer", "phantomkiller", "miniplasma", "custom"}
+	return []string{"minimal", "standard", "aggressive", "bypass", "bof", "fork", "byovd", "coldwer", "undefend", "bluehammer", "phantomkiller", "miniplasma", "custom"}
+}
+
+// BaseProfileFor returns the operating-posture base profile that a given tactic
+// profile should run under. Used by callers that need to know "is this an
+// in-memory or on-disk profile" without caring about the specific exploit chosen.
+//
+// Mapping:
+//
+//	minimal                                                 → minimal
+//	standard, dcsync                                        → standard
+//	aggressive, bof, fork, byovd, coldwer, phantomkiller    → aggressive
+//	undefend, bluehammer, miniplasma                        → bypass
+//	custom                                                  → custom
+//
+// Bypass profiles imply a pre-flight Defender/EDR neutralisation step before
+// the main technique; aggressive profiles assume direct-syscall + PPID-spoof
+// based evasion; standard profiles assume only AMSI/ETW patching is needed.
+func BaseProfileFor(name string) string {
+	switch name {
+	case "minimal":
+		return "minimal"
+	case "standard", "dcsync":
+		return "standard"
+	case "aggressive", "bof", "fork", "byovd", "coldwer", "phantomkiller":
+		return "aggressive"
+	case "bypass", "undefend", "bluehammer", "miniplasma":
+		return "bypass"
+	case "custom":
+		return "custom"
+	}
+	return "standard"
+}
+
+// IsBypassProfile reports whether the named profile triggers a Defender/EDR
+// neutralisation pre-flight in modules that gate on it (privesc, credential_acq).
+func IsBypassProfile(name string) bool {
+	return BaseProfileFor(name) == "bypass"
 }

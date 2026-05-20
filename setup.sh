@@ -20,7 +20,7 @@ LOG_FILE="$HOME/adpack_setup.log"
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║                  adpack Setup Script                      ║${NC}"
 echo -e "${BLUE}║          Automated installation of all dependencies       ║${NC}"
-echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
 # Logging function
@@ -85,6 +85,7 @@ create_dirs() {
     mkdir -p "$TOOLS_DIR"
     mkdir -p "$ADPACK_DIR"
     mkdir -p "$HOME/.local/bin"
+    chmod 700 "$ADPACK_DIR"
     success "Directories created"
 }
 
@@ -99,14 +100,16 @@ install_system_deps() {
             gcc make mingw-w64 \
             python3 python3-pip python3-venv \
             libssl-dev libffi-dev \
-            unzip tar gzip &>> "$LOG_FILE"
+            unzip tar gzip \
+            mono-complete &>> "$LOG_FILE"
         success "System dependencies installed"
     elif command -v yum &> /dev/null; then
         sudo yum install -y \
             git curl wget gcc make \
             mingw64-gcc python3 python3-pip \
             openssl-devel libffi-devel \
-            unzip tar gzip &>> "$LOG_FILE"
+            unzip tar gzip \
+            mono-core &>> "$LOG_FILE"
         success "System dependencies installed"
     else
         warn "Unknown package manager. Please install dependencies manually."
@@ -285,44 +288,208 @@ install_scarecrow() {
     success "ScareCrow installed"
 }
 
-# Create placeholder evasion tools
-create_evasion_placeholders() {
-    info "Creating placeholder evasion tools..."
+# Install SweetPotato
+install_sweetpotato() {
+    info "Checking SweetPotato installation..."
     
-    # UnDefend.exe placeholder
-    if [[ ! -f "$TOOLS_DIR/UnDefend.exe" ]]; then
-        cat > "$TOOLS_DIR/UnDefend.exe" << 'EOF'
-#!/bin/bash
-echo "[*] UnDefend.exe placeholder - replace with actual binary"
-echo "[!] This is a placeholder. Build UnDefend.exe on Windows and copy here."
-EOF
-        chmod +x "$TOOLS_DIR/UnDefend.exe"
-        warn "UnDefend.exe placeholder created at $TOOLS_DIR/UnDefend.exe"
+    if [[ -f "$TOOLS_DIR/SweetPotato.exe" ]]; then
+        success "SweetPotato already installed"
+        return 0
     fi
     
-    # FunnyApp.exe (BlueHammer) placeholder
-    if [[ ! -f "$TOOLS_DIR/FunnyApp.exe" ]]; then
-        cat > "$TOOLS_DIR/FunnyApp.exe" << 'EOF'
-#!/bin/bash
-echo "[*] FunnyApp.exe (BlueHammer) placeholder - replace with actual exploit"
-echo "[!] This is a placeholder for CVE-2026-33825 exploit."
-EOF
-        chmod +x "$TOOLS_DIR/FunnyApp.exe"
-        warn "FunnyApp.exe placeholder created at $TOOLS_DIR/FunnyApp.exe"
+    info "Building SweetPotato..."
+    cd /tmp
+    git clone https://github.com/CCob/SweetPotato.git &>> "$LOG_FILE"
+    cd SweetPotato
+    
+    # Build with msbuild if available, otherwise download release
+    if command -v msbuild &> /dev/null || command -v xbuild &> /dev/null; then
+        # Try to build with mono
+        if command -v msbuild &> /dev/null; then
+            msbuild SweetPotato.sln /p:Configuration=Release &>> "$LOG_FILE"
+            cp bin/Release/SweetPotato.exe "$TOOLS_DIR/" 2>/dev/null || true
+        fi
     fi
     
-    # EDR-Freeze.exe placeholder
-    if [[ ! -f "$TOOLS_DIR/EDR-Freeze.exe" ]]; then
-        cat > "$TOOLS_DIR/EDR-Freeze.exe" << 'EOF'
-#!/bin/bash
-echo "[*] EDR-Freeze.exe placeholder - replace with actual binary"
-echo "[!] This is a placeholder. Build EDR-Freeze on Windows and copy here."
-EOF
-        chmod +x "$TOOLS_DIR/EDR-Freeze.exe"
-        warn "EDR-Freeze.exe placeholder created at $TOOLS_DIR/EDR-Freeze.exe"
+    # If build failed or not available, download from releases
+    if [[ ! -f "$TOOLS_DIR/SweetPotato.exe" ]]; then
+        info "Downloading SweetPotato from releases..."
+        wget -q https://github.com/CCob/SweetPotato/releases/latest/download/SweetPotato.exe -O "$TOOLS_DIR/SweetPotato.exe" 2>/dev/null || \
+        warn "Could not download SweetPotato. You may need to build it manually on Windows."
     fi
     
-    success "Evasion tool placeholders created"
+    cd /tmp
+    rm -rf SweetPotato
+    
+    if [[ -f "$TOOLS_DIR/SweetPotato.exe" ]]; then
+        success "SweetPotato installed"
+    else
+        warn "SweetPotato not installed. Build manually if needed."
+    fi
+}
+
+# Install UnDefend
+install_undefend() {
+    info "Checking UnDefend installation..."
+    
+    if [[ -f "$TOOLS_DIR/UnDefend.exe" ]]; then
+        success "UnDefend already installed"
+        return 0
+    fi
+    
+    info "Cloning UnDefend..."
+    cd /tmp
+    
+    if ! git clone https://github.com/Nightmare-Eclipse/UnDefend.git &>> "$LOG_FILE"; then
+        warn "Could not clone UnDefend. Skipping."
+        warn "Place pre-built UnDefend.exe at $TOOLS_DIR/UnDefend.exe"
+        return 1
+    fi
+    
+    cd UnDefend
+    
+    # Cross-compile with MinGW
+    if command -v x86_64-w64-mingw32-g++ &> /dev/null; then
+        info "Cross-compiling UnDefend.exe with MinGW..."
+        x86_64-w64-mingw32-g++ -DUNICODE -D_UNICODE UnDefend.cpp \
+            -o "$TOOLS_DIR/UnDefend.exe" \
+            -static -lshlwapi -lole32 -loleaut32 -luser32 \
+            -static-libgcc -static-libstdc++ &>> "$LOG_FILE"
+    fi
+    
+    cd /tmp
+    rm -rf UnDefend
+    
+    if [[ -f "$TOOLS_DIR/UnDefend.exe" ]]; then
+        success "UnDefend cross-compiled and installed"
+    else
+        warn "UnDefend MinGW build failed (missing SERVICE_NOTIFY_2W in MinGW headers)."
+        warn "Build on Windows with Visual Studio and copy to $TOOLS_DIR/UnDefend.exe"
+    fi
+}
+
+# Install BlueHammer
+install_bluehammer() {
+    info "Checking BlueHammer installation..."
+    
+    if [[ -f "$TOOLS_DIR/FunnyApp.exe" ]] || [[ -f "$TOOLS_DIR/BlueHammer.exe" ]]; then
+        success "BlueHammer already installed"
+        return 0
+    fi
+    
+    info "Cloning BlueHammer..."
+    cd /tmp
+    
+    if git clone https://github.com/Nightmare-Eclipse/BlueHammer.git &>> "$LOG_FILE"; then
+        cd BlueHammer
+        info "BlueHammer source cloned (requires Visual Studio 2022 on Windows to build)"
+        warn "BlueHammer is a 3313-line MSVC project with RPC IDL, cfapi.h, Windows Update Agent COM."
+        warn "Cannot cross-compile from Linux. Build on Windows:"
+        warn "  1. Open FunnyApp.sln in Visual Studio 2022"
+        warn "  2. Build Release x64"
+        warn "  3. Copy FunnyApp.exe to $TOOLS_DIR/"
+        cd /tmp
+        rm -rf BlueHammer
+    else
+        warn "Could not clone BlueHammer. Skipping."
+    fi
+    
+    if [[ -f "$TOOLS_DIR/FunnyApp.exe" ]]; then
+        success "BlueHammer installed"
+    else
+        warn "BlueHammer not built. Clone and build on Windows with VS 2022."
+    fi
+}
+
+# Install PhantomKiller
+install_phantomkiller() {
+    info "Checking PhantomKiller installation..."
+    
+    if [[ -f "$TOOLS_DIR/PhantomKiller.exe" ]] && [[ -f "$TOOLS_DIR/PhantomKiller.sys" ]]; then
+        success "PhantomKiller already installed"
+        return 0
+    fi
+    
+    info "Downloading PhantomKiller from GitHub release..."
+    cd /tmp
+    
+    wget -q "https://github.com/redteamfortress/PhantomKiller/releases/download/v1.0.0/PhantomKiller.zip" \
+        -O PhantomKiller.zip &>> "$LOG_FILE"
+    
+    if [[ -f "PhantomKiller.zip" ]] && [[ -s "PhantomKiller.zip" ]]; then
+        unzip -o PhantomKiller.zip &>> "$LOG_FILE"
+        cp PhantomKiller.exe "$TOOLS_DIR/" 2>/dev/null || true
+        cp PhantomKiller.sys "$TOOLS_DIR/" 2>/dev/null || true
+        rm -f PhantomKiller.zip
+        # Copy any other extracted files (BootRepair.sys etc.)
+        for f in *.exe *.sys; do
+            [[ -f "$f" ]] && cp "$f" "$TOOLS_DIR/" 2>/dev/null || true
+        done
+    else
+        # Fallback: try cloning and building
+        info "Release download failed, attempting build from source..."
+        if git clone https://github.com/redteamfortress/PhantomKiller.git &>> "$LOG_FILE"; then
+            cd PhantomKiller
+            if [[ -f "build.sh" ]]; then
+                bash build.sh &>> "$LOG_FILE"
+            fi
+            cp PhantomKiller.exe "$TOOLS_DIR/" 2>/dev/null || true
+            cp *.sys "$TOOLS_DIR/" 2>/dev/null || true
+            cd /tmp
+            rm -rf PhantomKiller
+        else
+            warn "Could not clone PhantomKiller."
+        fi
+    fi
+    
+    if [[ -f "$TOOLS_DIR/PhantomKiller.exe" ]]; then
+        success "PhantomKiller installed ($(ls -lh "$TOOLS_DIR/PhantomKiller.exe" | awk '{print $5}'))"
+    else
+        warn "PhantomKiller not installed. Download from GitHub releases or build manually."
+    fi
+}
+
+# Install MiniPlasma
+install_miniplasma() {
+    info "Checking MiniPlasma installation..."
+    
+    if [[ -f "$TOOLS_DIR/MiniPlasma.exe" ]]; then
+        success "MiniPlasma already installed"
+        return 0
+    fi
+    
+    info "Downloading MiniPlasma from GitHub release..."
+    cd /tmp
+    
+    wget -q "https://github.com/Nightmare-Eclipse/MiniPlasma/releases/download/main-release/PoC_AbortHydration_ArbitraryRegKey_EoP.exe" \
+        -O MiniPlasma.exe &>> "$LOG_FILE"
+    
+    if [[ -f "MiniPlasma.exe" ]] && [[ -s "MiniPlasma.exe" ]]; then
+        cp MiniPlasma.exe "$TOOLS_DIR/"
+    else
+        # Fallback: try building from source with mcs
+        info "Release download failed, attempting build from source..."
+        if git clone https://github.com/Nightmare-Eclipse/MiniPlasma.git &>> "$LOG_FILE"; then
+            cd MiniPlasma/PoC_AbortHydration_ArbitraryRegKey_EoP
+            if command -v mcs &> /dev/null; then
+                mcs -out:MiniPlasma.exe -reference:System.ServiceProcess.dll \
+                    Program.cs &>> "$LOG_FILE" && \
+                cp MiniPlasma.exe "$TOOLS_DIR/" 2>/dev/null || true
+            fi
+            cd /tmp
+            rm -rf MiniPlasma
+        else
+            warn "Could not clone MiniPlasma."
+        fi
+    fi
+    
+    rm -f /tmp/MiniPlasma.exe
+    
+    if [[ -f "$TOOLS_DIR/MiniPlasma.exe" ]]; then
+        success "MiniPlasma installed ($(ls -lh "$TOOLS_DIR/MiniPlasma.exe" | awk '{print $5}'))"
+    else
+        warn "MiniPlasma not installed. Download from GitHub releases or build with .NET."
+    fi
 }
 
 # Build adpack
@@ -335,7 +502,7 @@ build_adpack() {
     fi
     
     go mod download &>> "$LOG_FILE"
-    go build -o adpack main.go &>> "$LOG_FILE"
+    go build -o adpack . &>> "$LOG_FILE"
     
     if [[ -f "adpack" ]]; then
         sudo cp adpack /usr/local/bin/
@@ -359,39 +526,13 @@ create_config() {
 # adpack configuration
 db_path: "$ADPACK_DIR/state.db"
 
-target:
-  domain: ""
-  dc_ip: ""
-  username: ""
-  password: ""
+nxc_path: "netexec"
+bh_python: "bloodhound-python"
 
-tools:
-  netexec: "netexec"
-  donut: "donut"
-  nanodump: "$TOOLS_DIR/nanodump.exe"
-  gomimikatz: "go-mimikatz"
-  pypykatz: "pypykatz"
-  scarecrow: "ScareCrow"
-  undefend: "$TOOLS_DIR/UnDefend.exe"
-  bluehammer: "$TOOLS_DIR/FunnyApp.exe"
-  edrfreeze: "$TOOLS_DIR/EDR-Freeze.exe"
-  rtcore: "$TOOLS_DIR/RTCore64.sys"
-
-evasion:
-  default_profile: "standard"
-  command_timeout: 120
-  retry_on_failure: false
-  max_retries: 3
-
-output:
-  verbose: false
-  save_raw_output: true
-  raw_output_dir: "./output"
-  json_output: false
-
-phases:
-  skip_completed: true
-  auto_advance: false
+viper:
+  enabled: false
+  host: "localhost"
+  port: 7687
 EOF
     
     success "Configuration created at $ADPACK_DIR/config.yaml"
@@ -482,10 +623,41 @@ verify_installations() {
         warn "ScareCrow: NOT FOUND (optional)"
     fi
     
+    # Windows binaries
     if [[ -f "$TOOLS_DIR/nanodump.exe" ]]; then
         success "nanodump: $TOOLS_DIR/nanodump.exe"
     else
         warn "nanodump: NOT FOUND (optional)"
+    fi
+    
+    if [[ -f "$TOOLS_DIR/SweetPotato.exe" ]]; then
+        success "SweetPotato: $TOOLS_DIR/SweetPotato.exe"
+    else
+        warn "SweetPotato: NOT FOUND (optional)"
+    fi
+    
+    if [[ -f "$TOOLS_DIR/UnDefend.exe" ]]; then
+        success "UnDefend: $TOOLS_DIR/UnDefend.exe"
+    else
+        warn "UnDefend: NOT FOUND (build manually if needed)"
+    fi
+    
+    if [[ -f "$TOOLS_DIR/FunnyApp.exe" ]]; then
+        success "BlueHammer: $TOOLS_DIR/FunnyApp.exe"
+    else
+        warn "BlueHammer: NOT FOUND (build manually if needed)"
+    fi
+    
+    if [[ -f "$TOOLS_DIR/PhantomKiller.exe" ]]; then
+        success "PhantomKiller: $TOOLS_DIR/PhantomKiller.exe"
+    else
+        warn "PhantomKiller: NOT FOUND (build manually if needed)"
+    fi
+    
+    if [[ -f "$TOOLS_DIR/MiniPlasma.exe" ]]; then
+        success "MiniPlasma: $TOOLS_DIR/MiniPlasma.exe"
+    else
+        warn "MiniPlasma: NOT FOUND (build manually if needed)"
     fi
     
     echo ""
@@ -520,13 +692,18 @@ print_summary() {
     echo -e "${BLUE}Next steps:${NC}"
     echo -e "  1. Reload your shell: ${YELLOW}source ~/.bashrc${NC}"
     echo -e "  2. Verify installation: ${YELLOW}adpack status${NC}"
-    echo -e "  3. Check available profiles: ${YELLOW}adpack profiles${NC}"
-    echo -e "  4. Review configuration: ${YELLOW}cat ~/.adpack/config.yaml${NC}"
+    echo -e "  3. Review configuration: ${YELLOW}cat ~/.adpack/config.yaml${NC}"
     echo ""
-    echo -e "${BLUE}Optional:${NC}"
-    echo -e "  • Replace placeholder tools in ${YELLOW}$TOOLS_DIR/${NC}"
-    echo -e "  • Build Windows-specific tools (UnDefend, EDR-Freeze, etc.)"
-    echo -e "  • Set up a vulnerable AD lab (VulnAD, GOAD)"
+    echo -e "${BLUE}Security Notes:${NC}"
+    echo -e "  • Credentials are encrypted at rest using AES-GCM in SQLite"
+    echo -e "  • Encryption key stored with 600 permissions alongside database"
+    echo -e "  • Database permissions set to 600 (owner only)"
+    echo -e "  • Use disk encryption and protect the key file for sensitive engagements"
+    echo ""
+    echo -e "${BLUE}Windows Binaries:${NC}"
+    echo -e "  • Some tools require Windows to build (UnDefend, BlueHammer, etc.)"
+    echo -e "  • Check ${YELLOW}$TOOLS_DIR/${NC} for installed binaries"
+    echo -e "  • Build missing tools manually if needed"
     echo ""
     echo -e "${BLUE}Documentation:${NC}"
     echo -e "  • README.md - Quick start guide"
@@ -554,7 +731,10 @@ main() {
     install_gomimikatz
     install_pypykatz
     install_scarecrow
-    create_evasion_placeholders
+    install_undefend
+    install_bluehammer
+    install_phantomkiller
+    install_miniplasma
     build_adpack
     create_config
     update_path

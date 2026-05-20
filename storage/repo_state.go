@@ -48,9 +48,19 @@ func (db *DB) LoadUsers() ([]core.User, error) {
 }
 
 func (db *DB) SaveCred(c core.Credential) error {
-	_, err := db.Exec(`INSERT INTO credentials(type,username,domain,secret,hash,target,validated,source) VALUES(?,?,?,?,?,?,?,?)
+	// Encrypt sensitive fields
+	encSecret, err := db.Encrypt(c.Secret)
+	if err != nil {
+		return fmt.Errorf("encrypt secret: %w", err)
+	}
+	encHash, err := db.Encrypt(c.Hash)
+	if err != nil {
+		return fmt.Errorf("encrypt hash: %w", err)
+	}
+
+	_, err = db.Exec(`INSERT INTO credentials(type,username,domain,secret,hash,target,validated,source) VALUES(?,?,?,?,?,?,?,?)
 		ON CONFLICT(type, username, domain, target) DO UPDATE SET secret=excluded.secret,hash=excluded.hash,validated=excluded.validated,source=excluded.source`,
-		c.Type, c.Username, c.Domain, c.Secret, c.Hash, c.Target, boolInt(c.Validated), c.Source)
+		c.Type, c.Username, c.Domain, encSecret, encHash, c.Target, boolInt(c.Validated), c.Source)
 	return err
 }
 func (db *DB) SaveCreds(cc []core.Credential) error {
@@ -64,7 +74,37 @@ func (db *DB) SaveCreds(cc []core.Credential) error {
 func (db *DB) LoadCreds() ([]core.Credential, error) {
 	var cc []core.Credential
 	err := db.Select(&cc, "SELECT * FROM credentials")
-	return cc, err
+	if err != nil {
+		return nil, err
+	}
+
+	// Decrypt sensitive fields
+	for i := range cc {
+		if cc[i].Secret != "" {
+			decSecret, err := db.Decrypt(cc[i].Secret)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt secret for %s@%s: %w", cc[i].Username, cc[i].Domain, err)
+			}
+			// Defensive check: if decrypt returned the ciphertext unchanged, treat as error
+			if decSecret == cc[i].Secret && strings.HasPrefix(cc[i].Secret, "v1:") {
+				return nil, fmt.Errorf("decrypt secret for %s@%s: decryption returned ciphertext unchanged", cc[i].Username, cc[i].Domain)
+			}
+			cc[i].Secret = decSecret
+		}
+		if cc[i].Hash != "" {
+			decHash, err := db.Decrypt(cc[i].Hash)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt hash for %s@%s: %w", cc[i].Username, cc[i].Domain, err)
+			}
+			// Defensive check: if decrypt returned the ciphertext unchanged, treat as error
+			if decHash == cc[i].Hash && strings.HasPrefix(cc[i].Hash, "v1:") {
+				return nil, fmt.Errorf("decrypt hash for %s@%s: decryption returned ciphertext unchanged", cc[i].Username, cc[i].Domain)
+			}
+			cc[i].Hash = decHash
+		}
+	}
+
+	return cc, nil
 }
 
 func (db *DB) SavePhases(m map[core.Phase]core.PhaseStatus) error {
@@ -174,7 +214,17 @@ func (db *DB) SaveState(s *core.ADState) error {
 		return err
 	}
 	for _, c := range s.Creds {
-		if _, err := stmtCred.Exec(c.Type, c.Username, c.Domain, c.Secret, c.Hash, c.Target, boolInt(c.Validated), c.Source); err != nil {
+		// Encrypt sensitive fields
+		encSecret, err := db.Encrypt(c.Secret)
+		if err != nil {
+			return fmt.Errorf("encrypt secret: %w", err)
+		}
+		encHash, err := db.Encrypt(c.Hash)
+		if err != nil {
+			return fmt.Errorf("encrypt hash: %w", err)
+		}
+
+		if _, err := stmtCred.Exec(c.Type, c.Username, c.Domain, encSecret, encHash, c.Target, boolInt(c.Validated), c.Source); err != nil {
 			return err
 		}
 	}

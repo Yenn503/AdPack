@@ -5,11 +5,15 @@ import "time"
 type EvidenceType string
 
 const (
-	EvHostFound      EvidenceType = "host_found"
-	EvUserEnumerated EvidenceType = "user_enumerated"
-	EvCredAcquired   EvidenceType = "credential_acquired"
-	EvSessionFound   EvidenceType = "session_found"
-	EvCredValidated  EvidenceType = "credential_validated"
+	EvHostFound          EvidenceType = "host_found"
+	EvUserEnumerated     EvidenceType = "user_enumerated"
+	EvComputerEnumerated EvidenceType = "computer_enumerated"
+	EvGPOEnumerated      EvidenceType = "gpo_enumerated"
+	EvADCSEnumerated     EvidenceType = "adcs_enumerated"
+	EvCredAcquired       EvidenceType = "credential_acquired"
+	EvSessionFound       EvidenceType = "session_found"
+	EvCredValidated      EvidenceType = "credential_validated"
+	EvPrivEscalated      EvidenceType = "privilege_escalated"
 )
 
 type EvidenceEntry struct {

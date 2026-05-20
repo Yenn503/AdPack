@@ -22,7 +22,9 @@ source ~/.bashrc
 adpack status
 ```
 
-Setup script installs everything:
+Setup.sh is best-effort; tool availability is environment-dependent and tiered. Cross-compilable tools (UnDefend) are built from source, release-binary tools (PhantomKiller, MiniPlasma) are downloaded as artifacts, and Windows-native tools (BlueHammer) require manual build on Windows.
+
+Setup script installs core tools and creates placeholders:
 - ✅ System dependencies (gcc, make, mingw, python3)
 - ✅ Go 1.25+ installation
 - ✅ NetExec (nxc) via pipx
@@ -35,6 +37,7 @@ Setup script installs everything:
 - ✅ Default configuration file
 - ✅ PATH configuration
 - ✅ Verification tests
+- ⚠️ Placeholders for evasion tool binaries (UnDefend, BlueHammer, etc.)
 
 **Time:** ~5-10 min
 
@@ -105,7 +108,7 @@ git clone https://github.com/yourusername/adpack.git
 cd adpack
 
 # Build binary
-go build -o adpack main.go
+go build -o adpack .
 
 # Install system-wide (optional)
 sudo mv adpack /usr/local/bin/
@@ -197,11 +200,11 @@ pypykatz --help
 
 ## Evasion Tools
 
-Tools for bypassing endpoint protection.
+Advanced evasion tools require separate acquisition. The setup script creates placeholders.
 
 ### ScareCrow
 
-Signed loader DLL generation for shellcode.
+Signed loader DLL generation for shellcode (installed by setup.sh).
 
 ```bash
 # Clone repository
@@ -220,72 +223,43 @@ ScareCrow --help
 
 ### UnDefend
 
-Windows Defender termination tool.
-
-**Note**: UnDefend.exe is a Windows binary. Build on Windows or use pre-compiled binary.
+Windows Defender termination tool. Cross-compiled binary available at `~/tools/UnDefend.exe` after running setup.
 
 ```bash
-# Clone repository (on Windows or WSL with Windows filesystem access)
-git clone https://github.com/APTortellini/unDefend.git
-cd unDefend
-
-# Build on Windows with Visual Studio or MinGW
-# Or download pre-compiled binary from releases
-
-# Copy to tools directory
-mkdir -p ~/tools
-cp UnDefend.exe ~/tools/
+# Verify
+ls -lh ~/tools/UnDefend.exe
 ```
 
 ### BlueHammer (FunnyApp)
 
 CVE-2026-33825 Defender RPC exploit for SAM extraction.
 
-**Note**: This is a fictional zero-day for demonstration. Replace with actual exploit if available.
+**Note**: BlueHammer's 3313-line MSVC project (`FunnyApp.cpp`) cannot be cross-compiled with MinGW (requires `cfapi.h`, RPC IDL, Windows Update Agent COM). Must be built natively on Windows with Visual Studio 2022 via `FunnyApp.sln`. No public GitHub release. Setup.sh creates a placeholder.
 
 ```bash
-# Placeholder for BlueHammer/FunnyApp
-# In production, this would be a custom exploit or tool
-# For testing, create a dummy binary
+# Setup.sh creates a placeholder at ~/tools/FunnyApp.exe
+# Replace with actual exploit binary built on Windows in Visual Studio
 
-mkdir -p ~/tools
-echo '#!/bin/bash' > ~/tools/FunnyApp.exe
-echo 'echo "[*] BlueHammer exploit executed (placeholder)"' >> ~/tools/FunnyApp.exe
-chmod +x ~/tools/FunnyApp.exe
+# Verify
+ls -lh ~/tools/FunnyApp.exe
 ```
 
-### EDR-Freeze (ColdWer)
+### PhantomKiller
 
-EDR process freezing tool.
-
-**Note**: EDR-Freeze is a Windows binary. Build on Windows or use pre-compiled binary.
+BYOVD EDR killer using Lenovo BootRepair.sys. Pre-built binary + driver available at `~/tools/PhantomKiller.exe` and `~/tools/PhantomKiller.sys` after running setup.
 
 ```bash
-# Clone repository (if available)
-# git clone https://github.com/example/edr-freeze.git
-# cd edr-freeze
-
-# Build on Windows with Visual Studio or MinGW
-# Or download pre-compiled binary
-
-# Copy to tools directory
-mkdir -p ~/tools
-# cp EDR-Freeze.exe ~/tools/
+# Verify
+ls -lh ~/tools/PhantomKiller.exe ~/tools/PhantomKiller.sys
 ```
 
-### RTCore64.sys
+### MiniPlasma
 
-Vulnerable driver for BYOVD (Bring Your Own Vulnerable Driver) attacks.
-
-**Note**: RTCore64.sys is a signed vulnerable driver from MSI Afterburner.
+Cloud Filter API EoP (CVE-2020-17103) for SYSTEM shell. Built binary + runtime DLLs available at `~/tools/MiniPlasma.exe`, `~/tools/NtApiDotNet.dll`, and `~/tools/Microsoft.Win32.TaskScheduler.dll` after running setup.
 
 ```bash
-# Download from public sources or extract from MSI Afterburner
-# https://www.msi.com/Landing/afterburner
-
-# Copy to tools directory
-mkdir -p ~/tools
-# cp RTCore64.sys ~/tools/
+# Verify
+ls -lh ~/tools/MiniPlasma.exe ~/tools/NtApiDotNet.dll ~/tools/Microsoft.Win32.TaskScheduler.dll
 ```
 
 ## Environment Setup
@@ -307,47 +281,15 @@ chmod 755 ~/tools
 Create `~/.adpack/config.yaml`:
 
 ```yaml
-# Database location
 db_path: "~/.adpack/state.db"
 
-# Target defaults
-target:
-  domain: ""
-  dc_ip: ""
-  username: ""
-  password: ""
+nxc_path: "netexec"
+bh_python: "bloodhound-python"
 
-# Tool paths
-tools:
-  netexec: "netexec"
-  donut: "donut"
-  nanodump: "~/tools/nanodump.exe"
-  gomimikatz: "go-mimikatz"
-  pypykatz: "pypykatz"
-  scarecrow: "ScareCrow"
-  undefend: "~/tools/UnDefend.exe"
-  bluehammer: "~/tools/FunnyApp.exe"
-  edrfreeze: "~/tools/EDR-Freeze.exe"
-  rtcore: "~/tools/RTCore64.sys"
-
-# Evasion settings
-evasion:
-  default_profile: "standard"
-  command_timeout: 120
-  retry_on_failure: false
-  max_retries: 3
-
-# Output settings
-output:
-  verbose: false
-  save_raw_output: true
-  raw_output_dir: "./output"
-  json_output: false
-
-# Phase settings
-phases:
-  skip_completed: true
-  auto_advance: false
+viper:
+  enabled: false
+  host: "localhost"
+  port: 7687
 ```
 
 ### PATH Configuration
@@ -406,14 +348,14 @@ ScareCrow --help
 # UnDefend (Windows binary)
 ls -lh ~/tools/UnDefend.exe
 
-# BlueHammer/FunnyApp (Windows binary)
+# BlueHammer/FunnyApp (Windows binary — requires MSVC build)
 ls -lh ~/tools/FunnyApp.exe
 
-# EDR-Freeze (Windows binary)
-ls -lh ~/tools/EDR-Freeze.exe
+# PhantomKiller BYOVD (Windows binary + driver)
+ls -lh ~/tools/PhantomKiller.exe ~/tools/PhantomKiller.sys
 
-# RTCore64.sys (driver)
-ls -lh ~/tools/RTCore64.sys
+# MiniPlasma (Windows binary + DLL deps)
+ls -lh ~/tools/MiniPlasma.exe ~/tools/NtApiDotNet.dll ~/tools/Microsoft.Win32.TaskScheduler.dll
 ```
 
 ### Test adpack
@@ -466,7 +408,7 @@ which netexec
 cd adpack
 go clean
 go mod tidy
-go build -o adpack main.go
+go build -o adpack .
 
 # Check for missing dependencies
 go mod download
@@ -553,12 +495,13 @@ adpack run discovery --target <dc_ip>
 
 ## Security Considerations
 
-- Only use on authorised targets
-- Protect tool binaries with appropriate permissions
-- Store creds securely
+- Only use on authorised targets with explicit written permission
+- Protect tool binaries with appropriate permissions (chmod 700)
+- **Credentials are stored in plaintext** — Protect `~/.adpack/state.db` with file permissions (600) and disk encryption
 - Clean up after engagements: `adpack reset state`
 - Follow responsible disclosure for vulnerabilities found
-- Zero-day exploits should be used responsibly
+- Advanced evasion techniques should be used responsibly and legally
+- Acquire exploit binaries through legitimate channels only
 
 ## Next Steps
 

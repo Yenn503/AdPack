@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -13,11 +15,12 @@ import (
 )
 
 var (
-	maxPhases  int
-	skipFail   bool
-	seedDomain string
-	seedUser   string
-	seedPass   string
+	maxPhases       int
+	skipFail        bool
+	seedDomain      string
+	seedUser        string
+	seedPass        string
+	providerLogPath string
 )
 
 var autoRunCmd = &cobra.Command{
@@ -45,6 +48,19 @@ past failed phases instead of stopping.`,
 		}
 		fmt.Println(lipgloss.NewStyle().Foreground(utils.ColorSecondary).Render("  " + bar))
 		fmt.Println()
+
+		// Provider event logging
+		sink := core.ProviderEventSink(core.NoopSink{})
+		if providerLogPath != "" {
+			f, fErr := os.Create(providerLogPath)
+			if fErr != nil {
+				return fmt.Errorf("create provider log: %w", fErr)
+			}
+			defer f.Close()
+			sink = core.NewJSONLSink(f)
+			fmt.Printf("  %s  Provider events → %s\n",
+				utils.InfoStyle.Render("→"), providerLogPath)
+		}
 
 		// Seed initial credentials from flags
 		if seedDomain != "" && seedUser != "" && seedPass != "" {
@@ -190,7 +206,12 @@ past failed phases instead of stopping.`,
 				success = result.Success
 
 			case core.PhaseSessionHarvest:
-				result := modules.RunSessionHarvest(state, targetHost)
+				provider, pErr := modules.ProviderFromState(state, targetHost, sink)
+				if pErr != nil {
+					fmt.Printf("[!] %v\n", pErr)
+					break
+				}
+				result := modules.RunSessionHarvest(context.Background(), provider, state)
 				if result.Success {
 					for _, ev := range result.Evidence {
 						DB.SaveEvidence(ev)
@@ -202,7 +223,12 @@ past failed phases instead of stopping.`,
 				}
 
 			case core.PhaseGraphAnalysis:
-				result := modules.RunGraphAnalysis(state, targetHost)
+				provider, pErr := modules.ProviderFromState(state, targetHost, sink)
+				if pErr != nil {
+					fmt.Printf("[!] %v\n", pErr)
+					break
+				}
+				result := modules.RunGraphAnalysis(context.Background(), provider)
 				if result.Success {
 					for _, c := range result.Computers {
 						DB.SaveComputer(c)
@@ -235,7 +261,7 @@ past failed phases instead of stopping.`,
 				}
 
 			case core.PhasePrivEsc:
-				result := modules.RunPrivesc(state, targetHost)
+				result := modules.RunPrivesc(state, targetHost, evasionProfile)
 				if result.Success {
 					for _, ev := range result.Evidence {
 						DB.SaveEvidence(ev)
@@ -318,4 +344,5 @@ func init() {
 	autoRunCmd.Flags().StringVar(&seedDomain, "domain", "", "Target domain (seeds initial credential)")
 	autoRunCmd.Flags().StringVar(&seedUser, "user", "", "Username (seeds initial credential)")
 	autoRunCmd.Flags().StringVar(&seedPass, "password", "", "Password (seeds initial credential)")
+	autoRunCmd.Flags().StringVar(&providerLogPath, "provider-log", "", "Write provider acquisition events as JSONL to this path")
 }

@@ -15,31 +15,6 @@ func (blueHammerTool) Available() bool {
 	return utils.ToolAvailable("FunnyApp.exe") || utils.ToolAvailable("BlueHammer.exe") || utils.ToolAvailable("bluehammer")
 }
 
-func (blueHammerTool) Validate() error {
-	if !BlueHammer.Available() {
-		return &ToolError{Tool: "BlueHammer", Op: "validate", Err: fmt.Errorf("FunnyApp.exe not found")}
-	}
-	return nil
-}
-
-func (blueHammerTool) Capabilities() []Capability {
-	return []Capability{CapEDRBypass}
-}
-
-func (b blueHammerTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
-	ch := make(chan ExecutionEvent, 1)
-	go func() {
-		defer close(ch)
-		result, err := b.Run(ctx, req)
-		if err != nil {
-			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
-			return
-		}
-		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
-	}()
-	return ch, nil
-}
-
 type BlueHammerConfig struct {
 	Binary    string
 	SessionID int

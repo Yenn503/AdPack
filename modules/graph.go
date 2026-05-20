@@ -3,60 +3,50 @@ package modules
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"adpack/core"
-	"adpack/tools"
 )
 
-func RunGraphAnalysis(state *core.ADState, targetHost string) *core.ToolResult {
+func RunGraphAnalysis(ctx context.Context, provider core.DirectoryProvider) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 
-	host, found := selectTarget(state, targetHost)
-	if !found {
-		fmt.Println("[!] No target for graph analysis")
-		result.Success = false
-		return result
-	}
-
-	domain, user, pass, hash := getCredential(state)
-	if domain == "" || user == "" {
-		fmt.Println("[!] No credentials for graph analysis")
-		result.Success = false
-		return result
-	}
-
-	ctx := context.Background()
-	target := tools.NetExecTarget{
-		Protocol: "ldap", Host: host.IP,
-		Domain: domain, Username: user, Password: pass, Hash: hash,
-	}
-
-	fmt.Println("[*] Enumerating computers via LDAP...")
-	r, err := tools.NetExec.Run(ctx, target, "--computers", []string{})
-	if err == nil && r.Success {
-		computers := parseComputers(r.Stdout, domain)
+	fmt.Println("[*] Enumerating computers...")
+	computers, err := provider.EnumerateComputers(ctx)
+	if err != nil {
+		fmt.Printf("[!] Computer enumeration failed: %v\n", err)
+	} else {
 		result.Computers = append(result.Computers, computers...)
 		for _, c := range computers {
+			confidence := 0.85
+			if c.IsDC {
+				confidence = 0.95
+			}
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvUserEnumerated, Phase: core.PhaseGraphAnalysis,
-				Source: "ldap", Key: c.Name + "@" + c.Domain, Value: c.OperatingSystem,
+				Type: core.EvComputerEnumerated, Phase: core.PhaseGraphAnalysis,
+				Source: "ldap", Key: c.Name + "@" + c.Domain,
+				Value: c.OperatingSystem, Confidence: confidence,
 				Timestamp: time.Now(),
 			})
 		}
 		fmt.Printf("[+] %d computers enumerated\n", len(computers))
 	}
 
-	fmt.Println("[*] Enumerating GPOs via LDAP...")
-	r, err = tools.NetExec.Run(ctx, target, "-M", []string{"gpolocal"})
-	if err == nil && r.Success {
-		gpos := parseGPOs(r.Stdout, domain)
+	fmt.Println("[*] Enumerating GPOs...")
+	gpos, err := provider.EnumerateGPOs(ctx)
+	if err != nil {
+		fmt.Printf("[!] GPO enumeration failed: %v\n", err)
+	} else {
 		result.GPOs = append(result.GPOs, gpos...)
 		for _, g := range gpos {
+			confidence := 0.9
+			if g.GUID == "" {
+				confidence = 0.5
+			}
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvUserEnumerated, Phase: core.PhaseGraphAnalysis,
-				Source: "ldap", Key: g.Name + "@" + g.Domain, Value: g.GUID,
+				Type: core.EvGPOEnumerated, Phase: core.PhaseGraphAnalysis,
+				Source: "ldap", Key: g.Name + "@" + g.Domain,
+				Value: g.GUID, Confidence: confidence,
 				Timestamp: time.Now(),
 			})
 		}
@@ -64,14 +54,20 @@ func RunGraphAnalysis(state *core.ADState, targetHost string) *core.ToolResult {
 	}
 
 	fmt.Println("[*] Enumerating ADCS certificate templates...")
-	r, err = tools.NetExec.Run(ctx, target, "-M", []string{"adcs"})
-	if err == nil && r.Success {
-		templates := parseADCSTemplates(r.Stdout, domain)
+	templates, err := provider.EnumerateADCSTemplates(ctx)
+	if err != nil {
+		fmt.Printf("[!] ADCS enumeration failed: %v\n", err)
+	} else {
 		result.ADCS = append(result.ADCS, templates...)
 		for _, t := range templates {
+			confidence := 0.5
+			if t.Vuln != "" {
+				confidence = 0.9
+			}
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvUserEnumerated, Phase: core.PhaseGraphAnalysis,
-				Source: "ldap", Key: t.Name + "@" + t.Domain, Value: t.Vuln,
+				Type: core.EvADCSEnumerated, Phase: core.PhaseGraphAnalysis,
+				Source: "ldap", Key: t.Name + "@" + t.Domain,
+				Value: t.Vuln, Confidence: confidence,
 				Timestamp: time.Now(),
 			})
 		}
@@ -79,57 +75,4 @@ func RunGraphAnalysis(state *core.ADState, targetHost string) *core.ToolResult {
 	}
 
 	return result
-}
-
-func parseComputers(output, domain string) []core.Computer {
-	var computers []core.Computer
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "|") {
-			continue
-		}
-		if !strings.Contains(line, "$") && !strings.HasSuffix(line, "$") {
-			continue
-		}
-		name := strings.Fields(line)[0]
-		name = strings.TrimSuffix(name, "$")
-		computers = append(computers, core.Computer{
-			Name: name, Domain: domain, IsDC: strings.Contains(strings.ToLower(line), "server"),
-		})
-	}
-	return computers
-}
-
-func parseGPOs(output, domain string) []core.GPO {
-	var gpos []core.GPO
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "|") {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			gpos = append(gpos, core.GPO{
-				Name: parts[0], GUID: parts[1], Domain: domain,
-			})
-		}
-	}
-	return gpos
-}
-
-func parseADCSTemplates(output, domain string) []core.ADCSTemplate {
-	var templates []core.ADCSTemplate
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "[") {
-			continue
-		}
-		templates = append(templates, core.ADCSTemplate{
-			Name: line, Domain: domain,
-		})
-	}
-	return templates
 }

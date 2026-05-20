@@ -1,10 +1,16 @@
 package storage
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
@@ -12,13 +18,170 @@ import (
 
 type DB struct {
 	*sqlx.DB
-	Path string
+	Path       string
+	encryptKey []byte
+}
+
+// getOrCreateEncryptionKey returns a persistent 32-byte encryption key stored
+// alongside the database. The key is randomly generated on first use and stored
+// with restrictive permissions (0600). This ensures keys survive restarts and
+// are not derived from user-controllable inputs.
+func getOrCreateEncryptionKey(dbPath string) ([]byte, error) {
+	keyPath := dbPath + ".key"
+
+	// Try to read existing key
+	if data, err := os.ReadFile(keyPath); err == nil {
+		if len(data) != 32 {
+			return nil, fmt.Errorf("invalid encryption key size at %s: got %d bytes, expected 32 bytes (do not regenerate - restore from backup or investigate)", keyPath, len(data))
+		}
+		return data, nil
+	}
+
+	// Generate new random key
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return nil, fmt.Errorf("generate encryption key: %w", err)
+	}
+
+	// Write key with restrictive permissions atomically (O_EXCL ensures first writer wins)
+	f, err := os.OpenFile(keyPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+	if err != nil {
+		if os.IsExist(err) {
+			// Another process created the key concurrently, re-read it
+			data, readErr := os.ReadFile(keyPath)
+			if readErr != nil {
+				return nil, fmt.Errorf("read concurrent key: %w", readErr)
+			}
+			if len(data) != 32 {
+				return nil, fmt.Errorf("concurrent key at %s has invalid size: got %d bytes, expected 32", keyPath, len(data))
+			}
+			return data, nil
+		}
+		return nil, fmt.Errorf("create encryption key file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(key); err != nil {
+		return nil, fmt.Errorf("write encryption key: %w", err)
+	}
+
+	log.Printf("Generated new encryption key at %s", keyPath)
+	return key, nil
+}
+
+// Encrypt encrypts plaintext using AES-GCM with a versioned prefix
+func (db *DB) Encrypt(plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+
+	block, err := aes.NewCipher(db.encryptKey)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+	encoded := base64.StdEncoding.EncodeToString(ciphertext)
+	return "v1:" + encoded, nil
+}
+
+// Decrypt decrypts ciphertext using AES-GCM, handling versioned and legacy formats
+func (db *DB) Decrypt(ciphertext string) (string, error) {
+	if ciphertext == "" {
+		return "", nil
+	}
+
+	// Check for versioned format
+	if strings.HasPrefix(ciphertext, "v1:") {
+		encoded := strings.TrimPrefix(ciphertext, "v1:")
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return "", fmt.Errorf("decrypt v1: base64 decode failed: %w", err)
+		}
+
+		block, err := aes.NewCipher(db.encryptKey)
+		if err != nil {
+			return "", fmt.Errorf("decrypt v1: cipher init failed: %w", err)
+		}
+
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return "", fmt.Errorf("decrypt v1: GCM init failed: %w", err)
+		}
+
+		nonceSize := gcm.NonceSize()
+		if len(data) < nonceSize {
+			return "", fmt.Errorf("decrypt v1: ciphertext too short")
+		}
+
+		nonce, cipherData := data[:nonceSize], data[nonceSize:]
+		plaintext, err := gcm.Open(nil, nonce, cipherData, nil)
+		if err != nil {
+			return "", fmt.Errorf("decrypt v1: decryption failed: %w", err)
+		}
+
+		return string(plaintext), nil
+	}
+
+	// Legacy plaintext or old encrypted format - attempt base64 decode
+	data, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil {
+		// Not base64, assume legacy plaintext
+		return ciphertext, nil
+	}
+
+	block, err := aes.NewCipher(db.encryptKey)
+	if err != nil {
+		return ciphertext, nil
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return ciphertext, nil
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		// Too short, assume legacy plaintext
+		return ciphertext, nil
+	}
+
+	nonce, cipherData := data[:nonceSize], data[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, cipherData, nil)
+	if err != nil {
+		// Decryption failed, assume legacy plaintext
+		return ciphertext, nil
+	}
+
+	return string(plaintext), nil
 }
 
 func Open(path string) (*DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
+
+	// Create DB file with restrictive permissions if it doesn't exist
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil && !os.IsExist(err) {
+			return nil, fmt.Errorf("create db file: %w", err)
+		}
+		if f != nil {
+			f.Close()
+		}
+	}
+
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 	db, err := sqlx.Open("sqlite", dsn)
 	if err != nil {
@@ -28,10 +191,28 @@ func Open(path string) (*DB, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
+
+	// Ensure file permissions are restrictive (in case file already existed)
+	if err := os.Chmod(path, 0600); err != nil {
+		log.Printf("Warning: Could not set DB permissions: %v", err)
+	}
+
+	// Get or create encryption key
+	encryptKey, err := getOrCreateEncryptionKey(path)
+	if err != nil {
+		return nil, fmt.Errorf("encryption key: %w", err)
+	}
+
+	dbWrapper := &DB{
+		DB:         db,
+		Path:       path,
+		encryptKey: encryptKey,
+	}
+
 	if err := migrate(db); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	return &DB{DB: db, Path: path}, nil
+	return dbWrapper, nil
 }
 
 func DefaultPath() string {

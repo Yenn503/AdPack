@@ -15,31 +15,6 @@ func (unDefendTool) Available() bool {
 	return utils.ToolAvailable("UnDefend.exe") || utils.ToolAvailable("UnDefend") || utils.ToolAvailable("undefend")
 }
 
-func (unDefendTool) Validate() error {
-	if !UnDefend.Available() {
-		return &ToolError{Tool: "UnDefend", Op: "validate", Err: fmt.Errorf("UnDefend.exe not found")}
-	}
-	return nil
-}
-
-func (unDefendTool) Capabilities() []Capability {
-	return []Capability{CapDefenderKill}
-}
-
-func (u unDefendTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
-	ch := make(chan ExecutionEvent, 1)
-	go func() {
-		defer close(ch)
-		result, err := u.Run(ctx, req)
-		if err != nil {
-			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
-			return
-		}
-		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
-	}()
-	return ch, nil
-}
-
 type UnDefendMode string
 
 const (
@@ -102,14 +77,4 @@ func (u unDefendTool) ExecRemote(ctx context.Context, target NetExecTarget, remo
 		return cmdResultToExecResult(cr), &ToolError{Tool: "UnDefend", Op: "exec_remote", Err: err, ExitCode: cr.ExitCode}
 	}
 	return cmdResultToExecResult(cr), nil
-}
-
-func cmdResultToExecResult(cr utils.CmdResult) *ExecutionResult {
-	return &ExecutionResult{
-		Stdout:   cr.Stdout,
-		Stderr:   cr.Stderr,
-		ExitCode: cr.ExitCode,
-		Success:  cr.Success,
-		Duration: cr.Duration,
-	}
 }

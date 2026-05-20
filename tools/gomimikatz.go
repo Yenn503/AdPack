@@ -14,17 +14,6 @@ var GoMimikatz = goMimikatzTool{}
 func (goMimikatzTool) Name() string    { return "go-mimikatz" }
 func (goMimikatzTool) Available() bool { return utils.ToolAvailable("go-mimikatz") }
 
-func (goMimikatzTool) Validate() error {
-	if !GoMimikatz.Available() {
-		return &ToolError{Tool: "go-mimikatz", Op: "validate", Err: fmt.Errorf("go-mimikatz not found")}
-	}
-	return nil
-}
-
-func (goMimikatzTool) Capabilities() []Capability {
-	return []Capability{CapLSASSDump, CapDCSync}
-}
-
 type GoMimikatzConfig struct {
 	Binary     string
 	Command    string
@@ -38,24 +27,6 @@ func DefaultGoMimikatzConfig() GoMimikatzConfig {
 		Command: "sekurlsa::logonpasswords",
 		Timeout: 60,
 	}
-}
-
-func (g goMimikatzTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
-	return g.Sekurlsa(ctx, req)
-}
-
-func (g goMimikatzTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
-	ch := make(chan ExecutionEvent, 1)
-	go func() {
-		defer close(ch)
-		result, err := g.Run(ctx, req)
-		if err != nil {
-			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
-			return
-		}
-		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
-	}()
-	return ch, nil
 }
 
 func (g goMimikatzTool) Sekurlsa(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {

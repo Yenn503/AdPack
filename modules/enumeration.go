@@ -21,27 +21,18 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 		return result
 	}
 
-	// Use state creds if available, otherwise fall back to lab defaults
-	user := "Administrator"
-	pass := "P@ssw0rd123!"
-	domain := "vulnad.local"
-
+	// Use state creds if available
 	dbDomain, dbUser, dbPass, _ := getCredential(state)
-	if dbUser != "" && dbPass != "" {
-		user = dbUser
-		pass = dbPass
-		domain = dbDomain
-	} else {
-		// Seed the admin credential so subsequent phases can use it
-		result.Creds = append(result.Creds, core.Credential{
-			Type:      core.CredPlaintext,
-			Username:  user,
-			Domain:    domain,
-			Secret:    pass,
-			Source:    "manual_seed",
-			Validated: true,
-		})
+	if dbUser == "" || dbPass == "" {
+		fmt.Println(utils.ErrorStyle.Render("[!] No credentials available for enumeration."))
+		fmt.Println(utils.InfoStyle.Render("    Seed credentials with: adpack run discovery --domain <domain> --user <user> --password <pass>"))
+		result.Success = false
+		return result
 	}
+
+	user := dbUser
+	pass := dbPass
+	domain := dbDomain
 
 	target := tools.NetExecTarget{
 		Protocol: "ldap",

@@ -15,31 +15,6 @@ func (phantomKillerTool) Available() bool {
 	return utils.ToolAvailable("PhantomKiller.exe") || utils.ToolAvailable("PhantomKiller")
 }
 
-func (phantomKillerTool) Validate() error {
-	if !PhantomKiller.Available() {
-		return &ToolError{Tool: "PhantomKiller", Op: "validate", Err: fmt.Errorf("PhantomKiller.exe not found")}
-	}
-	return nil
-}
-
-func (phantomKillerTool) Capabilities() []Capability {
-	return []Capability{CapEDRKill}
-}
-
-func (p phantomKillerTool) RunStream(ctx context.Context, req ExecutionRequest) (<-chan ExecutionEvent, error) {
-	ch := make(chan ExecutionEvent, 1)
-	go func() {
-		defer close(ch)
-		result, err := p.Run(ctx, req)
-		if err != nil {
-			ch <- ExecutionEvent{Type: "error", Status: StatusFailed, Error: err}
-			return
-		}
-		ch <- ExecutionEvent{Type: "complete", Status: StatusSuccess, Result: result}
-	}()
-	return ch, nil
-}
-
 type PhantomKillerMode string
 
 const (
