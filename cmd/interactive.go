@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"os"
 
+	"adpack/tui"
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
-	"adpack/tui"
 )
 
 var interactiveCmd = &cobra.Command{
-	Use:   "interactive",
-	Short: "Launch interactive TUI mode",
+	Use:     "interactive",
+	Short:   "Launch interactive TUI mode",
 	Aliases: []string{"i", "tui", "repl"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if DB == nil {

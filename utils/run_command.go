@@ -41,10 +41,15 @@ func RunCommandCtx(ctx context.Context, name string, args []string) CmdResult {
 		if ctx.Err() == context.DeadlineExceeded {
 			r.Stderr = "Command timed out: " + r.Stderr
 		}
-		if ee, ok := err.(*exec.ExitError); ok { r.ExitCode = ee.ExitCode() } else { r.ExitCode = -1 }
+		if ee, ok := err.(*exec.ExitError); ok {
+			r.ExitCode = ee.ExitCode()
+		} else {
+			r.ExitCode = -1
+		}
 		r.Success = false
 	} else {
-		r.ExitCode = 0; r.Success = true
+		r.ExitCode = 0
+		r.Success = true
 	}
 	return r
 }

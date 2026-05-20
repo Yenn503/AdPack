@@ -15,10 +15,10 @@ func scanNode(scanner interface {
 }) (core.DAGNode, error) {
 	var (
 		id, campaign, parentID, tool, phase, status string
-		attempt                                      int
-		lastError                                    string
-		inputStr, outputStr, createdStr, startedStr  string
-		finishedStr                                  *string
+		attempt                                     int
+		lastError                                   string
+		inputStr, outputStr, createdStr, startedStr string
+		finishedStr                                 *string
 	)
 	err := scanner.Scan(&id, &campaign, &parentID, &tool, &phase, &status, &attempt, &lastError, &inputStr, &outputStr, &createdStr, &startedStr, &finishedStr)
 	if err != nil {

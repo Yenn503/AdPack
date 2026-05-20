@@ -1,8 +1,8 @@
 package tools
 
 import (
-	"context"
 	"adpack/utils"
+	"context"
 	"fmt"
 )
 
@@ -10,7 +10,7 @@ type unDefendTool struct{}
 
 var UnDefend = unDefendTool{}
 
-func (unDefendTool) Name() string    { return "UnDefend" }
+func (unDefendTool) Name() string { return "UnDefend" }
 func (unDefendTool) Available() bool {
 	return utils.ToolAvailable("UnDefend.exe") || utils.ToolAvailable("UnDefend") || utils.ToolAvailable("undefend")
 }

@@ -24,35 +24,35 @@ type Host struct {
 }
 
 type GPO struct {
-	ID          int    `json:"id" db:"id"`
-	Name        string `json:"name" db:"name"`
-	GUID        string `json:"guid" db:"guid"`
-	Domain      string `json:"domain" db:"domain"`
-	IsLinked    bool   `json:"is_linked" db:"is_linked"`
-	CanEdit     bool   `json:"can_edit" db:"can_edit"`
+	ID       int    `json:"id" db:"id"`
+	Name     string `json:"name" db:"name"`
+	GUID     string `json:"guid" db:"guid"`
+	Domain   string `json:"domain" db:"domain"`
+	IsLinked bool   `json:"is_linked" db:"is_linked"`
+	CanEdit  bool   `json:"can_edit" db:"can_edit"`
 }
 
 type ADCSTemplate struct {
-	ID          int    `json:"id" db:"id"`
-	Name        string `json:"name" db:"name"`
-	Domain      string `json:"domain" db:"domain"`
-	Vuln        string `json:"vuln" db:"vuln"` // ESC1, ESC8, etc.
-	Enrollee    string `json:"enrollee" db:"enrollee"`
+	ID       int    `json:"id" db:"id"`
+	Name     string `json:"name" db:"name"`
+	Domain   string `json:"domain" db:"domain"`
+	Vuln     string `json:"vuln" db:"vuln"` // ESC1, ESC8, etc.
+	Enrollee string `json:"enrollee" db:"enrollee"`
 }
 
 type User struct {
-	ID             int      `json:"id" db:"id"`
-	Username       string   `json:"username" db:"username"`
-	Domain         string   `json:"domain" db:"domain"`
-	SAMAccountName string   `json:"sam_account_name" db:"sam_account_name"`
-	SID            string   `json:"sid" db:"sid"`
-	Enabled        bool     `json:"enabled" db:"enabled"`
-	IsAdmin        bool     `json:"is_admin" db:"is_admin"`
-	IsDA           bool     `json:"is_da" db:"is_da"`
-	Description    string   `json:"description" db:"description"`
-	Source         string   `json:"source" db:"source"`
-	SPNs           string   `json:"spns,omitempty" db:"spns"`
-	NoPreauth      bool     `json:"no_preauth" db:"no_preauth"`
+	ID             int    `json:"id" db:"id"`
+	Username       string `json:"username" db:"username"`
+	Domain         string `json:"domain" db:"domain"`
+	SAMAccountName string `json:"sam_account_name" db:"sam_account_name"`
+	SID            string `json:"sid" db:"sid"`
+	Enabled        bool   `json:"enabled" db:"enabled"`
+	IsAdmin        bool   `json:"is_admin" db:"is_admin"`
+	IsDA           bool   `json:"is_da" db:"is_da"`
+	Description    string `json:"description" db:"description"`
+	Source         string `json:"source" db:"source"`
+	SPNs           string `json:"spns,omitempty" db:"spns"`
+	NoPreauth      bool   `json:"no_preauth" db:"no_preauth"`
 }
 
 type Group struct {
@@ -74,13 +74,14 @@ type Computer struct {
 }
 
 type Session struct {
-	ID         int    `json:"id" db:"id"`
-	HostID     int    `json:"host_id" db:"host_id"`
-	UserID     int    `json:"user_id" db:"user_id"`
-	Source     string `json:"source" db:"source"`
+	ID     int    `json:"id" db:"id"`
+	HostID int    `json:"host_id" db:"host_id"`
+	UserID int    `json:"user_id" db:"user_id"`
+	Source string `json:"source" db:"source"`
 }
 
 type CredType string
+
 const (
 	CredPlaintext CredType = "plaintext"
 	CredHash      CredType = "hash"
@@ -112,6 +113,7 @@ type BloodhoundMeta struct {
 }
 
 type Phase string
+
 const (
 	PhaseDiscovery      Phase = "discovery"
 	PhaseEnumeration    Phase = "enumeration"
@@ -132,20 +134,30 @@ var AllPhases = []Phase{
 
 func (p Phase) Dependencies() []Phase {
 	switch p {
-	case PhaseDiscovery:      return nil
-	case PhaseEnumeration:    return []Phase{PhaseDiscovery}
-	case PhaseCredentialAcq:  return []Phase{PhaseEnumeration}
-	case PhaseSessionHarvest: return []Phase{PhaseEnumeration, PhaseCredentialAcq}
-	case PhaseGraphAnalysis:  return []Phase{PhaseEnumeration}
-	case PhaseLateral:        return []Phase{PhaseCredentialAcq, PhaseSessionHarvest}
-	case PhaseValidation:     return []Phase{PhaseCredentialAcq}
-	case PhasePrivEsc:        return []Phase{PhaseEnumeration, PhaseGraphAnalysis}
-	case PhasePersistence:    return []Phase{PhaseCredentialAcq, PhasePrivEsc}
+	case PhaseDiscovery:
+		return nil
+	case PhaseEnumeration:
+		return []Phase{PhaseDiscovery}
+	case PhaseCredentialAcq:
+		return []Phase{PhaseEnumeration}
+	case PhaseSessionHarvest:
+		return []Phase{PhaseEnumeration, PhaseCredentialAcq}
+	case PhaseGraphAnalysis:
+		return []Phase{PhaseEnumeration}
+	case PhaseLateral:
+		return []Phase{PhaseCredentialAcq, PhaseSessionHarvest}
+	case PhaseValidation:
+		return []Phase{PhaseCredentialAcq}
+	case PhasePrivEsc:
+		return []Phase{PhaseEnumeration, PhaseGraphAnalysis}
+	case PhasePersistence:
+		return []Phase{PhaseCredentialAcq, PhasePrivEsc}
 	}
 	return nil
 }
 
 type PhaseStatus int
+
 const (
 	PhaseUntouched  PhaseStatus = 0
 	PhaseInProgress PhaseStatus = 1
@@ -154,15 +166,15 @@ const (
 )
 
 type ADState struct {
-	Hosts     []Host              `json:"hosts"`
-	Users     []User              `json:"users"`
-	Groups    []Group             `json:"groups"`
-	Computers []Computer          `json:"computers"`
-	Sessions  []Session           `json:"sessions"`
-	Creds     []Credential        `json:"creds"`
-	GPOs      []GPO               `json:"gpos"`
-	ADCS      []ADCSTemplate      `json:"adcs"`
-	BH        BloodhoundMeta      `json:"bloodhound"`
+	Hosts     []Host                `json:"hosts"`
+	Users     []User                `json:"users"`
+	Groups    []Group               `json:"groups"`
+	Computers []Computer            `json:"computers"`
+	Sessions  []Session             `json:"sessions"`
+	Creds     []Credential          `json:"creds"`
+	GPOs      []GPO                 `json:"gpos"`
+	ADCS      []ADCSTemplate        `json:"adcs"`
+	BH        BloodhoundMeta        `json:"bloodhound"`
 	Phases    map[Phase]PhaseStatus `json:"phases"`
 }
 
@@ -189,7 +201,9 @@ func (s *ADState) DetectGaps() []Gap {
 	if len(s.Creds) > 0 {
 		validated := 0
 		for _, c := range s.Creds {
-			if c.Validated { validated++ }
+			if c.Validated {
+				validated++
+			}
 		}
 		if validated == 0 {
 			g = append(g, Gap{PhaseValidation, "high", "No credentials validated"})
@@ -218,7 +232,7 @@ func (s *ADState) NextPhase() *Phase {
 			}
 		}
 	}
-	
+
 	if hasDA {
 		if s.Phases[PhaseLateral] != PhaseComplete {
 			p := PhaseLateral

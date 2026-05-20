@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	_ "modernc.org/sqlite"
 	"github.com/jmoiron/sqlx"
+	_ "modernc.org/sqlite"
 )
 
 type DB struct {

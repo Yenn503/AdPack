@@ -1,10 +1,10 @@
 package modules
 
 import (
-	"context"
 	"adpack/core"
 	"adpack/tools"
 	"adpack/utils"
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -273,7 +273,7 @@ func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline Pipel
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 				Source: "go-mimikatz", Key: "error",
-				Value: "remote execution failed",
+				Value:     "remote execution failed",
 				Timestamp: time.Now(),
 			})
 		}
@@ -335,7 +335,7 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 				Source: "nanodump", Key: "error",
-				Value: "remote execution failed",
+				Value:     "remote execution failed",
 				Timestamp: time.Now(),
 			})
 			return result
@@ -391,7 +391,7 @@ func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline Pipeline
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "byovd", Key: "error",
-			Value: "no credentials",
+			Value:     "no credentials",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -411,7 +411,7 @@ func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline Pipeline
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "byovd", Key: "error",
-			Value: "failed to upload RTCore64.sys",
+			Value:     "failed to upload RTCore64.sys",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -425,7 +425,7 @@ func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline Pipeline
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "byovd", Key: "error",
-			Value: "failed to upload nanodump.exe",
+			Value:     "failed to upload nanodump.exe",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -441,7 +441,7 @@ func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline Pipeline
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "byovd", Key: "error",
-			Value: "driver load failed",
+			Value:     "driver load failed",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -462,7 +462,7 @@ func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline Pipeline
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "byovd", Key: "error",
-			Value: "dump failed",
+			Value:     "dump failed",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -536,7 +536,7 @@ func executeUnDefendPipeline(state *core.ADState, host core.Host, pipeline Pipel
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "undefend", Key: "error",
-			Value: "failed to upload nanodump.exe",
+			Value:     "failed to upload nanodump.exe",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -551,7 +551,7 @@ func executeUnDefendPipeline(state *core.ADState, host core.Host, pipeline Pipel
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "undefend", Key: "error",
-			Value: "dump failed",
+			Value:     "dump failed",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -588,7 +588,7 @@ func executeBlueHammerPipeline(state *core.ADState, host core.Host, pipeline Pip
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "bluehammer", Key: "error",
-			Value: "no credentials",
+			Value:     "no credentials",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -613,7 +613,7 @@ func executeBlueHammerPipeline(state *core.ADState, host core.Host, pipeline Pip
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "bluehammer", Key: "error",
-			Value: "failed to upload FunnyApp.exe",
+			Value:     "failed to upload FunnyApp.exe",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -625,7 +625,7 @@ func executeBlueHammerPipeline(state *core.ADState, host core.Host, pipeline Pip
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "bluehammer", Key: "sam_leak",
-			Value: "BlueHammer executed. Check target for SAM output.",
+			Value:      "BlueHammer executed. Check target for SAM output.",
 			Confidence: 0.5, RawOutput: execR.Stdout,
 			Timestamp: time.Now(),
 		})
@@ -665,7 +665,7 @@ func executeColdWerPipeline(state *core.ADState, host core.Host, pipeline Pipeli
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "coldwer", Key: "error",
-			Value: "failed to upload nanodump.exe",
+			Value:     "failed to upload nanodump.exe",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -920,7 +920,7 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "phantomkiller", Key: "error",
-			Value: "no credentials",
+			Value:     "no credentials",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -945,7 +945,7 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "phantomkiller", Key: "error",
-			Value: "failed to upload BootRepair.sys",
+			Value:     "failed to upload BootRepair.sys",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -959,7 +959,7 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "phantomkiller", Key: "error",
-			Value: "failed to upload PhantomKiller.exe",
+			Value:     "failed to upload PhantomKiller.exe",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -974,7 +974,7 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "phantomkiller", Key: "error",
-			Value: "failed to load driver",
+			Value:     "failed to load driver",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -1021,7 +1021,7 @@ func executeMiniPlasmaPipeline(state *core.ADState, host core.Host, pipeline Pip
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "miniplasma", Key: "error",
-			Value: "no credentials",
+			Value:     "no credentials",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -1046,7 +1046,7 @@ func executeMiniPlasmaPipeline(state *core.ADState, host core.Host, pipeline Pip
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "miniplasma", Key: "error",
-			Value: "failed to upload MiniPlasma.exe",
+			Value:     "failed to upload MiniPlasma.exe",
 			Timestamp: time.Now(),
 		})
 		return result
@@ -1095,7 +1095,7 @@ func executeMiniPlasmaPipeline(state *core.ADState, host core.Host, pipeline Pip
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "miniplasma", Key: "eop",
-			Value: "MiniPlasma SYSTEM shell achieved",
+			Value:      "MiniPlasma SYSTEM shell achieved",
 			Confidence: 0.7, RawOutput: execR.Stdout,
 			Timestamp: time.Now(),
 		})

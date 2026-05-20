@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	"adpack/core"
+	"adpack/utils"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 	"github.com/spf13/cobra"
-	"adpack/core"
-	"adpack/utils"
 )
 
 var statusCmd = &cobra.Command{

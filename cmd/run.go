@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-	"github.com/spf13/cobra"
 	"adpack/core"
 	"adpack/modules"
 	"adpack/utils"
+	"charm.land/lipgloss/v2"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -125,7 +125,33 @@ var runCmd = &cobra.Command{
 				for _, ev := range result.Evidence {
 					DB.SaveEvidence(ev)
 				}
+				DB.SaveSessions(result.Sessions)
+				state.Sessions = result.Sessions
 				printResult("Sessions harvested", len(result.Sessions))
+			}
+
+		case core.PhaseGraphAnalysis:
+			result := modules.RunGraphAnalysis(state, targetHost)
+			success = result.Success
+			if result.Success {
+				for _, c := range result.Computers {
+					DB.SaveComputer(c)
+				}
+				for _, g := range result.GPOs {
+					DB.SaveGPO(g)
+				}
+				for _, t := range result.ADCS {
+					DB.SaveADCSTemplate(t)
+				}
+				for _, ev := range result.Evidence {
+					DB.SaveEvidence(ev)
+				}
+				for _, u := range result.Users {
+					DB.SaveUser(u)
+				}
+				printResult("Computers found", len(result.Computers))
+				printResult("GPOs found", len(result.GPOs))
+				printResult("ADCS templates found", len(result.ADCS))
 			}
 
 		case core.PhaseLateral:
@@ -137,9 +163,28 @@ var runCmd = &cobra.Command{
 				}
 			}
 
+		case core.PhasePrivEsc:
+			result := modules.RunPrivesc(state, targetHost)
+			success = result.Success
+			if result.Success {
+				for _, ev := range result.Evidence {
+					DB.SaveEvidence(ev)
+				}
+				printResult("Privesc checks completed", 0)
+			}
+
+		case core.PhasePersistence:
+			result := modules.RunPersistence(state, targetHost)
+			success = result.Success
+			if result.Success {
+				for _, ev := range result.Evidence {
+					DB.SaveEvidence(ev)
+				}
+				printResult("Persistence mechanisms deployed", 0)
+			}
+
 		default:
-			fmt.Println(utils.WarningStyle.Render(fmt.Sprintf("  Phase %s execution not yet implemented.", phase)))
-			success = true
+			return fmt.Errorf("phase %q has no implementation", phase)
 		}
 
 		// Update phase status

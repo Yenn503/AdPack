@@ -5,14 +5,14 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
-	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/table"
 	"adpack/config"
 	"adpack/core"
 	"adpack/modules"
 	"adpack/storage"
 	"adpack/utils"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -27,7 +27,7 @@ var version = "v0.1.0"
 const BannerTemplate = `
     ___       ______             __  
    /   | ____/ / __ \____ ______/ /__
-  / /| |/ __  / /_/ / __ `+"`"+`/ ___/ //_/
+  / /| |/ __  / /_/ / __ ` + "`" + `/ ___/ //_/
  / ___ / /_/ / ____/ /_/ / /__/ ,<   
 /_/  |_\__,_/_/    \__,_/\___/_/|_|  
 
@@ -142,7 +142,7 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("load state: %w", err)
 			}
-			
+
 			t := table.New().
 				Border(lipgloss.RoundedBorder()).
 				BorderStyle(lipgloss.NewStyle().Foreground(utils.ColorSecondary)).
@@ -168,10 +168,10 @@ func init() {
 					}
 					depStr = strings.Join(s, ", ")
 				}
-				
+
 				statusStr := "untouched"
 				var statusStyle lipgloss.Style
-				
+
 				switch state.Phases[p] {
 				case core.PhaseInProgress:
 					statusStr = "in-progress"
@@ -185,7 +185,7 @@ func init() {
 				default:
 					statusStyle = lipgloss.NewStyle().Foreground(utils.ColorMuted)
 				}
-				
+
 				t.Row(string(p), statusStyle.Render(statusStr), depStr)
 			}
 			fmt.Println(t.Render())

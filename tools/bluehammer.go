@@ -1,8 +1,8 @@
 package tools
 
 import (
-	"context"
 	"adpack/utils"
+	"context"
 	"fmt"
 )
 
@@ -10,7 +10,7 @@ type blueHammerTool struct{}
 
 var BlueHammer = blueHammerTool{}
 
-func (blueHammerTool) Name() string    { return "BlueHammer" }
+func (blueHammerTool) Name() string { return "BlueHammer" }
 func (blueHammerTool) Available() bool {
 	return utils.ToolAvailable("FunnyApp.exe") || utils.ToolAvailable("BlueHammer.exe") || utils.ToolAvailable("bluehammer")
 }

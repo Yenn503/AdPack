@@ -207,7 +207,7 @@ var EvasionProfiles = struct {
 		Description:    "Exploit Cloud Filter API AbortHydration race condition (CVE-2020-17103 unpatched) to spawn SYSTEM shell, then dump LSASS",
 	},
 	Custom: EvasionProfile{
-		Name: "custom",
+		Name:        "custom",
 		Description: "User-defined evasion profile. Set fields individually.",
 	},
 }

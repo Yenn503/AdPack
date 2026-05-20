@@ -67,11 +67,11 @@ func RunPrivesc(state *core.ADState, targetHost string) *core.ToolResult {
 	fmt.Println("[*] Checking RBCD...")
 	r, err = tools.NetExec.Run(ctx, target, "-M", []string{"rbcd"})
 	if err == nil && r.Success {
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
-				Source: "rbcd", Key: "status", Value: "RBCD check complete",
-				RawOutput: r.Stdout, Timestamp: time.Now(),
-			})
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
+			Source: "rbcd", Key: "status", Value: "RBCD check complete",
+			RawOutput: r.Stdout, Timestamp: time.Now(),
+		})
 	}
 
 	return result

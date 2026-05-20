@@ -1,8 +1,8 @@
 package tools
 
 import (
-	"context"
 	"adpack/utils"
+	"context"
 	"fmt"
 )
 
@@ -10,7 +10,7 @@ type phantomKillerTool struct{}
 
 var PhantomKiller = phantomKillerTool{}
 
-func (phantomKillerTool) Name() string    { return "PhantomKiller" }
+func (phantomKillerTool) Name() string { return "PhantomKiller" }
 func (phantomKillerTool) Available() bool {
 	return utils.ToolAvailable("PhantomKiller.exe") || utils.ToolAvailable("PhantomKiller")
 }

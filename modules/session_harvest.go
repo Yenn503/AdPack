@@ -1,9 +1,9 @@
 package modules
 
 import (
-	"context"
 	"adpack/core"
 	"adpack/tools"
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -62,7 +62,7 @@ func RunSessionHarvest(state *core.ADState, targetHost string) *core.ToolResult 
 		fmt.Printf("[!] Session harvest failed: %s\n", r.Stderr)
 		result.Success = false
 	}
-	
+
 	fmt.Printf("[+] Harvested %d sessions\n", len(result.Sessions))
 	return result
 }

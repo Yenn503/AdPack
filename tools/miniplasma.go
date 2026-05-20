@@ -1,8 +1,8 @@
 package tools
 
 import (
-	"context"
 	"adpack/utils"
+	"context"
 	"fmt"
 )
 
@@ -10,7 +10,7 @@ type miniPlasmaTool struct{}
 
 var MiniPlasma = miniPlasmaTool{}
 
-func (miniPlasmaTool) Name() string    { return "MiniPlasma" }
+func (miniPlasmaTool) Name() string { return "MiniPlasma" }
 func (miniPlasmaTool) Available() bool {
 	return utils.ToolAvailable("MiniPlasma.exe") || utils.ToolAvailable("MiniPlasma")
 }

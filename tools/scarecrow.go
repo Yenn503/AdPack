@@ -13,8 +13,10 @@ type scareCrowTool struct{}
 
 var ScareCrow = scareCrowTool{}
 
-func (scareCrowTool) Name() string    { return "scarecrow" }
-func (scareCrowTool) Available() bool { return utils.ToolAvailable("ScareCrow") || utils.ToolAvailable("ScareCrow.exe") }
+func (scareCrowTool) Name() string { return "scarecrow" }
+func (scareCrowTool) Available() bool {
+	return utils.ToolAvailable("ScareCrow") || utils.ToolAvailable("ScareCrow.exe")
+}
 
 func (scareCrowTool) Validate() error {
 	if !ScareCrow.Available() {

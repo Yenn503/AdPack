@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"adpack/core"
+	"github.com/spf13/cobra"
 )
 
 type bhComputer struct {
@@ -36,9 +36,9 @@ type bhGroup struct {
 }
 
 type bhData struct {
-	Computers []bhComputer `json:"computers"`
-	Users     []bhUser     `json:"users"`
-	Groups    []bhGroup    `json:"groups"`
+	Computers []bhComputer   `json:"computers"`
+	Users     []bhUser       `json:"users"`
+	Groups    []bhGroup      `json:"groups"`
 	Meta      map[string]any `json:"meta"`
 }
 

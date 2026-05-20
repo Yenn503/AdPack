@@ -10,29 +10,29 @@ import (
 type EventType string
 
 const (
-	EventCredentialValidated EventType = "credential.validated"
+	EventCredentialValidated  EventType = "credential.validated"
 	EventAdminAccessConfirmed EventType = "credential.admin.confirmed"
-	EventKerberoastableFound EventType = "kerberos.roastable.found"
-	EventASREPRoastableFound EventType = "kerberos.asrep.found"
-	EventDACompromise        EventType = "credential.da.compromise"
-	EventEDRDetected         EventType = "evasion.edr.detected"
-	EventADCSExploitable     EventType = "adcs.vulnerable"
-	EventSessionFound        EventType = "session.found"
-	EventHostDiscovered      EventType = "host.discovered"
-	EventPhaseComplete       EventType = "phase.complete"
-	EventPhaseFailed         EventType = "phase.failed"
-	EventDCSyncPossible      EventType = "credential.dcsync.possible"
-	EventRBCDExploitable     EventType = "ad.rbcd.exploitable"
-	EventShadowCredAdded     EventType = "credential.shadow.added"
-	EventExecutionStarted    EventType = "execution.started"
-	EventExecutionFailed     EventType = "execution.failed"
-	EventExecutionComplete   EventType = "execution.complete"
+	EventKerberoastableFound  EventType = "kerberos.roastable.found"
+	EventASREPRoastableFound  EventType = "kerberos.asrep.found"
+	EventDACompromise         EventType = "credential.da.compromise"
+	EventEDRDetected          EventType = "evasion.edr.detected"
+	EventADCSExploitable      EventType = "adcs.vulnerable"
+	EventSessionFound         EventType = "session.found"
+	EventHostDiscovered       EventType = "host.discovered"
+	EventPhaseComplete        EventType = "phase.complete"
+	EventPhaseFailed          EventType = "phase.failed"
+	EventDCSyncPossible       EventType = "credential.dcsync.possible"
+	EventRBCDExploitable      EventType = "ad.rbcd.exploitable"
+	EventShadowCredAdded      EventType = "credential.shadow.added"
+	EventExecutionStarted     EventType = "execution.started"
+	EventExecutionFailed      EventType = "execution.failed"
+	EventExecutionComplete    EventType = "execution.complete"
 )
 
 type EventClass int
 
 const (
-	EventClassCritical   EventClass = iota
+	EventClassCritical EventClass = iota
 	EventClassBestEffort
 	EventClassTelemetry
 	EventClassDebug

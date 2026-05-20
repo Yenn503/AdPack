@@ -5,11 +5,11 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/lipgloss/v2"
-	"github.com/spf13/cobra"
 	"adpack/core"
 	"adpack/modules"
 	"adpack/utils"
+	"charm.land/lipgloss/v2"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -195,6 +195,8 @@ past failed phases instead of stopping.`,
 					for _, ev := range result.Evidence {
 						DB.SaveEvidence(ev)
 					}
+					DB.SaveSessions(result.Sessions)
+					state.Sessions = result.Sessions
 					success = true
 					fmt.Printf("      %s  %d session(s) harvested\n", utils.SuccessStyle.Render("✓"), len(result.Sessions))
 				}
@@ -223,7 +225,7 @@ past failed phases instead of stopping.`,
 						len(result.Computers), len(result.GPOs), len(result.ADCS))
 				}
 
-				case core.PhaseLateral:
+			case core.PhaseLateral:
 				result := modules.RunLateral(state, targetHost)
 				if result.Success {
 					for _, ev := range result.Evidence {
@@ -265,21 +267,21 @@ past failed phases instead of stopping.`,
 					utils.SuccessStyle.Render("✓ complete"),
 					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("·"),
 					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))
-	} else {
-			status := core.PhaseSkipped
-			if !skipFail {
-				status = core.PhaseUntouched
-			}
-			state.Phases[rec.Phase] = status
-			DB.SavePhases(state.Phases)
-			fmt.Printf("\n      %s  %s\n",
-				utils.ErrorStyle.Render("✗ failed"),
-				lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))
-			if !skipFail {
-				fmt.Printf("\n  %s  Stopping. Use --skip-fail to continue past failures.\n",
-					utils.WarningStyle.Render("!"))
-				break
-			}
+			} else {
+				status := core.PhaseSkipped
+				if !skipFail {
+					status = core.PhaseUntouched
+				}
+				state.Phases[rec.Phase] = status
+				DB.SavePhases(state.Phases)
+				fmt.Printf("\n      %s  %s\n",
+					utils.ErrorStyle.Render("✗ failed"),
+					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))
+				if !skipFail {
+					fmt.Printf("\n  %s  Stopping. Use --skip-fail to continue past failures.\n",
+						utils.WarningStyle.Render("!"))
+					break
+				}
 			}
 
 			fmt.Println()

@@ -1,13 +1,13 @@
 package modules
 
 import (
-	"context"
 	"adpack/core"
 	"adpack/tools"
 	"adpack/utils"
+	"context"
 	"fmt"
-	"time"
 	"strings"
+	"time"
 )
 
 func RunDiscovery(state *core.ADState, targetHost string) *core.ToolResult {
@@ -15,9 +15,9 @@ func RunDiscovery(state *core.ADState, targetHost string) *core.ToolResult {
 
 	if targetHost != "" {
 		host := core.Host{
-			IP:       targetHost,
-			Hostname: "",
-			Domain:   "",
+			IP:        targetHost,
+			Hostname:  "",
+			Domain:    "",
 			PortsOpen: "389,445",
 		}
 		result.Hosts = append(result.Hosts, host)

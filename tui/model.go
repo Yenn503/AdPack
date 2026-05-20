@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"adpack/core"
+	"adpack/storage"
+	"adpack/utils"
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
@@ -13,9 +16,6 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"adpack/core"
-	"adpack/storage"
-	"adpack/utils"
 )
 
 type view int
@@ -157,16 +157,16 @@ func New(db *storage.DB) tea.Model {
 	vp.Style = lipgloss.NewStyle()
 
 	return model{
-		db:        db,
-		state:     state,
-		spinner:   s,
-		viewport:  vp,
-		gapsList:  newGapsList(),
-		recList:   newRecList(),
-		prog:      newProgress(),
-		help:      help.New(),
-		keys:      keys,
-		err:       nil,
+		db:       db,
+		state:    state,
+		spinner:  s,
+		viewport: vp,
+		gapsList: newGapsList(),
+		recList:  newRecList(),
+		prog:     newProgress(),
+		help:     help.New(),
+		keys:     keys,
+		err:      nil,
 	}
 }
 

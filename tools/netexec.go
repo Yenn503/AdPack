@@ -84,7 +84,9 @@ func (n nxcTool) EnumUsers(ctx context.Context, target string) ([]core.User, err
 
 func (n nxcTool) EnumShares(ctx context.Context, target NetExecTarget) ([]string, error) {
 	r, err := n.Run(ctx, target, "--shares", nil)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	var shares []string
 	for _, line := range strings.Split(r.Stdout, "\n") {
 		if strings.Contains(line, "SHARE:") {

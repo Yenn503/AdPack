@@ -9,21 +9,21 @@ import (
 type Capability string
 
 const (
-	CapLSASSDump      Capability = "credential.lsass.dump"
-	CapEDRBypass      Capability = "evasion.edr.bypass"
-	CapDefenderKill   Capability = "evasion.defender.kill"
-	CapKerberos       Capability = "kerberos.roast"
-	CapDCSync         Capability = "credential.dcsync"
-	CapSMBExec        Capability = "execution.smb"
-	CapWinRMExec      Capability = "execution.winrm"
-	CapLDAPQuery      Capability = "ldap.query"
-	CapShellcodeGen   Capability = "payload.shellcode"
-	CapSyscallGen     Capability = "evasion.syscall"
-	CapDonut          Capability = "payload.donut"
-	CapEDRKill        Capability = "evasion.edr.kill"
-	CapPrivEsc        Capability = "privilege.escalation"
-	CapNetExec        Capability = "execution.netexec"
-	CapFileTransfer   Capability = "execution.filetransfer"
+	CapLSASSDump    Capability = "credential.lsass.dump"
+	CapEDRBypass    Capability = "evasion.edr.bypass"
+	CapDefenderKill Capability = "evasion.defender.kill"
+	CapKerberos     Capability = "kerberos.roast"
+	CapDCSync       Capability = "credential.dcsync"
+	CapSMBExec      Capability = "execution.smb"
+	CapWinRMExec    Capability = "execution.winrm"
+	CapLDAPQuery    Capability = "ldap.query"
+	CapShellcodeGen Capability = "payload.shellcode"
+	CapSyscallGen   Capability = "evasion.syscall"
+	CapDonut        Capability = "payload.donut"
+	CapEDRKill      Capability = "evasion.edr.kill"
+	CapPrivEsc      Capability = "privilege.escalation"
+	CapNetExec      Capability = "execution.netexec"
+	CapFileTransfer Capability = "execution.filetransfer"
 )
 
 type ExecutionStatus string
@@ -200,5 +200,3 @@ func (r *Registry) FindExecutor(protocol string) (Executor, bool) {
 	e, ok := r.execs[protocol]
 	return e, ok
 }
-
-

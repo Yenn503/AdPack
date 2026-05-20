@@ -133,4 +133,3 @@ func parseADCSTemplates(output, domain string) []core.ADCSTemplate {
 	}
 	return templates
 }
-

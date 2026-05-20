@@ -9,7 +9,7 @@ func TestNewEngine(t *testing.T) {
 		Phases: make(map[Phase]PhaseStatus),
 	}
 	engine := NewEngine(state)
-	
+
 	if engine == nil {
 		t.Fatal("NewEngine returned nil")
 	}
@@ -24,9 +24,9 @@ func TestEvaluate_NoHosts(t *testing.T) {
 		Hosts:  []Host{},
 	}
 	engine := NewEngine(state)
-	
+
 	rec := engine.Evaluate()
-	
+
 	if rec.Phase != PhaseDiscovery {
 		t.Errorf("Expected PhaseDiscovery, got %s", rec.Phase)
 	}
@@ -44,9 +44,9 @@ func TestEvaluate_HostsButNoUsers(t *testing.T) {
 		Users: []User{},
 	}
 	engine := NewEngine(state)
-	
+
 	rec := engine.Evaluate()
-	
+
 	if rec.Phase != PhaseEnumeration {
 		t.Errorf("Expected PhaseEnumeration, got %s", rec.Phase)
 	}
@@ -63,9 +63,9 @@ func TestEvaluate_UsersButNoCreds(t *testing.T) {
 		Creds: []Credential{},
 	}
 	engine := NewEngine(state)
-	
+
 	rec := engine.Evaluate()
-	
+
 	if rec.Phase != PhaseCredentialAcq {
 		t.Errorf("Expected PhaseCredentialAcq, got %s", rec.Phase)
 	}
@@ -74,24 +74,24 @@ func TestEvaluate_UsersButNoCreds(t *testing.T) {
 func TestEvaluate_AllComplete(t *testing.T) {
 	state := &ADState{
 		Phases: map[Phase]PhaseStatus{
-			PhaseDiscovery:     PhaseComplete,
-			PhaseEnumeration:   PhaseComplete,
-			PhaseCredentialAcq: PhaseComplete,
-			PhaseValidation:    PhaseComplete,
+			PhaseDiscovery:      PhaseComplete,
+			PhaseEnumeration:    PhaseComplete,
+			PhaseCredentialAcq:  PhaseComplete,
+			PhaseValidation:     PhaseComplete,
 			PhaseSessionHarvest: PhaseComplete,
-			PhaseGraphAnalysis: PhaseComplete,
-			PhaseLateral:       PhaseComplete,
-			PhasePrivEsc:       PhaseComplete,
-			PhasePersistence:   PhaseComplete,
+			PhaseGraphAnalysis:  PhaseComplete,
+			PhaseLateral:        PhaseComplete,
+			PhasePrivEsc:        PhaseComplete,
+			PhasePersistence:    PhaseComplete,
 		},
 		Hosts: []Host{{IP: "10.0.0.1"}},
 		Users: []User{{Username: "admin"}},
 		Creds: []Credential{{Username: "admin"}},
 	}
 	engine := NewEngine(state)
-	
+
 	rec := engine.Evaluate()
-	
+
 	if rec.Phase != "" {
 		t.Errorf("Expected empty phase for complete state, got %s", rec.Phase)
 	}
@@ -112,7 +112,7 @@ func TestPhaseStrategies(t *testing.T) {
 		{PhasePrivEsc, 1},
 		{PhasePersistence, 1},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(string(tt.phase), func(t *testing.T) {
 			strategies := PhaseStrategies(tt.phase)
