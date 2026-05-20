@@ -119,51 +119,33 @@ func parseNetExecUsers(output, domain string) ([]core.User, []core.Credential) {
 	}
 
 	for _, line := range strings.Split(output, "\n") {
-		// NetExec LDAP --users lines contain the DC name followed by user fields
-		// Skip header/info lines
-		if !strings.Contains(line, "DC1") && !strings.Contains(line, "dc1") {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-		// Skip the column header line
-		if strings.Contains(line, "-Username-") || strings.Contains(line, "Enumerated") {
+		// Strip the nxc prefix: LDAP  IP  PORT  HOSTNAME  ...
+		parts := strings.Fields(line)
+		if len(parts) < 6 {
 			continue
 		}
-		// Skip status lines
-		if strings.Contains(line, "[*]") || strings.Contains(line, "[+]") || strings.Contains(line, "[-]") {
+		if parts[0] != "LDAP" {
 			continue
 		}
-
-		// Split on DC1 to get the user fields portion
-		var userPart string
-		for _, marker := range []string{"DC1", "dc1"} {
-			if idx := strings.Index(line, marker); idx != -1 {
-				userPart = strings.TrimSpace(line[idx+len(marker):])
-				break
-			}
+		// parts[0]=LDAP, parts[1]=IP, parts[2]=PORT, parts[3]=HOSTNAME
+		userFields := parts[4:]
+		if len(userFields) < 3 {
+			continue
 		}
-		if userPart == "" {
+		// Skip header/status lines
+		first := userFields[0]
+		if first == "-Username-" || first == "[*]" || first == "[+]" || first == "[-]" || first == "Enumerated" {
 			continue
 		}
 
-		// Fields: username  <date>  badpw  description...
-		fields := strings.Fields(userPart)
-		if len(fields) == 0 {
-			continue
-		}
-
-		username := fields[0]
-		if username == "" || username == "-Username-" {
-			continue
-		}
-
-		// Extract description (everything after the 3rd field)
+		username := first
 		description := ""
-		if len(fields) > 3 {
-			// fields[1] = date or <never>, fields[2] = badpw count
-			description = strings.Join(fields[3:], " ")
-		} else if len(fields) == 3 {
-			// Sometimes date is split: <never> 0 description
-			description = ""
+		if len(userFields) > 3 {
+			description = strings.Join(userFields[3:], " ")
 		}
 
 		u := core.User{

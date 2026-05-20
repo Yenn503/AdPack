@@ -115,7 +115,7 @@ func runKerberoast(domain, user, pass, target string) *core.ToolResult {
 		username := m[2]
 		result.Users = append(result.Users, core.User{
 			Username: username, Domain: domain,
-			SPNs: []string{spn}, Source: "kerberoast",
+			SPNs: spn, Source: "kerberoast",
 		})
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,

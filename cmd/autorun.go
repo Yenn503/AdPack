@@ -13,8 +13,11 @@ import (
 )
 
 var (
-	maxPhases int
-	skipFail  bool
+	maxPhases  int
+	skipFail   bool
+	seedDomain string
+	seedUser   string
+	seedPass   string
 )
 
 var autoRunCmd = &cobra.Command{
@@ -42,6 +45,27 @@ past failed phases instead of stopping.`,
 		}
 		fmt.Println(lipgloss.NewStyle().Foreground(utils.ColorSecondary).Render("  " + bar))
 		fmt.Println()
+
+		// Seed initial credentials from flags
+		if seedDomain != "" && seedUser != "" && seedPass != "" {
+			dbCreds, _ := DB.LoadCreds()
+			alreadySeeded := false
+			for _, c := range dbCreds {
+				if c.Domain == seedDomain && c.Username == seedUser {
+					alreadySeeded = true
+					break
+				}
+			}
+			if !alreadySeeded {
+				DB.SaveCred(core.Credential{
+					Type: core.CredPlaintext, Username: seedUser,
+					Domain: seedDomain, Secret: seedPass,
+					Source: "manual_seed", Validated: true,
+				})
+				fmt.Printf("  %s  Seeded creds: %s\\%s\n",
+					utils.InfoStyle.Render("→"), seedDomain, seedUser)
+			}
+		}
 
 		phasesRun := 0
 		for {
@@ -199,13 +223,33 @@ past failed phases instead of stopping.`,
 						len(result.Computers), len(result.GPOs), len(result.ADCS))
 				}
 
-		case core.PhaseLateral:
+				case core.PhaseLateral:
 				result := modules.RunLateral(state, targetHost)
 				if result.Success {
 					for _, ev := range result.Evidence {
 						DB.SaveEvidence(ev)
 					}
 					success = true
+				}
+
+			case core.PhasePrivEsc:
+				result := modules.RunPrivesc(state, targetHost)
+				if result.Success {
+					for _, ev := range result.Evidence {
+						DB.SaveEvidence(ev)
+					}
+					success = true
+					fmt.Printf("      %s  Privesc checks completed\n", utils.SuccessStyle.Render("✓"))
+				}
+
+			case core.PhasePersistence:
+				result := modules.RunPersistence(state, targetHost)
+				if result.Success {
+					for _, ev := range result.Evidence {
+						DB.SaveEvidence(ev)
+					}
+					success = true
+					fmt.Printf("      %s  Persistence mechanisms deployed\n", utils.SuccessStyle.Render("✓"))
 				}
 
 			default:
@@ -221,17 +265,21 @@ past failed phases instead of stopping.`,
 					utils.SuccessStyle.Render("✓ complete"),
 					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("·"),
 					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))
-			} else {
-				state.Phases[rec.Phase] = core.PhaseUntouched
-				DB.SavePhases(state.Phases)
-				fmt.Printf("\n      %s  %s\n",
-					utils.ErrorStyle.Render("✗ failed"),
-					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))
-				if !skipFail {
-					fmt.Printf("\n  %s  Stopping. Use --skip-fail to continue past failures.\n",
-						utils.WarningStyle.Render("!"))
-					break
-				}
+	} else {
+			status := core.PhaseSkipped
+			if !skipFail {
+				status = core.PhaseUntouched
+			}
+			state.Phases[rec.Phase] = status
+			DB.SavePhases(state.Phases)
+			fmt.Printf("\n      %s  %s\n",
+				utils.ErrorStyle.Render("✗ failed"),
+				lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))
+			if !skipFail {
+				fmt.Printf("\n  %s  Stopping. Use --skip-fail to continue past failures.\n",
+					utils.WarningStyle.Render("!"))
+				break
+			}
 			}
 
 			fmt.Println()
@@ -265,4 +313,7 @@ func init() {
 		"Maximum number of phases to run (0 = unlimited)")
 	autoRunCmd.Flags().BoolVar(&skipFail, "skip-fail", false,
 		"Continue to next phase when a phase fails instead of stopping")
+	autoRunCmd.Flags().StringVar(&seedDomain, "domain", "", "Target domain (seeds initial credential)")
+	autoRunCmd.Flags().StringVar(&seedUser, "user", "", "Username (seeds initial credential)")
+	autoRunCmd.Flags().StringVar(&seedPass, "password", "", "Password (seeds initial credential)")
 }

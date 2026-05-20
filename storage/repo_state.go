@@ -28,9 +28,9 @@ func (db *DB) LoadHosts() ([]core.Host, error) {
 }
 
 func (db *DB) SaveUser(u core.User) error {
-	_, err := db.Exec(`INSERT INTO users(username,domain,sam_account_name,sid,enabled,is_admin,is_da,description,source) VALUES(?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(username, domain) DO UPDATE SET sam_account_name=excluded.sam_account_name,sid=excluded.sid,enabled=excluded.enabled,is_admin=excluded.is_admin,is_da=excluded.is_da,description=excluded.description,source=excluded.source`,
-		u.Username, u.Domain, u.SAMAccountName, u.SID, boolInt(u.Enabled), boolInt(u.IsAdmin), boolInt(u.IsDA), u.Description, u.Source)
+	_, err := db.Exec(`INSERT INTO users(username,domain,sam_account_name,sid,enabled,is_admin,is_da,description,source,no_preauth,spns) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(username, domain) DO UPDATE SET sam_account_name=excluded.sam_account_name,sid=excluded.sid,enabled=excluded.enabled,is_admin=excluded.is_admin,is_da=excluded.is_da,description=excluded.description,source=excluded.source,no_preauth=excluded.no_preauth,spns=excluded.spns`,
+		u.Username, u.Domain, u.SAMAccountName, u.SID, boolInt(u.Enabled), boolInt(u.IsAdmin), boolInt(u.IsDA), u.Description, u.Source, boolInt(u.NoPreauth), u.SPNs)
 	return err
 }
 func (db *DB) SaveUsers(uu []core.User) error {

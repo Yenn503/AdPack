@@ -33,7 +33,7 @@ func RunSessionHarvest(state *core.ADState, targetHost string) *core.ToolResult 
 
 	fmt.Printf("[*] Harvesting sessions on %s...\n", host.IP)
 	ctx := context.Background()
-	r, err := tools.NetExec.Run(ctx, target, "--sessions", nil)
+	r, err := tools.NetExec.Run(ctx, target, "--smb-sessions", nil)
 	if err == nil && r.Success {
 		lines := strings.Split(r.Stdout, "\n")
 		for _, line := range lines {

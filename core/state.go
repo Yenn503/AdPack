@@ -51,7 +51,7 @@ type User struct {
 	IsDA           bool     `json:"is_da" db:"is_da"`
 	Description    string   `json:"description" db:"description"`
 	Source         string   `json:"source" db:"source"`
-	SPNs           []string `json:"spns,omitempty" db:"-"`
+	SPNs           string   `json:"spns,omitempty" db:"spns"`
 	NoPreauth      bool     `json:"no_preauth" db:"no_preauth"`
 }
 
