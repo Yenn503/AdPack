@@ -125,18 +125,35 @@ func (p *NetExecProvider) EnumerateGPOs(ctx context.Context) ([]core.GPO, error)
 	return gpos, nil
 }
 
+var sessionMethods = []struct {
+	Flag      string
+	Transport string
+}{
+	{"--loggedon-users", "smb+loggedon"},
+	{"--reg-sessions", "smb+reg"},
+	{"--qwinsta", "smb+qwinsta"},
+}
+
 func (p *NetExecProvider) EnumerateSessions(ctx context.Context) ([]core.Session, error) {
 	host := core.Host{IP: p.cfg.Host}
-	start := time.Now()
-	r, err := tools.NetExec.Run(ctx, p.smbTarget(), "--smb-sessions", nil)
-	dur := time.Since(start)
-	if err != nil || !r.Success {
-		p.emit("EnumerateSessions", "smb", false, dur, r.Stdout, r.Stderr, r.ExitCode, 0, err)
-		return nil, fmt.Errorf("nxc --smb-sessions: %w (stderr=%s)", err, r.Stderr)
+
+	for i, m := range sessionMethods {
+		start := time.Now()
+		fallback := i > 0
+		r, err := tools.NetExec.Run(ctx, p.smbTarget(), m.Flag, nil)
+		dur := time.Since(start)
+
+		if err == nil && r.Success {
+			sessions := parseSMBSessions(host, r.Stdout)
+			if len(sessions) > 0 {
+				p.emit("EnumerateSessions", m.Transport, fallback, dur, r.Stdout, r.Stderr, 0, len(sessions), nil)
+				return sessions, nil
+			}
+		}
+		p.emit("EnumerateSessions", m.Transport, fallback, dur, r.Stdout, r.Stderr, r.ExitCode, 0, err)
 	}
-	sessions := parseSMBSessions(host, r.Stdout)
-	p.emit("EnumerateSessions", "smb", false, dur, r.Stdout, r.Stderr, 0, len(sessions), nil)
-	return sessions, nil
+
+	return nil, fmt.Errorf("all session enumeration methods failed (tried: --loggedon-users, --reg-sessions, --qwinsta)")
 }
 
 func (p *NetExecProvider) EnumerateADCSTemplates(ctx context.Context) ([]core.ADCSTemplate, error) {

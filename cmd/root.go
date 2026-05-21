@@ -7,6 +7,7 @@ import (
 
 	"adpack/config"
 	"adpack/core"
+	"adpack/internal/executorbackend"
 	"adpack/modules"
 	"adpack/storage"
 	"adpack/utils"
@@ -95,6 +96,8 @@ func Execute() {
 }
 
 func init() {
+	modules.ExecutorFactory = executorbackend.New
+
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	rootCmd.PersistentFlags().StringVarP(&dbPath, "db", "d", "", "database path (default ~/.adpack/state.db)")
 

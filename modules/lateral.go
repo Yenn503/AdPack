@@ -3,20 +3,14 @@ package modules
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"adpack/core"
-	"adpack/tools"
-	"adpack/utils"
 )
 
-type protocolCheck struct {
-	Name     string
-	Protocol string
-	Port     int
-	Subcmd   string
-	Extra    []string
+type protocolAction struct {
+	Name   string
+	Method string
 }
 
 func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
@@ -36,39 +30,42 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 		return result
 	}
 
-	protocols := []protocolCheck{
-		{"SMB", "smb", 445, "-x", []string{"whoami"}},
-		{"PSExec", "smb", 445, "--exec-method", []string{"smbexec", "-x", "whoami"}},
-		{"Schtasks", "smb", 445, "--exec-method", []string{"atexec", "-x", "whoami"}},
-		{"WMI", "smb", 445, "--exec-method", []string{"wmiexec", "-x", "whoami"}},
-		{"WinRM", "winrm", 5985, "-x", []string{"whoami"}},
+	exec := ExecutorFactory(core.HostRef{Name: host.IP, Domain: host.Domain}, domain, user, pass, hash)
+
+	actions := []protocolAction{
+		{"SMB", "command"},
+		{"PSExec", "command"},
+		{"Schtasks", "command"},
+		{"WMI", "command"},
+		{"WinRM", "command"},
 	}
 
 	ctx := context.Background()
 	anySuccess := false
 
-	for _, p := range protocols {
-		fmt.Printf("[*] Trying %s on %s...\n", p.Name, host.IP)
-		target := tools.NetExecTarget{
-			Protocol: p.Protocol, Host: host.IP, Port: p.Port,
-			Domain: domain, Username: user, Password: pass, Hash: hash,
+	for _, a := range actions {
+		fmt.Printf("[*] Trying %s on %s...\n", a.Name, host.IP)
+		act := core.Action{
+			Target:   core.HostRef{Name: host.IP, Domain: host.Domain},
+			Method:   a.Method,
+			Artifact: "whoami",
+			Timeout:  30 * time.Second,
 		}
-		r, err := tools.NetExec.Run(ctx, target, p.Subcmd, p.Extra)
-		if err == nil && r.Success {
+		res := exec.Execute(ctx, act)
+		if res.Success {
 			anySuccess = true
-			output := strings.TrimSpace(r.Stdout)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: "lateral_success", Phase: core.PhaseLateral,
-				Source: "netexec_" + p.Protocol, Key: host.IP,
-				Value:     fmt.Sprintf("%s: %s", p.Name, output),
+				Source: "netexec_" + host.Domain, Key: host.IP,
+				Value:     fmt.Sprintf("%s: %s", a.Name, res.Output),
 				Timestamp: time.Now(),
 			})
-			fmt.Printf("  %s  %s succeeded\n", utils.SuccessStyle.Render("✓"), p.Name)
+			fmt.Printf("  ✓  %s succeeded\n", a.Name)
 		}
 	}
 
 	if !anySuccess {
-		fmt.Printf("  %s  All protocols failed\n", utils.ErrorStyle.Render("✗"))
+		fmt.Printf("  ✗  All protocols failed\n")
 		result.Success = false
 	}
 

