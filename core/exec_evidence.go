@@ -108,15 +108,6 @@ func NewUnknownMethodEvidence(target HostRef, action Action, cmd string) Executi
 	})
 }
 
-type NetExecPayload struct {
-	ExecMethod string   `json:"exec_method,omitempty"`
-	Command    string   `json:"command,omitempty"`
-	Arguments  []string `json:"arguments,omitempty"`
-	Stdout     string   `json:"stdout"`
-	Stderr     string   `json:"stderr"`
-	ExitCode   int      `json:"exit_code"`
-}
-
 type LdapPayload struct {
 	Query     string   `json:"query"`
 	Arguments []string `json:"arguments,omitempty"`
