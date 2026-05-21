@@ -71,8 +71,7 @@ adpack validate                        # Test credentials across protocols
 adpack run lateral -t 10.0.0.6         # Lateral movement
 ```
 
-<details>
-<summary>⚪ View Example Output (GOAD-Light, 2026-05-20)</summary>
+**Example output from GOAD-Light (2026-05-20):**
 
 ```
   ────────────────────────────────────────────────────
@@ -117,7 +116,6 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
          ·  sevenkingdoms.local\Administrator  c66d72021a2d4744409969a581a1705e
          ·  sevenkingdoms.local\Guest          31d6cfe0d16ae931b73c59d7e0c089c0
          ·  sevenkingdoms.local\krbtgt         95adcbce290dd623b98f9e6907287d8f
-         ...
 
       ✓ complete  ·  1.28s
 
@@ -223,7 +221,6 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
   ■  9 phases executed  ·  1 hosts  ·  15 users  ·  18 creds (17 validated)
 ```
 
-</details>
 
 ---
 
