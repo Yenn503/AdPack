@@ -60,7 +60,10 @@ func TestApplyDelta_NewEdges(t *testing.T) {
 		},
 	}
 	before := state.Mutation.Version
-	ApplyDelta(state, delta)
+	changed := ApplyDelta(state, delta)
+	if !changed {
+		t.Fatal("expected changed=true for new edges")
+	}
 	if len(state.Edges) != 1 {
 		t.Fatalf("expected 1 edge after ApplyDelta, got %d", len(state.Edges))
 	}
@@ -78,8 +81,48 @@ func TestApplyDelta_RemovedEdges(t *testing.T) {
 	delta := PostStateDelta{
 		RemovedEdges: []EdgeKey{EdgeKeyOf(state.Edges[0])},
 	}
-	ApplyDelta(state, delta)
+	changed := ApplyDelta(state, delta)
+	if !changed {
+		t.Fatal("expected changed=true for edge removal")
+	}
 	if len(state.Edges) != 0 {
 		t.Fatalf("expected 0 edges after removal, got %d", len(state.Edges))
+	}
+}
+
+func TestApplyDelta_NoopDedup(t *testing.T) {
+	state := &ADState{
+		Edges: []PrivilegeEdge{
+			{SourcePrincipal: "a", TargetPrincipal: "b", AccessRight: "GenericAll", Domain: "TEST"},
+		},
+	}
+	delta := PostStateDelta{
+		NewEdges: []PrivilegeEdge{
+			{SourcePrincipal: "a", TargetPrincipal: "b", AccessRight: "GenericAll", Domain: "TEST"},
+		},
+	}
+	before := state.Mutation.Version
+	changed := ApplyDelta(state, delta)
+	if changed {
+		t.Fatal("expected changed=false for duplicate edge")
+	}
+	if state.Mutation.Version != before {
+		t.Fatal("expected Version unchanged for no-op delta")
+	}
+	if len(state.Edges) != 1 {
+		t.Fatalf("expected 1 edge (no duplicates), got %d", len(state.Edges))
+	}
+}
+
+func TestApplyDelta_NoopEmpty(t *testing.T) {
+	state := &ADState{}
+	delta := PostStateDelta{}
+	before := state.Mutation.Version
+	changed := ApplyDelta(state, delta)
+	if changed {
+		t.Fatal("expected changed=false for empty delta")
+	}
+	if state.Mutation.Version != before {
+		t.Fatal("expected Version unchanged for empty delta")
 	}
 }

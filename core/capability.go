@@ -94,16 +94,20 @@ func (r *CapabilityRegistry) Resolve(cap Capability) (CapabilityExecutor, Capabi
 }
 
 // ApplyDelta applies a PostStateDelta to ADState.
-// Increments Version on every call for planner cache invalidation.
-func ApplyDelta(state *ADState, delta PostStateDelta) {
+// Returns true when at least one edge was added or removed (topology changed).
+// Planner uses this to decide whether replanning is necessary — avoids
+// wasteful recomputation when deltas only contain duplicates.
+func ApplyDelta(state *ADState, delta PostStateDelta) bool {
 	seen := make(map[EdgeKey]bool)
 	for _, e := range state.Edges {
 		seen[EdgeKeyOf(e)] = true
 	}
+	var added int
 	for _, e := range delta.NewEdges {
 		if !seen[EdgeKeyOf(e)] {
 			seen[EdgeKeyOf(e)] = true
 			state.Edges = append(state.Edges, e)
+			added++
 		}
 	}
 
@@ -112,12 +116,19 @@ func ApplyDelta(state *ADState, delta PostStateDelta) {
 		remove[k] = true
 	}
 	filtered := make([]PrivilegeEdge, 0, len(state.Edges))
+	var removed int
 	for _, e := range state.Edges {
 		if !remove[EdgeKeyOf(e)] {
 			filtered = append(filtered, e)
+		} else {
+			removed++
 		}
 	}
 	state.Edges = filtered
 
-	state.Mutation.Version++
+	changed := added > 0 || removed > 0
+	if changed {
+		state.Mutation.Version++
+	}
+	return changed
 }
