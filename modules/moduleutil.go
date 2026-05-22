@@ -11,3 +11,10 @@ var ExecutorFactory core.ExecutorFactory = func(_ core.HostRef, _, _, _, _ strin
 		return core.ActionResult{Success: false, Error: "executor not configured"}
 	})
 }
+
+// RuntimeFactory is injected by cmd/ to provide a RuntimeProvider for modules.
+// If nil, runtime-dependent features are skipped (headless/offline mode).
+var RuntimeFactory func() core.RuntimeProvider
+
+// CapabilityRegistry is injected from cmd/. Default nil (noop).
+var CapabilityRegistry *core.CapabilityRegistry
