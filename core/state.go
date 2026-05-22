@@ -1,5 +1,10 @@
 package core
 
+import (
+	"strings"
+	"time"
+)
+
 type TargetScope struct {
 	CIDRs     []string `yaml:"cidrs" json:"cidrs"`
 	Hostnames []string `yaml:"hostnames" json:"hostnames"`
@@ -32,12 +37,106 @@ type GPO struct {
 	CanEdit  bool   `json:"can_edit" db:"can_edit"`
 }
 
+// PrivilegeEdge represents a directed privilege relationship between two
+// principals. This is the core graph primitive that unifies ACL abuse,
+// delegation, MSSQL impersonation, group membership, and certificate
+// enrollment into a single traversal vocabulary.
+//
+// Examples:
+//
+//	SourcePrincipal: "NORTH\tywin.lannister"
+//	TargetPrincipal: "NORTH\jaime.lannister"
+//	AccessRight:     "ForceChangePassword"
+//	EdgeType:        "acl"
+//
+//	SourcePrincipal: "NORTH\arya.stark"
+//	TargetPrincipal: "NORTH\sa"
+//	AccessRight:     "MSSQL_EXECUTE_AS_LOGIN"
+//	EdgeType:        "mssql_impersonation"
+//
+//	SourcePrincipal: "SEVENKINGDOMS\stannis.baratheon"
+//	TargetPrincipal: "SEVENKINGDOMS\KINGSLANDING$"
+//	AccessRight:     "GenericAll"
+//	EdgeType:        "acl"
+type PrivilegeEdge struct {
+	ID              int                     `json:"id" db:"id"`
+	SourcePrincipal string                  `json:"source_principal" db:"source_principal"`
+	TargetPrincipal string                  `json:"target_principal" db:"target_principal"`
+	AccessRight     string                  `json:"access_right" db:"access_right"`
+	EdgeType        string                  `json:"edge_type" db:"edge_type"`
+	Domain          string                  `json:"domain" db:"domain"`
+	Source          string                  `json:"source" db:"source"` // "daclread", "bloodhound", "mssql_priv", "manual"
+	Confidence      float64                 `json:"confidence" db:"confidence"`
+	Weight          float64                 `json:"weight" db:"weight"`                 // lower = better path cost
+	Exploitability  float64                 `json:"exploitability" db:"exploitability"` // 0.0-1.0, how easy to exploit
+	Noise           float64                 `json:"noise" db:"noise"`                   // 0.0-1.0, how detectable
+	Requires        []string                `json:"requires,omitempty" db:"-"`          // capabilities needed
+	ValidationState EdgeValidationState     `json:"validation_state" db:"validation_state"`
+	ObservedAt      time.Time               `json:"observed_at" db:"observed_at"`
+	ObservedBy      string                  `json:"observed_by" db:"observed_by"`   // module that recorded this edge
+	Preconditions   []ExecutionPrecondition `json:"preconditions,omitempty" db:"-"` // runtime checks before edge is executable
+	Provenance      string                  `json:"provenance" db:"provenance"`     // "bh", "relay", "resolver", "executor", "manual"
+}
+
+// EdgeValidationState describes the confidence level of a privilege edge.
+type EdgeValidationState string
+
+const (
+	EdgeInferred      EdgeValidationState = "inferred"      // derived from heuristics, not directly observed
+	EdgeObserved      EdgeValidationState = "observed"      // directly observed by enumeration
+	EdgeValidated     EdgeValidationState = "validated"     // confirmed exploitable via execution
+	EdgeStale         EdgeValidationState = "stale"         // may no longer be valid
+	EdgeProbabilistic EdgeValidationState = "probabilistic" // exists with some probability < 1.0
+)
+
+// ExecutionPrecondition describes a runtime check that must pass before a
+// privilege edge can be operationalised. Preconditions bridge the gap between
+// "graph says this relationship exists" and "we can actually execute this now."
+//
+// Kind identifies what to check (e.g. "port_open", "service_running",
+// "protocol_reachable", "auth_works", "privilege_held"). Description is
+// human-readable context for explainability.
+type ExecutionPrecondition struct {
+	Kind        string `json:"kind" db:"kind"`
+	Target      string `json:"target" db:"target"` // host/principal this applies to
+	Port        int    `json:"port,omitempty" db:"port"`
+	Description string `json:"description,omitempty" db:"-"`
+}
+
+// Precondition kinds used across edge types.
+const (
+	PrecondPortOpen          = "port_open"
+	PrecondProtocolReachable = "protocol_reachable"
+	PrecondAuthWorks         = "auth_works"
+	PrecondServiceRunning    = "service_running"
+	PrecondPrivilegeHeld     = "privilege_held"
+)
+
+// ExecutionState tracks what the planner knows about runtime feasibility.
+// This is populated by execution feedback and discovery probes, and consumed
+// by the planner to prune infeasible edges.
+type ExecutionState struct {
+	ReachableHosts map[string]bool    `json:"reachable_hosts"`
+	OpenPorts      map[string][]int   `json:"open_ports"`   // host IP → ports
+	ValidCreds     map[string]bool    `json:"valid_creds"`  // "DOMAIN\user" → validated
+	BurnedHosts    map[string]float64 `json:"burned_hosts"` // host IP → burn score (0-1)
+}
+
 type ADCSTemplate struct {
-	ID       int    `json:"id" db:"id"`
-	Name     string `json:"name" db:"name"`
-	Domain   string `json:"domain" db:"domain"`
-	Vuln     string `json:"vuln" db:"vuln"` // ESC1, ESC8, etc.
-	Enrollee string `json:"enrollee" db:"enrollee"`
+	ID                      int      `json:"id" db:"id"`
+	Name                    string   `json:"name" db:"name"`
+	DisplayName             string   `json:"display_name" db:"display_name"`
+	Domain                  string   `json:"domain" db:"domain"`
+	CA                      string   `json:"ca" db:"ca"`
+	Enabled                 bool     `json:"enabled" db:"enabled"`
+	ClientAuth              bool     `json:"client_auth" db:"client_auth"`
+	EnrolleeSuppliesSubject bool     `json:"enrollee_supplies_subject" db:"enrollee_supplies_subject"`
+	RequiresManagerApproval bool     `json:"requires_manager_approval" db:"requires_manager_approval"`
+	AuthorizedSignatures    int      `json:"authorized_signatures" db:"authorized_signatures"`
+	SchemaVersion           int      `json:"schema_version" db:"schema_version"`
+	EKUs                    []string `json:"ekus" db:"-"`
+	Vuln                    string   `json:"vuln" db:"vuln"` // ESC1, ESC8, etc.
+	Enrollee                string   `json:"enrollee" db:"enrollee"`
 }
 
 type User struct {
@@ -179,7 +278,11 @@ type ADState struct {
 	Creds     []Credential          `json:"creds"`
 	GPOs      []GPO                 `json:"gpos"`
 	ADCS      []ADCSTemplate        `json:"adcs"`
+	Edges     []PrivilegeEdge       `json:"edges"`
 	BH        BloodhoundMeta        `json:"bloodhound"`
+	Exec      ExecutionState        `json:"exec"`
+	Runtime   RuntimeState          `json:"runtime"`
+	Mutation  StateMutation         `json:"mutation"`
 	Phases    map[Phase]PhaseStatus `json:"phases"`
 }
 
@@ -187,6 +290,134 @@ type Gap struct {
 	Phase    Phase  `json:"phase"`
 	Severity string `json:"severity"`
 	Message  string `json:"message"`
+}
+
+// FindEscalationPaths performs BFS over PrivilegeEdges from a start principal
+// to any principal whose name or group membership suggests privilege escalation.
+// Returns the shortest path for each unique target found.
+//
+// This is a stateful graph primitive. It does not execute anything — it answers
+// "what paths exist" so the decision engine can score and select.
+//
+// Example:
+//
+//	Start: "NORTH\tywin.lannister"
+//	Found path:
+//	  tywin → ForceChangePassword → jaime
+//	  jaime → GenericWrite → joffrey
+//	  joffrey → WriteDacl → tyron
+//	  tyron → AddSelf → Small Council
+//	  Small Council → AddMember → Dragonstone
+//	  → ... → stannis → GenericAll → KINGSLANDING$ (DC)
+func (s *ADState) FindEscalationPaths(startPrincipal string) [][]PrivilegeEdge {
+	type bfsNode struct {
+		principal string
+		path      []PrivilegeEdge
+		visited   map[string]bool
+	}
+
+	// Build adjacency list: source → []edges
+	adj := make(map[string][]PrivilegeEdge)
+	for _, e := range s.Edges {
+		key := e.Domain + "\\" + e.SourcePrincipal
+		adj[key] = append(adj[key], e)
+	}
+
+	// Build set of high-value targets (DA users, DC computer accounts)
+	highValue := make(map[string]bool)
+	for _, u := range s.Users {
+		if u.IsDA {
+			highValue[u.Domain+"\\"+u.Username] = true
+		}
+	}
+	for _, c := range s.Computers {
+		if c.IsDC {
+			highValue[c.Domain+"\\"+c.Name+"$"] = true
+		}
+	}
+	// High-value group names (any domain)
+	highValueNames := map[string]bool{
+		"Domain Admins":      true,
+		"Enterprise Admins":  true,
+		"Administrators":     true,
+		"Domain Controllers": true,
+		"AdminSDHolder":      true,
+	}
+
+	// Pre-populate domain-qualified group entries from state
+	for _, g := range s.Groups {
+		if highValueNames[g.Name] {
+			highValue[g.Domain+"\\"+g.Name] = true
+		}
+	}
+
+	isHighValue := func(principal string) bool {
+		if highValue[principal] {
+			return true
+		}
+		_, name, ok := strings.Cut(principal, "\\")
+		if ok && highValueNames[name] {
+			return true
+		}
+		return false
+	}
+
+	var paths [][]PrivilegeEdge
+	queue := []bfsNode{{
+		principal: startPrincipal,
+		path:      []PrivilegeEdge{},
+		visited:   map[string]bool{startPrincipal: true},
+	}}
+
+	// Limit search to reasonable depth
+	maxDepth := 12
+	// Track found targets so we return shortest path per target
+	foundTargets := make(map[string]bool)
+
+	for len(queue) > 0 && len(paths) < 10 {
+		node := queue[0]
+		queue = queue[1:]
+
+		if len(node.path) >= maxDepth {
+			continue
+		}
+
+		if isHighValue(node.principal) && len(node.path) > 0 {
+			key := node.principal
+			if !foundTargets[key] {
+				foundTargets[key] = true
+				path := make([]PrivilegeEdge, len(node.path))
+				copy(path, node.path)
+				paths = append(paths, path)
+			}
+			continue
+		}
+
+		for _, edge := range adj[node.principal] {
+			targetKey := edge.Domain + "\\" + edge.TargetPrincipal
+			if node.visited[targetKey] {
+				continue
+			}
+
+			newVisited := make(map[string]bool)
+			for k, v := range node.visited {
+				newVisited[k] = v
+			}
+			newVisited[targetKey] = true
+
+			newPath := make([]PrivilegeEdge, len(node.path)+1)
+			copy(newPath, node.path)
+			newPath[len(node.path)] = edge
+
+			queue = append(queue, bfsNode{
+				principal: targetKey,
+				path:      newPath,
+				visited:   newVisited,
+			})
+		}
+	}
+
+	return paths
 }
 
 func (s *ADState) DetectGaps() []Gap {
@@ -220,6 +451,9 @@ func (s *ADState) DetectGaps() []Gap {
 	}
 	if !s.BH.Collected {
 		g = append(g, Gap{PhaseGraphAnalysis, "medium", "BloodHound data not collected"})
+	}
+	if len(s.Users) > 0 && len(s.Edges) == 0 {
+		g = append(g, Gap{PhasePrivEsc, "high", "No ACL privilege edges enumerated. Run daclread to discover escalation paths."})
 	}
 	return g
 }
