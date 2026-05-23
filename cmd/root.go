@@ -8,6 +8,7 @@ import (
 	"adpack/config"
 	"adpack/core"
 	"adpack/internal/executorbackend"
+	"adpack/internal/executorbackend/certauth"
 	"adpack/internal/executorbackend/genericall"
 	"adpack/internal/runtime"
 	"adpack/modules"
@@ -104,6 +105,7 @@ func init() {
 	}
 	modules.CapabilityRegistry = core.NewCapabilityRegistry()
 	modules.CapabilityRegistry.Register(&genericall.Executor{})
+	modules.CapabilityRegistry.Register(&certauth.Executor{})
 
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	rootCmd.PersistentFlags().StringVarP(&dbPath, "db", "d", "", "database path (default ~/.adpack/state.db)")
