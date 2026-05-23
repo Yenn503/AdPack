@@ -943,7 +943,9 @@ func cleanPrincipal(raw string) string {
 	if idx := strings.Index(s, ":"); idx >= 0 {
 		beforeColon := s[:idx]
 		afterColon := s[idx+1:]
-		if strings.Contains(afterColon, " ") || strings.Contains(afterColon, "(") || strings.Contains(afterColon, ")") {
+		if len(beforeColon) > 0 && strings.HasPrefix(afterColon, " ") {
+			s = beforeColon
+		} else if len(beforeColon) > 0 && strings.Contains(afterColon, "(") && strings.Contains(afterColon, ")") {
 			s = beforeColon
 		}
 	}

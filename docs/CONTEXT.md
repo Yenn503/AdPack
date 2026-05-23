@@ -67,7 +67,7 @@ The provider boundary separates acquisition from interpretation:
 
 | Layer | Responsibility | Files |
 |-------|---------------|-------|
-| **Provider interface** | Defines `DirectoryProvider` with EnumerateComputers, EnumerateGPOs, EnumerateADCSTemplates, EnumerateSessions | `core/provider.go` |
+| **Provider interface** | Defines `DirectoryProvider` with EnumerateComputers, EnumerateGPOs, EnumerateADCSTemplates, EnumerateSessions, EnumerateDelegation | `core/provider.go` |
 | **NetExec provider** | Routes enumeration via nxc LDAP/SMB with fallback (e.g., GPO falls back from LDAP --gpos to SMB gpolocal) | `modules/netexec_provider.go` |
 | **Parsers** | Format-specific extraction. Two-stage grammar for computers: `DOMAIN\COMPUTER$` (qualified) or `COMPUTER$` (bare with injected domain) | `modules/netexec_parsers.go`, `modules/parserutil.go` |
 | **Provider events** | Every method call emits a `ProviderEvent` (method, transport, duration, entity count, raw stdout/stderr) | `core/provider.go`, `core/jsonl_sink.go` |

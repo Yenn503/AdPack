@@ -28,6 +28,7 @@ type DirectoryProvider interface {
 	EnumerateGPOs(ctx context.Context) ([]GPO, error)
 	EnumerateADCSTemplates(ctx context.Context) ([]ADCSTemplate, error)
 	EnumerateSessions(ctx context.Context) ([]Session, error)
+	EnumerateDelegation(ctx context.Context) ([]PrivilegeEdge, error)
 }
 
 // ProviderEvent records the outcome of a single provider acquisition call.

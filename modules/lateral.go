@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"adpack/core"
@@ -56,7 +57,7 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 			anySuccess = true
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: "lateral_success", Phase: core.PhaseLateral,
-				Source: "netexec_" + host.Domain, Key: host.IP,
+				Source: "netexec_" + strings.ToLower(a.Name) + "_" + host.Domain, Key: host.IP,
 				Value:     fmt.Sprintf("%s: %s", a.Name, res.Output),
 				Timestamp: time.Now(),
 			})

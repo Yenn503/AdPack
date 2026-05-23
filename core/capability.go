@@ -1,6 +1,10 @@
 package core
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"strings"
+)
 
 // Capability matches AccessRight on a PrivilegeEdge.
 type Capability string
@@ -8,9 +12,10 @@ type Capability string
 // EdgeKey is a deterministic, unique key for a PrivilegeEdge.
 type EdgeKey string
 
-// EdgeKeyOf constructs the canonical key for an edge.
+// EdgeKeyOf constructs a collision-free canonical key for an edge using
+// null-byte separators (which cannot appear in AD principal names).
 func EdgeKeyOf(e PrivilegeEdge) EdgeKey {
-	return EdgeKey(e.Domain + "\\" + e.SourcePrincipal + "->" + e.TargetPrincipal + "#" + e.AccessRight)
+	return EdgeKey(fmt.Sprintf("%s\x00%s\x00%s\x00%s", e.Domain, e.SourcePrincipal, e.TargetPrincipal, e.AccessRight))
 }
 
 // CapabilityResolutionStatus tells the planner why an executor wasn't found.
@@ -83,6 +88,45 @@ func NewCapabilityRegistry() *CapabilityRegistry {
 
 func (r *CapabilityRegistry) Register(exec CapabilityExecutor) {
 	r.executors[exec.Capability()] = exec
+}
+
+// AccessRightToCapability maps a privilege edge to the capability
+// that can execute it. This is the central dispatch function that
+// makes the planner→executor translation deterministic.
+func AccessRightToCapability(edge PrivilegeEdge) Capability {
+	if strings.EqualFold(edge.EdgeType, "cert") {
+		return "CERT_AUTH"
+	}
+	if strings.EqualFold(edge.EdgeType, "dcsync") {
+		return "DCSync"
+	}
+	if strings.EqualFold(edge.EdgeType, "rbcd") {
+		return "RBCD"
+	}
+	if strings.EqualFold(edge.EdgeType, "shadowcred") {
+		return "SHADOW_CRED"
+	}
+	if strings.EqualFold(edge.EdgeType, "kerberoast") {
+		return "KERBEROAST"
+	}
+	if strings.EqualFold(edge.EdgeType, "asrep") {
+		return "ASREP_ROAST"
+	}
+	if strings.EqualFold(edge.EdgeType, "spray") {
+		return "LDAP_SPRAY"
+	}
+	switch strings.ToUpper(edge.AccessRight) {
+	case "DCSYNC", "GETCHANGES", "GETCHANGESALL":
+		return "DCSync"
+	case "ADDMEMBER", "ADDSELF", "MEMBEROF":
+		return "ADD_MEMBER"
+	case "FORCECHANGEPASSWORD":
+		return "FORCE_CHANGE_PASSWORD"
+	case "WRITEDACL", "WRITEOWNER":
+		return "WRITE_DACL"
+	default:
+		return "GenericAll"
+	}
 }
 
 func (r *CapabilityRegistry) Resolve(cap Capability) (CapabilityExecutor, CapabilityResolutionStatus) {

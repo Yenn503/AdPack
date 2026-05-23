@@ -416,6 +416,7 @@ adpack run <phase> [flags]
 Flags:
   -t, --target string             Target host IP or hostname
   -e, --evasion-profile string    Evasion profile (default "standard")
+  -x, --execute                   Execute planned privilege escalation paths
       --provider-log string       File path for structured provider event logging (JSONL)
 ```
 
@@ -429,6 +430,7 @@ adpack autorun [flags]
 Flags:
   -t, --target string             Target host IP or hostname
   -e, --evasion-profile string    Evasion profile (default "standard")
+  -x, --execute                   Execute planned privilege escalation paths
   -m, --max int                   Maximum phases to run (0 = unlimited)
       --skip-fail                 Continue past failed phases
       --domain string             Domain for seed credentials

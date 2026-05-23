@@ -261,7 +261,7 @@ past failed phases instead of stopping.`,
 				}
 
 			case core.PhasePrivEsc:
-				result := modules.RunPrivesc(state, targetHost, evasionProfile)
+				result := modules.RunPrivesc(state, targetHost, evasionProfile, executePaths)
 				if result.Success {
 					for _, ev := range result.Evidence {
 						DB.SaveEvidence(ev)
@@ -345,4 +345,5 @@ func init() {
 	autoRunCmd.Flags().StringVar(&seedUser, "user", "", "Username (seeds initial credential)")
 	autoRunCmd.Flags().StringVar(&seedPass, "password", "", "Password (seeds initial credential)")
 	autoRunCmd.Flags().StringVar(&providerLogPath, "provider-log", "", "Write provider acquisition events as JSONL to this path")
+	autoRunCmd.Flags().BoolVarP(&executePaths, "execute", "x", false, "Execute planned privilege escalation paths")
 }

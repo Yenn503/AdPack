@@ -102,6 +102,8 @@ type RuntimeProvider interface {
 	StartResponder(ctx context.Context, cfg ResponderConfig) error
 	// StartCoercer starts an impacket-coercer instance as a managed service.
 	StartCoercer(ctx context.Context, cfg CoercerConfig) error
+	// Emit publishes a service event to the runtime event bus.
+	Emit(evt ServiceEvent)
 	// ApplyToState synchronises active services and ephemeral edges into ADState.
 	ApplyToState(state *ADState)
 }

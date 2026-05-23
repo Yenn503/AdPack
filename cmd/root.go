@@ -8,9 +8,17 @@ import (
 	"adpack/config"
 	"adpack/core"
 	"adpack/internal/executorbackend"
+	"adpack/internal/executorbackend/addmember"
+	"adpack/internal/executorbackend/asrep_roast"
 	"adpack/internal/executorbackend/certauth"
 	"adpack/internal/executorbackend/dcsync"
+	"adpack/internal/executorbackend/forcechangepassword"
 	"adpack/internal/executorbackend/genericall"
+	"adpack/internal/executorbackend/kerberoast"
+	"adpack/internal/executorbackend/ldap_spray"
+	"adpack/internal/executorbackend/rbcd"
+	"adpack/internal/executorbackend/shadowcred"
+	"adpack/internal/executorbackend/writedacl"
 	"adpack/internal/runtime"
 	"adpack/modules"
 	"adpack/storage"
@@ -105,9 +113,17 @@ func init() {
 		return runtime.NewSupervisor()
 	}
 	modules.CapabilityRegistry = core.NewCapabilityRegistry()
+	modules.CapabilityRegistry.Register(&addmember.Executor{})
+	modules.CapabilityRegistry.Register(&forcechangepassword.Executor{})
+	modules.CapabilityRegistry.Register(&writedacl.Executor{})
 	modules.CapabilityRegistry.Register(&genericall.Executor{})
 	modules.CapabilityRegistry.Register(&certauth.Executor{})
 	modules.CapabilityRegistry.Register(&dcsync.Executor{})
+	modules.CapabilityRegistry.Register(&rbcd.Executor{})
+	modules.CapabilityRegistry.Register(&shadowcred.Executor{})
+	modules.CapabilityRegistry.Register(&kerberoast.Executor{})
+	modules.CapabilityRegistry.Register(&asrep_roast.Executor{})
+	modules.CapabilityRegistry.Register(&ldap_spray.Executor{})
 
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	rootCmd.PersistentFlags().StringVarP(&dbPath, "db", "d", "", "database path (default ~/.adpack/state.db)")

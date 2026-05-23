@@ -497,7 +497,7 @@ adpack run discovery --target <dc_ip>
 
 - Only use on authorised targets with explicit written permission
 - Protect tool binaries with appropriate permissions (chmod 700)
-- **Credentials are stored in plaintext** — Protect `~/.adpack/state.db` with file permissions (600) and disk encryption
+- **Credentials encrypted at rest with AES-GCM** — The encryption key is stored in `~/.adpack/encrypt.key`. Protect both files with 600 permissions and disk encryption.
 - Clean up after engagements: `adpack reset state`
 - Follow responsible disclosure for vulnerabilities found
 - Advanced evasion techniques should be used responsibly and legally

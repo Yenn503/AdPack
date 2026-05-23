@@ -13,7 +13,7 @@
   </a>
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20WSL-white?style=for-the-badge&logo=linux&logoColor=black" alt="Platform">
   <a href="https://github.com/Yenn503/AdPack/releases">
-    <img src="https://img.shields.io/badge/Version-0.1.0-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
+    <img src="https://img.shields.io/badge/Version-0.3.0--dev-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
   </a>
   <a href="https://app.devin.ai/org/yenn503/wiki/Yenn503/AdPack?branch=main">
     <img src="https://img.shields.io/badge/Wiki-white?style=for-the-badge&logo=readthedocs&logoColor=black" alt="Devin Wiki">
@@ -464,7 +464,7 @@ PRs welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 ---
 
-<img src="https://img.shields.io/badge/AdPack-v0.1.0-black?style=for-the-badge&logo=github&logoColor=white" alt="AdPack">
+<img src="https://img.shields.io/badge/AdPack-v0.3.0--dev-black?style=for-the-badge&logo=github&logoColor=white" alt="AdPack">
 
 <br>
 

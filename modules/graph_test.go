@@ -29,6 +29,9 @@ func (f *fakeProvider) EnumerateADCSTemplates(context.Context) ([]core.ADCSTempl
 func (f *fakeProvider) EnumerateSessions(context.Context) ([]core.Session, error) {
 	return nil, f.err
 }
+func (f *fakeProvider) EnumerateDelegation(context.Context) ([]core.PrivilegeEdge, error) {
+	return nil, f.err
+}
 
 func TestRunGraphAnalysis_EmptyProvider(t *testing.T) {
 	p := &fakeProvider{}

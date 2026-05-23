@@ -66,7 +66,7 @@ func (e *Executor) Execute(_ context.Context, edge core.PrivilegeEdge, _ *core.A
 				"source":      edge.SourcePrincipal,
 				"domain":      edge.Domain,
 				"target_dc":   edge.TargetPrincipal,
-				"confidence":  "0.7",
+				"confidence":  0.7,
 				"description": "krbtgt hash inferred via DRSUAPI replication",
 			},
 		},
@@ -75,7 +75,7 @@ func (e *Executor) Execute(_ context.Context, edge core.PrivilegeEdge, _ *core.A
 			Data: map[string]any{
 				"domain":     edge.Domain,
 				"source":     edge.SourcePrincipal,
-				"confidence": "0.9",
+				"confidence": 0.9,
 			},
 		},
 	}

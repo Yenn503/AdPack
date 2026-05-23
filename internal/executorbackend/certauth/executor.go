@@ -42,12 +42,11 @@ func (e *Executor) CanExecute(_ context.Context, edge core.PrivilegeEdge, _ *cor
 // extractCertInfo parses certificate context from Requires.
 // Format: "certificate:CN=value, Issuer=value, Template=value, CA=value, UPN=value"
 func extractCertInfo(reqs []string) map[string]any {
-	var info map[string]any
 	for _, r := range reqs {
 		if !strings.HasPrefix(r, "certificate") {
 			continue
 		}
-		info = make(map[string]any)
+		info := make(map[string]any)
 		rest := strings.TrimPrefix(r, "certificate")
 		rest = strings.TrimPrefix(rest, ":")
 		for _, part := range strings.Split(rest, ",") {
@@ -57,8 +56,9 @@ func extractCertInfo(reqs []string) map[string]any {
 				info[strings.TrimSpace(k)] = strings.TrimSpace(v)
 			}
 		}
+		return info
 	}
-	return info
+	return nil
 }
 
 func (e *Executor) Execute(_ context.Context, edge core.PrivilegeEdge, _ *core.ADState) core.ExecutionResult {

@@ -1,7 +1,6 @@
 package core
 
 import (
-	"strings"
 	"time"
 )
 
@@ -38,20 +37,12 @@ type GPO struct {
 }
 
 // PrivilegeEdge represents a directed privilege relationship between two
-// principals. This is the core graph primitive that unifies ACL abuse,
-// delegation, MSSQL impersonation, group membership, and certificate
-// enrollment into a single traversal vocabulary.
+// AD principals. The direction is SourcePrincipal → TargetPrincipal via
+// AccessRight. For example:
 //
-// Examples:
-//
-//	SourcePrincipal: "NORTH\tywin.lannister"
-//	TargetPrincipal: "NORTH\jaime.lannister"
-//	AccessRight:     "ForceChangePassword"
-//	EdgeType:        "acl"
-//
-//	SourcePrincipal: "NORTH\arya.stark"
-//	TargetPrincipal: "NORTH\sa"
-//	AccessRight:     "MSSQL_EXECUTE_AS_LOGIN"
+//	SourcePrincipal: "SEVENKINGDOMS\WIN11_USER"
+//	TargetPrincipal: "SEVENKINGDOMS\KINGSLANDING$"
+//	AccessRight:     "HasSession"
 //	EdgeType:        "mssql_impersonation"
 //
 //	SourcePrincipal: "SEVENKINGDOMS\stannis.baratheon"
@@ -59,23 +50,63 @@ type GPO struct {
 //	AccessRight:     "GenericAll"
 //	EdgeType:        "acl"
 type PrivilegeEdge struct {
-	ID              int                     `json:"id" db:"id"`
-	SourcePrincipal string                  `json:"source_principal" db:"source_principal"`
-	TargetPrincipal string                  `json:"target_principal" db:"target_principal"`
-	AccessRight     string                  `json:"access_right" db:"access_right"`
-	EdgeType        string                  `json:"edge_type" db:"edge_type"`
-	Domain          string                  `json:"domain" db:"domain"`
-	Source          string                  `json:"source" db:"source"` // "daclread", "bloodhound", "mssql_priv", "manual"
-	Confidence      float64                 `json:"confidence" db:"confidence"`
-	Weight          float64                 `json:"weight" db:"weight"`                 // lower = better path cost
-	Exploitability  float64                 `json:"exploitability" db:"exploitability"` // 0.0-1.0, how easy to exploit
-	Noise           float64                 `json:"noise" db:"noise"`                   // 0.0-1.0, how detectable
-	Requires        []string                `json:"requires,omitempty" db:"-"`          // capabilities needed
-	ValidationState EdgeValidationState     `json:"validation_state" db:"validation_state"`
-	ObservedAt      time.Time               `json:"observed_at" db:"observed_at"`
-	ObservedBy      string                  `json:"observed_by" db:"observed_by"`   // module that recorded this edge
-	Preconditions   []ExecutionPrecondition `json:"preconditions,omitempty" db:"-"` // runtime checks before edge is executable
-	Provenance      string                  `json:"provenance" db:"provenance"`     // "bh", "relay", "resolver", "executor", "manual"
+	ID                 int                     `json:"id" db:"id"`
+	SourcePrincipal    string                  `json:"source_principal" db:"source_principal"`
+	TargetPrincipal    string                  `json:"target_principal" db:"target_principal"`
+	AccessRight        string                  `json:"access_right" db:"access_right"`
+	EdgeType           string                  `json:"edge_type" db:"edge_type"`
+	Domain             string                  `json:"domain" db:"domain"`
+	Source             string                  `json:"source" db:"source"` // "daclread", "bloodhound", "mssql_priv", "manual"
+	Confidence         float64                 `json:"confidence" db:"confidence"`
+	Weight             float64                 `json:"weight" db:"weight"`                 // lower = better path cost
+	Exploitability     float64                 `json:"exploitability" db:"exploitability"` // 0.0-1.0, how easy to exploit
+	Noise              float64                 `json:"noise" db:"noise"`                   // 0.0-1.0, how detectable
+	Requires           []string                `json:"requires,omitempty" db:"-"`          // capabilities needed
+	ValidationState    EdgeValidationState     `json:"validation_state" db:"validation_state"`
+	ObservedAt         time.Time               `json:"observed_at" db:"observed_at"`
+	ObservedBy         string                  `json:"observed_by" db:"observed_by"`   // module that recorded this edge
+	Preconditions      []ExecutionPrecondition `json:"preconditions,omitempty" db:"-"` // runtime checks before edge is executable
+	Provenance         string                  `json:"provenance" db:"provenance"`     // "bh", "relay", "resolver", "executor", "manual"
+	LastVerifiedAt     time.Time               `json:"last_verified_at" db:"last_verified_at"`
+	VerificationMethod string                  `json:"verification_method" db:"verification_method"`
+}
+
+// Stale returns true when the edge has not been re-verified within the
+// staleness window, or when the validation state explicitly indicates
+// staleness or degradation. A zero LastVerifiedAt means never verified.
+func (e PrivilegeEdge) Stale(staleAfter time.Duration) bool {
+	if e.ValidationState == EdgeStale || e.ValidationState == EdgeDegraded {
+		return true
+	}
+	if e.LastVerifiedAt.IsZero() {
+		return true
+	}
+	if staleAfter <= 0 {
+		return false
+	}
+	return time.Since(e.LastVerifiedAt) > staleAfter
+}
+
+// MarkVerified updates the edge's confidence, verification timestamp, and
+// method after a successful state-grounded check.
+func (e *PrivilegeEdge) MarkVerified(confidence float64, method string) {
+	e.Confidence = confidence
+	e.LastVerifiedAt = time.Now()
+	e.VerificationMethod = method
+	e.ValidationState = EdgeValidated
+}
+
+// DegradeConfidence reduces the edge's confidence and marks it suspect
+// without removing it. The planner will deprioritise suspect edges
+// unless no higher-confidence path exists.
+func (e *PrivilegeEdge) DegradeConfidence(newConf float64, reason string) {
+	if newConf < 0 {
+		newConf = 0
+	}
+	e.Confidence = newConf
+	e.LastVerifiedAt = time.Now()
+	e.VerificationMethod = "degraded:" + reason
+	e.ValidationState = EdgeDegraded
 }
 
 // EdgeValidationState describes the confidence level of a privilege edge.
@@ -86,6 +117,7 @@ const (
 	EdgeObserved      EdgeValidationState = "observed"      // directly observed by enumeration
 	EdgeValidated     EdgeValidationState = "validated"     // confirmed exploitable via execution
 	EdgeStale         EdgeValidationState = "stale"         // may no longer be valid
+	EdgeDegraded      EdgeValidationState = "degraded"      // re-verification failed, confidence lowered
 	EdgeProbabilistic EdgeValidationState = "probabilistic" // exists with some probability < 1.0
 )
 
@@ -270,154 +302,27 @@ const (
 )
 
 type ADState struct {
-	Hosts     []Host                `json:"hosts"`
-	Users     []User                `json:"users"`
-	Groups    []Group               `json:"groups"`
-	Computers []Computer            `json:"computers"`
-	Sessions  []Session             `json:"sessions"`
-	Creds     []Credential          `json:"creds"`
-	GPOs      []GPO                 `json:"gpos"`
-	ADCS      []ADCSTemplate        `json:"adcs"`
-	Edges     []PrivilegeEdge       `json:"edges"`
-	BH        BloodhoundMeta        `json:"bloodhound"`
-	Exec      ExecutionState        `json:"exec"`
-	Runtime   RuntimeState          `json:"runtime"`
-	Mutation  StateMutation         `json:"mutation"`
-	Phases    map[Phase]PhaseStatus `json:"phases"`
+	Hosts      []Host                  `json:"hosts"`
+	Users      []User                  `json:"users"`
+	Groups     []Group                 `json:"groups"`
+	Computers  []Computer              `json:"computers"`
+	Sessions   []Session               `json:"sessions"`
+	Creds      []Credential            `json:"creds"`
+	GPOs       []GPO                   `json:"gpos"`
+	ADCS       []ADCSTemplate          `json:"adcs"`
+	Edges      []PrivilegeEdge         `json:"edges"`
+	EdgeEvents map[EdgeKey][]EdgeEvent `json:"edge_events,omitempty"`
+	BH         BloodhoundMeta          `json:"bloodhound"`
+	Exec       ExecutionState          `json:"exec"`
+	Runtime    RuntimeState            `json:"runtime"`
+	Mutation   StateMutation           `json:"mutation"`
+	Phases     map[Phase]PhaseStatus   `json:"phases"`
 }
 
 type Gap struct {
 	Phase    Phase  `json:"phase"`
 	Severity string `json:"severity"`
 	Message  string `json:"message"`
-}
-
-// FindEscalationPaths performs BFS over PrivilegeEdges from a start principal
-// to any principal whose name or group membership suggests privilege escalation.
-// Returns the shortest path for each unique target found.
-//
-// This is a stateful graph primitive. It does not execute anything — it answers
-// "what paths exist" so the decision engine can score and select.
-//
-// Example:
-//
-//	Start: "NORTH\tywin.lannister"
-//	Found path:
-//	  tywin → ForceChangePassword → jaime
-//	  jaime → GenericWrite → joffrey
-//	  joffrey → WriteDacl → tyron
-//	  tyron → AddSelf → Small Council
-//	  Small Council → AddMember → Dragonstone
-//	  → ... → stannis → GenericAll → KINGSLANDING$ (DC)
-func (s *ADState) FindEscalationPaths(startPrincipal string) [][]PrivilegeEdge {
-	type bfsNode struct {
-		principal string
-		path      []PrivilegeEdge
-		visited   map[string]bool
-	}
-
-	// Build adjacency list: source → []edges
-	adj := make(map[string][]PrivilegeEdge)
-	for _, e := range s.Edges {
-		key := e.Domain + "\\" + e.SourcePrincipal
-		adj[key] = append(adj[key], e)
-	}
-
-	// Build set of high-value targets (DA users, DC computer accounts)
-	highValue := make(map[string]bool)
-	for _, u := range s.Users {
-		if u.IsDA {
-			highValue[u.Domain+"\\"+u.Username] = true
-		}
-	}
-	for _, c := range s.Computers {
-		if c.IsDC {
-			highValue[c.Domain+"\\"+c.Name+"$"] = true
-		}
-	}
-	// High-value group names (any domain)
-	highValueNames := map[string]bool{
-		"Domain Admins":      true,
-		"Enterprise Admins":  true,
-		"Administrators":     true,
-		"Domain Controllers": true,
-		"AdminSDHolder":      true,
-	}
-
-	// Pre-populate domain-qualified group entries from state
-	for _, g := range s.Groups {
-		if highValueNames[g.Name] {
-			highValue[g.Domain+"\\"+g.Name] = true
-		}
-	}
-
-	isHighValue := func(principal string) bool {
-		if highValue[principal] {
-			return true
-		}
-		_, name, ok := strings.Cut(principal, "\\")
-		if ok && highValueNames[name] {
-			return true
-		}
-		return false
-	}
-
-	var paths [][]PrivilegeEdge
-	queue := []bfsNode{{
-		principal: startPrincipal,
-		path:      []PrivilegeEdge{},
-		visited:   map[string]bool{startPrincipal: true},
-	}}
-
-	// Limit search to reasonable depth
-	maxDepth := 12
-	// Track found targets so we return shortest path per target
-	foundTargets := make(map[string]bool)
-
-	for len(queue) > 0 && len(paths) < 10 {
-		node := queue[0]
-		queue = queue[1:]
-
-		if len(node.path) >= maxDepth {
-			continue
-		}
-
-		if isHighValue(node.principal) && len(node.path) > 0 {
-			key := node.principal
-			if !foundTargets[key] {
-				foundTargets[key] = true
-				path := make([]PrivilegeEdge, len(node.path))
-				copy(path, node.path)
-				paths = append(paths, path)
-			}
-			continue
-		}
-
-		for _, edge := range adj[node.principal] {
-			targetKey := edge.Domain + "\\" + edge.TargetPrincipal
-			if node.visited[targetKey] {
-				continue
-			}
-
-			newVisited := make(map[string]bool)
-			for k, v := range node.visited {
-				newVisited[k] = v
-			}
-			newVisited[targetKey] = true
-
-			newPath := make([]PrivilegeEdge, len(node.path)+1)
-			copy(newPath, node.path)
-			newPath[len(node.path)] = edge
-
-			queue = append(queue, bfsNode{
-				principal: targetKey,
-				path:      newPath,
-				visited:   newVisited,
-			})
-		}
-	}
-
-	return paths
 }
 
 func (s *ADState) DetectGaps() []Gap {
@@ -504,5 +409,26 @@ func (s *ADState) NextPhase() *Phase {
 }
 
 func NewADState() *ADState {
-	return &ADState{Phases: make(map[Phase]PhaseStatus)}
+	return &ADState{
+		Phases:     make(map[Phase]PhaseStatus),
+		EdgeEvents: make(map[EdgeKey][]EdgeEvent),
+	}
+}
+
+// EmitEdgeEvent applies an event through the reducer, updates the matching
+// edge in-place, and appends the event to the event log. Returns the
+// volatility score from the reducer.
+func (s *ADState) EmitEdgeEvent(edgeKey EdgeKey, ev EdgeEvent) float64 {
+	for i, e := range s.Edges {
+		if EdgeKeyOf(e) != edgeKey {
+			continue
+		}
+		updated, vol := ReduceEdgeEvent(e, ev)
+		s.Edges[i] = updated
+		s.EdgeEvents[edgeKey] = append(s.EdgeEvents[edgeKey], ev)
+		return vol
+	}
+	// Edge not found — log event anyway for audit
+	s.EdgeEvents[edgeKey] = append(s.EdgeEvents[edgeKey], ev)
+	return 0
 }

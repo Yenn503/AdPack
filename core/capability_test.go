@@ -126,3 +126,32 @@ func TestApplyDelta_NoopEmpty(t *testing.T) {
 		t.Fatal("expected Version unchanged for empty delta")
 	}
 }
+
+func TestAccessRightToCapability_Dispatch(t *testing.T) {
+	tests := []struct {
+		edge PrivilegeEdge
+		want Capability
+	}{
+		{PrivilegeEdge{EdgeType: "cert"}, "CERT_AUTH"},
+		{PrivilegeEdge{AccessRight: "DCSync"}, "DCSync"},
+		{PrivilegeEdge{AccessRight: "AddMember"}, "ADD_MEMBER"},
+		{PrivilegeEdge{AccessRight: "AddSelf"}, "ADD_MEMBER"},
+		{PrivilegeEdge{AccessRight: "ForceChangePassword"}, "FORCE_CHANGE_PASSWORD"},
+		{PrivilegeEdge{AccessRight: "WriteDacl"}, "WRITE_DACL"},
+		{PrivilegeEdge{AccessRight: "WriteOwner"}, "WRITE_DACL"},
+		{PrivilegeEdge{AccessRight: "MemberOf"}, "ADD_MEMBER"},
+		{PrivilegeEdge{EdgeType: "dcsync"}, "DCSync"},
+		{PrivilegeEdge{EdgeType: "rbcd"}, "RBCD"},
+		{PrivilegeEdge{EdgeType: "shadowcred"}, "SHADOW_CRED"},
+		{PrivilegeEdge{EdgeType: "kerberoast"}, "KERBEROAST"},
+		{PrivilegeEdge{EdgeType: "asrep"}, "ASREP_ROAST"},
+		{PrivilegeEdge{EdgeType: "spray"}, "LDAP_SPRAY"},
+		{PrivilegeEdge{AccessRight: "GenericAll"}, "GenericAll"},
+	}
+	for _, tt := range tests {
+		got := AccessRightToCapability(tt.edge)
+		if got != tt.want {
+			t.Errorf("AccessRightToCapability(%+v) = %s, want %s", tt.edge, got, tt.want)
+		}
+	}
+}

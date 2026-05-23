@@ -1,7 +1,7 @@
 .PHONY: build install clean test lint help
 
 BINARY_NAME=adpack
-VERSION=v0.1.0
+VERSION=v0.3.0-dev
 BUILD_DIR=bin
 GO=go
 

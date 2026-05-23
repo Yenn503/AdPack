@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"adpack/core"
 	"adpack/utils"
@@ -141,7 +142,74 @@ func bhStatus(bh core.BloodhoundMeta) string {
 	return "not collected"
 }
 
+// showRuntimeStatus prints active services and ephemeral edges from state.
+func showRuntimeStatus(state *core.ADState) {
+	if len(state.Runtime.ActiveServices) == 0 && len(state.Runtime.EphemeralEdges) == 0 {
+		fmt.Println("  No runtime services recorded in state")
+		return
+	}
+
+	if len(state.Runtime.ActiveServices) > 0 {
+		fmt.Println(utils.TitleStyle.Render("  Runtime Services"))
+		t := table.New().
+			Border(lipgloss.RoundedBorder()).
+			BorderStyle(lipgloss.NewStyle().Foreground(utils.ColorSecondary)).
+			Headers("ID", "TYPE", "STATE", "AGE").
+			StyleFunc(func(row, col int) lipgloss.Style {
+				if row == 0 {
+					return lipgloss.NewStyle().Bold(true).Foreground(utils.ColorPrimary)
+				}
+				return utils.BaseStyle
+			})
+
+		for id, svc := range state.Runtime.ActiveServices {
+			stateStr := "stopped"
+			switch svc.State {
+			case core.ServiceRunning:
+				stateStr = utils.SuccessStyle.Render("running")
+			case core.ServiceFailed:
+				stateStr = utils.ErrorStyle.Render("failed")
+			case core.ServiceDegraded:
+				stateStr = utils.WarningStyle.Render("degraded")
+			}
+			age := "unknown"
+			if !svc.LastHeartbeat.IsZero() {
+				d := time.Since(svc.LastHeartbeat)
+				if d < 0 {
+					d = 0
+				}
+				age = fmt.Sprintf("%.0fs ago", d.Seconds())
+			}
+			t.Row(id, string(svc.Type), stateStr, age)
+		}
+		fmt.Println(t.Render())
+	}
+
+	if len(state.Runtime.EphemeralEdges) > 0 {
+		fmt.Println()
+		fmt.Println(utils.TitleStyle.Render("  Ephemeral Edges"))
+		for _, e := range state.Runtime.EphemeralEdges {
+			fmt.Printf("    %s → %s [%s] (conf=%.1f)\n",
+				e.SourcePrincipal, e.TargetPrincipal, e.AccessRight, e.Confidence)
+		}
+	}
+}
+
+var runtimeStatusCmd = &cobra.Command{
+	Use:   "runtime",
+	Short: "Show active runtime services and ephemeral edges",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		state, err := DB.LoadState()
+		if err != nil {
+			return fmt.Errorf("load state: %w", err)
+		}
+		showRuntimeStatus(state)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(statusCmd)
 	statusCmd.Flags().Bool("json", false, "Output state as JSON")
+	statusCmd.AddCommand(runtimeStatusCmd)
 }

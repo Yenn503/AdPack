@@ -16,6 +16,7 @@ import (
 var (
 	evasionProfile string
 	targetHost     string
+	executePaths   bool
 )
 
 var runCmd = &cobra.Command{
@@ -189,7 +190,7 @@ var runCmd = &cobra.Command{
 			}
 
 		case core.PhasePrivEsc:
-			result := modules.RunPrivesc(state, targetHost, evasionProfile)
+			result := modules.RunPrivesc(state, targetHost, evasionProfile, executePaths)
 			success = result.Success
 			if result.Success {
 				for _, ev := range result.Evidence {
@@ -304,6 +305,7 @@ func init() {
 	runCmd.Flags().StringVarP(&targetHost, "target", "t", "",
 		"Target host IP or hostname")
 	runCmd.Flags().StringVar(&providerLogPath, "provider-log", "", "Write provider acquisition events as JSONL to this path")
+	runCmd.Flags().BoolVarP(&executePaths, "execute", "x", false, "Execute planned privilege escalation paths")
 	runCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return phaseNames(), cobra.ShellCompDirectiveNoFileComp
 	}
