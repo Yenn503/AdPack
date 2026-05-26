@@ -140,6 +140,7 @@ func (m *mockRuntime) Services() []*core.ManagedService                         
 func (m *mockRuntime) StartRelay(ctx context.Context, cfg core.RelayConfig) error         { return nil }
 func (m *mockRuntime) StartResponder(ctx context.Context, cfg core.ResponderConfig) error { return nil }
 func (m *mockRuntime) StartCoercer(ctx context.Context, cfg core.CoercerConfig) error     { return nil }
+func (m *mockRuntime) StartMitm6(ctx context.Context, cfg core.Mitm6Config) error         { return nil }
 func (m *mockRuntime) ApplyToState(state *core.ADState)                                   {}
 
 func TestAttachResolverPipeline_Error(t *testing.T) {

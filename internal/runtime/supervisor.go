@@ -253,6 +253,38 @@ func (s *ServiceSupervisor) StartCoercer(ctx context.Context, cfg core.CoercerCo
 	return StartCoercerService(svc, coercerCfg, ctx)
 }
 
+// StartMitm6 starts a mitm6 IPv6 poisoner as a managed service.
+// Implements core.RuntimeProvider.
+func (s *ServiceSupervisor) StartMitm6(ctx context.Context, cfg core.Mitm6Config) error {
+	mCfg := Mitm6Config{
+		Interface:     cfg.Interface,
+		Domain:        cfg.Domain,
+		HostAllowList: cfg.HostAllowList,
+		HostDenyList:  cfg.HostDenyList,
+		IgnoreNoFQDN:  cfg.IgnoreNoFQDN,
+		NoRA:          cfg.NoRA,
+		RelayTarget:   cfg.RelayTarget,
+		Verbose:       cfg.Verbose,
+	}
+
+	id := cfg.ID
+	if id == "" {
+		id = "mitm6-main"
+	}
+	label := cfg.Label
+	if label == "" {
+		label = "mitm6 IPv6 Poisoner"
+	}
+
+	svc := NewMitm6Service(id, label, mCfg)
+	if err := s.StartService(*svc); err != nil {
+		return err
+	}
+
+	svc = s.Service(id)
+	return StartMitm6Service(svc, mCfg, ctx)
+}
+
 // ApplyToState synchronises the supervisor's runtime state into the given
 // ADState. Ephemeral edges are appended to state.Edges, and active services
 // are written into state.Runtime.

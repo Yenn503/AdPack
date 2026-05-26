@@ -56,7 +56,7 @@ var runCmd = &cobra.Command{
 		printPhaseHeader(phase)
 
 		state.Phases[phase] = core.PhaseInProgress
-		if err := DB.SavePhases(state.Phases); err != nil {
+		if err := DB.SavePhases(state); err != nil {
 			return fmt.Errorf("save phases: %w", err)
 		}
 
@@ -219,7 +219,7 @@ var runCmd = &cobra.Command{
 		} else {
 			state.Phases[phase] = core.PhaseUntouched
 		}
-		DB.SavePhases(state.Phases)
+		DB.SavePhases(state)
 
 		// Footer
 		fmt.Println()

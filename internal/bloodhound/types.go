@@ -9,14 +9,14 @@ type BHCollection struct {
 
 // BHUser represents a BloodHound user object.
 type BHUser struct {
-	ObjectIdentifier  string      `json:"ObjectIdentifier"`
-	PrimaryGroupSID   string      `json:"PrimaryGroupSID"`
-	Properties        BHUserProps `json:"Properties"`
-	Aces              []BHAce     `json:"Aces"`
-	SPNTargets        []string    `json:"SPNTargets"`
-	AllowedToDelegate []string    `json:"AllowedToDelegate"`
-	HasSIDHistory     []string    `json:"HasSIDHistory"`
-	IsDeleted         bool        `json:"IsDeleted"`
+	ObjectIdentifier  string                `json:"ObjectIdentifier"`
+	PrimaryGroupSID   string                `json:"PrimaryGroupSID"`
+	Properties        BHUserProps           `json:"Properties"`
+	Aces              []BHAce               `json:"Aces"`
+	SPNTargets        []string              `json:"SPNTargets"`
+	AllowedToDelegate []BHAllowedToDelegate `json:"AllowedToDelegate"`
+	HasSIDHistory     []string              `json:"HasSIDHistory"`
+	IsDeleted         bool                  `json:"IsDeleted"`
 }
 
 type BHUserProps struct {
@@ -42,13 +42,13 @@ type BHUserProps struct {
 
 // BHGroup represents a BloodHound group object.
 type BHGroup struct {
-	ObjectIdentifier  string       `json:"ObjectIdentifier"`
-	Properties        BHGroupProps `json:"Properties"`
-	Members           []BHMember   `json:"Members"`
-	Aces              []BHAce      `json:"Aces"`
-	AllowedToDelegate []string     `json:"AllowedToDelegate"`
-	HasSIDHistory     []string     `json:"HasSIDHistory"`
-	IsDeleted         bool         `json:"IsDeleted"`
+	ObjectIdentifier  string                `json:"ObjectIdentifier"`
+	Properties        BHGroupProps          `json:"Properties"`
+	Members           []BHMember            `json:"Members"`
+	Aces              []BHAce               `json:"Aces"`
+	AllowedToDelegate []BHAllowedToDelegate `json:"AllowedToDelegate"`
+	HasSIDHistory     []string              `json:"HasSIDHistory"`
+	IsDeleted         bool                  `json:"IsDeleted"`
 }
 
 type BHGroupProps struct {
@@ -68,18 +68,18 @@ type BHMember struct {
 
 // BHComputer represents a BloodHound computer object.
 type BHComputer struct {
-	ObjectIdentifier   string             `json:"ObjectIdentifier"`
-	Properties         BHComputerProps    `json:"Properties"`
-	Aces               []BHAce            `json:"Aces"`
-	Sessions           BHResultCollection `json:"Sessions"`
-	LocalAdmins        BHResultCollection `json:"LocalAdmins"`
-	RemoteDesktopUsers BHResultCollection `json:"RemoteDesktopUsers"`
-	DcomUsers          BHResultCollection `json:"DcomUsers"`
-	PSRemoteUsers      BHResultCollection `json:"PSRemoteUsers"`
-	AllowedToDelegate  []string           `json:"AllowedToDelegate"`
-	AllowedToAct       []BHAllowedToAct   `json:"AllowedToAct"`
-	HasSIDHistory      []string           `json:"HasSIDHistory"`
-	IsDeleted          bool               `json:"IsDeleted"`
+	ObjectIdentifier   string                `json:"ObjectIdentifier"`
+	Properties         BHComputerProps       `json:"Properties"`
+	Aces               []BHAce               `json:"Aces"`
+	Sessions           BHResultCollection    `json:"Sessions"`
+	LocalAdmins        BHResultCollection    `json:"LocalAdmins"`
+	RemoteDesktopUsers BHResultCollection    `json:"RemoteDesktopUsers"`
+	DcomUsers          BHResultCollection    `json:"DcomUsers"`
+	PSRemoteUsers      BHResultCollection    `json:"PSRemoteUsers"`
+	AllowedToDelegate  []BHAllowedToDelegate `json:"AllowedToDelegate"`
+	AllowedToAct       []BHAllowedToAct      `json:"AllowedToAct"`
+	HasSIDHistory      []string              `json:"HasSIDHistory"`
+	IsDeleted          bool                  `json:"IsDeleted"`
 }
 
 type BHComputerProps struct {
@@ -125,6 +125,12 @@ type BHAce struct {
 	PrincipalType string `json:"PrincipalType"`
 	RightName     string `json:"RightName"`
 	IsInherited   bool   `json:"IsInherited"`
+}
+
+// BHAllowedToDelegate represents a delegation target entry (object + type).
+type BHAllowedToDelegate struct {
+	ObjectIdentifier string `json:"ObjectIdentifier"`
+	ObjectType       string `json:"ObjectType"`
 }
 
 // BHAllowedToAct represents a resource-based constrained delegation entry.

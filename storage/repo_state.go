@@ -333,24 +333,26 @@ func (db *DB) LoadCreds() ([]core.Credential, error) {
 	return cc, nil
 }
 
-func (db *DB) SavePhases(m map[core.Phase]core.PhaseStatus) error {
+func (db *DB) SavePhases(state *core.ADState) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	for p, s := range m {
-		_, err := tx.Exec(`INSERT INTO phase_status(phase,status) VALUES(?,?) ON CONFLICT(phase) DO UPDATE SET status=excluded.status`, string(p), int(s))
+	for p, s := range state.Phases {
+		reason := string(state.SkipReasons[p])
+		_, err := tx.Exec(`INSERT INTO phase_status(phase,status,skip_reason) VALUES(?,?,?) ON CONFLICT(phase) DO UPDATE SET status=excluded.status,skip_reason=excluded.skip_reason`, string(p), int(s), reason)
 		if err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
-func (db *DB) LoadPhases() (map[core.Phase]core.PhaseStatus, error) {
+func (db *DB) LoadPhases(state *core.ADState) (map[core.Phase]core.PhaseStatus, error) {
 	type row struct {
-		Phase  string `db:"phase"`
-		Status int    `db:"status"`
+		Phase      string `db:"phase"`
+		Status     int    `db:"status"`
+		SkipReason string `db:"skip_reason"`
 	}
 	var rows []row
 	err := db.Select(&rows, "SELECT * FROM phase_status")
@@ -360,6 +362,9 @@ func (db *DB) LoadPhases() (map[core.Phase]core.PhaseStatus, error) {
 	m := make(map[core.Phase]core.PhaseStatus)
 	for _, r := range rows {
 		m[core.Phase(r.Phase)] = core.PhaseStatus(r.Status)
+		if r.SkipReason != "" {
+			state.SkipReasons[core.Phase(r.Phase)] = core.SkipReason(r.SkipReason)
+		}
 	}
 	return m, nil
 }
@@ -509,12 +514,13 @@ func (db *DB) SaveState(s *core.ADState) error {
 		}
 	}
 
-	stmtPhase, err := tx.Preparex(`INSERT INTO phase_status(phase,status) VALUES(?,?) ON CONFLICT(phase) DO UPDATE SET status=excluded.status`)
+	stmtPhase, err := tx.Preparex(`INSERT INTO phase_status(phase,status,skip_reason) VALUES(?,?,?) ON CONFLICT(phase) DO UPDATE SET status=excluded.status,skip_reason=excluded.skip_reason`)
 	if err != nil {
 		return err
 	}
 	for p, st := range s.Phases {
-		if _, err := stmtPhase.Exec(string(p), int(st)); err != nil {
+		reason := string(s.SkipReasons[p])
+		if _, err := stmtPhase.Exec(string(p), int(st), reason); err != nil {
 			return err
 		}
 	}
@@ -567,7 +573,7 @@ func (db *DB) LoadState() (*core.ADState, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.Phases, err = db.LoadPhases()
+	s.Phases, err = db.LoadPhases(s)
 	if err != nil {
 		return nil, err
 	}

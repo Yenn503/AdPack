@@ -11,6 +11,9 @@ import (
 	"adpack/utils"
 )
 
+// execMethodOrder is the per-action exec-method failover sequence. Mirrors
+// tools.ExecMethodOrder; kept local because a few sites need to reorder for
+// SYSTEM-context probes without affecting the global default.
 var execMethodOrder = []string{"wmiexec", "smbexec", "atexec"}
 
 func New(target core.HostRef, domain, user, pass, hash string) core.Executor {
@@ -165,26 +168,102 @@ func executeAction(ctx context.Context, target core.HostRef, domain, user, pass,
 	}
 }
 
+// runFailover walks execMethodOrder until one method genuinely executes the
+// command on the target. "Genuinely" is stronger than nxc's process exit code:
+// nxc exits 0 even on auth failure or when the exec method silently no-ops,
+// so we additionally require positive auth markers and exec-success markers
+// from stdout/stderr.
+//
+// Short-circuits on auth failure: if the very first attempt shows the
+// principal's auth was rejected (STATUS_LOGON_FAILURE / STATUS_ACCESS_DENIED
+// etc.), there's no point trying the remaining methods — the creds are wrong,
+// not the transport.
 func runFailover(ctx context.Context, target tools.NetExecTarget, command string, perAttempt time.Duration) (*tools.FailoverResult, error) {
 	if perAttempt <= 0 {
 		perAttempt = 45 * time.Second
 	}
 	var last tools.FailoverResult
 	var lastErr error
-	for _, method := range execMethodOrder {
+	for i, method := range execMethodOrder {
 		attemptCtx, cancel := context.WithTimeout(ctx, perAttempt)
 		r, err := tools.NetExec.Run(attemptCtx, target, "--exec-method", []string{method, "-x", command})
 		cancel()
 		last = tools.FailoverResult{CmdResult: r, Method: method}
 		lastErr = err
-		if err == nil && r.Success {
-			return &last, nil
-		}
+
+		// Honour parent-context cancellation immediately.
 		if ctx.Err() != nil {
 			return &last, ctx.Err()
 		}
+
+		// Process-level error (timeout, exec not found, etc.): try next.
+		if err != nil {
+			continue
+		}
+
+		combined := r.Stdout + "\n" + r.Stderr
+
+		// On the first method attempt, abort the whole loop if creds were
+		// rejected. Iterating wmiexec → smbexec → atexec all with bad creds
+		// just produces three identical auth failures and a misleading log.
+		if i == 0 && target.Username != "" &&
+			!tools.NxcAuthSucceeded(combined, target.Username) {
+			// Distinguish "auth banner missing entirely" from "auth banner
+			// shows failure": only the latter is a hard stop. nxc usually
+			// prints the banner; absence usually means it crashed before
+			// even trying, in which case we want to fall through.
+			if hasNxcFailureMarker(combined, target.Username) {
+				return &last, fmt.Errorf("auth rejected on %s as %s\\%s",
+					target.Host, target.Domain, target.Username)
+			}
+		}
+
+		// Process exited zero AND we have positive evidence of execution.
+		if tools.NxcCommandSucceeded(combined) {
+			return &last, nil
+		}
+		// Otherwise treat as a soft failure of this method (e.g. non-admin
+		// can't use wmiexec). Loop continues to the next method, which may
+		// or may not succeed depending on how the auth principal is privileged.
+	}
+	if lastErr == nil {
+		// All methods returned exit 0 but none produced exec evidence.
+		// Surface this as an explicit failure rather than a phantom success.
+		lastErr = fmt.Errorf("no exec method produced execution evidence on %s", target.Host)
 	}
 	return &last, lastErr
+}
+
+// hasNxcFailureMarker reports whether the nxc output contains a hard auth
+// failure for the given principal. Mirrors the negative half of
+// tools.NxcAuthSucceeded so we can distinguish "auth definitely rejected"
+// from "auth status unknown".
+func hasNxcFailureMarker(out, username string) bool {
+	if out == "" || username == "" {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "[-]") || !strings.Contains(line, username) {
+			continue
+		}
+		lo := strings.ToLower(line)
+		for _, m := range []string{
+			"status_logon_failure",
+			"status_access_denied",
+			"status_account_locked",
+			"status_account_disabled",
+			"status_password_expired",
+			"kdc_err_preauth_failed",
+			"kdc_err_c_principal_unknown",
+			"invalid credentials",
+			"authentication failed",
+		} {
+			if strings.Contains(lo, m) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func runSystemCheck(ctx context.Context, target tools.NetExecTarget, perAttempt time.Duration) (string, *utils.CmdResult, bool) {

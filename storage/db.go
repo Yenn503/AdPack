@@ -416,6 +416,7 @@ func migrate(db *sqlx.DB) error {
 		`ALTER TABLE credentials ADD COLUMN source_tool TEXT DEFAULT ''`,
 		`ALTER TABLE credentials ADD COLUMN target_account TEXT DEFAULT ''`,
 		`ALTER TABLE credentials ADD COLUMN confidence REAL DEFAULT 0.0`,
+		`ALTER TABLE phase_status ADD COLUMN skip_reason TEXT NOT NULL DEFAULT ''`,
 	} {
 		db.Exec(m) // best-effort for existing DBs
 	}

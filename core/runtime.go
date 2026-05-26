@@ -15,6 +15,7 @@ const (
 	ServiceWebDAV    ServiceType = "webdav"
 	ServiceHTTPRelay ServiceType = "http_relay"
 	ServiceResolver  ServiceType = "resolver"
+	ServiceMitm6     ServiceType = "mitm6"
 )
 
 // ServiceState tracks the lifecycle phase of a managed service.
@@ -102,6 +103,8 @@ type RuntimeProvider interface {
 	StartResponder(ctx context.Context, cfg ResponderConfig) error
 	// StartCoercer starts an impacket-coercer instance as a managed service.
 	StartCoercer(ctx context.Context, cfg CoercerConfig) error
+	// StartMitm6 starts a mitm6 IPv6 poisoner as a managed service.
+	StartMitm6(ctx context.Context, cfg Mitm6Config) error
 	// Emit publishes a service event to the runtime event bus.
 	Emit(evt ServiceEvent)
 	// ApplyToState synchronises active services and ephemeral edges into ADState.
@@ -158,4 +161,22 @@ type CoercerConfig struct {
 	Targets     []string      // IPs/hostnames to coerce
 	Methods     []string      // smb, http, ldap (empty = all)
 	Delay       time.Duration // sleep between rounds
+}
+
+// Mitm6Config carries parameters for running mitm6 (IPv6 SLAAC + DHCPv6
+// poisoning). mitm6 is canonically paired with ntlmrelayx -6 to relay
+// captured authentications to LDAP/LDAPS on the DC.
+//
+// Reference: https://github.com/dirkjanm/mitm6
+type Mitm6Config struct {
+	ID            string   // service ID for the supervisor
+	Label         string   // human-readable label
+	Interface     string   // network interface (e.g. eth0). Required by mitm6.
+	Domain        string   // target AD domain to spoof (mitm6 -d)
+	HostAllowList []string // optional --host-allowlist entries
+	HostDenyList  []string // optional --host-denylist entries
+	IgnoreNoFQDN  bool     // mitm6 --ignore-nofqdn
+	NoRA          bool     // mitm6 --no-ra (no Router Advertisement)
+	RelayTarget   string   // informational: paired ntlmrelayx target
+	Verbose       bool     // mitm6 -v
 }

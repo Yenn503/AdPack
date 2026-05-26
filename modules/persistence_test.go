@@ -1,6 +1,69 @@
 package modules
 
-import "testing"
+import (
+	"testing"
+
+	"adpack/core"
+)
+
+func TestCollectSilverTicketCandidates(t *testing.T) {
+	state := core.NewADState()
+	state.Users = []core.User{
+		{Username: "mssql_svc", SAMAccountName: "mssql_svc", Domain: "DOM",
+			SPNs: "MSSQLSvc/sql01.dom.local:1433,MSSQLSvc/sql01.dom.local"},
+		{Username: "no_spn_user", SAMAccountName: "no_spn_user", Domain: "DOM"},
+	}
+	state.Creds = []core.Credential{
+		// Machine account hash → derives cifs SPN.
+		{Type: core.CredHash, Username: "DC01$", Domain: "DOM",
+			Hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Source: "secretsdump"},
+		// Duplicate machine entry should be deduped.
+		{Type: core.CredHash, Username: "DC01$", Domain: "DOM",
+			Hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Source: "secretsdump"},
+		// Kerberoasted user with two SPNs → two candidates.
+		{Type: core.CredHash, Username: "mssql_svc", Domain: "DOM",
+			Hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Source: "kerberoast"},
+		// User without SPNs in directory: skipped.
+		{Type: core.CredHash, Username: "no_spn_user", Domain: "DOM",
+			Hash: "cccccccccccccccccccccccccccccccc", Source: "spray"},
+		// Plaintext password (not hash): skipped.
+		{Type: core.CredPlaintext, Username: "alice", Domain: "DOM",
+			Secret: "Passw0rd!"},
+		// Empty hash: skipped.
+		{Type: core.CredHash, Username: "x", Domain: "DOM", Hash: ""},
+	}
+
+	got := collectSilverTicketCandidates(state, "DOM")
+	if len(got) != 3 {
+		t.Fatalf("expected 3 candidates (1 machine + 2 kerberoasted SPNs), got %d: %+v", len(got), got)
+	}
+
+	var sawMachine, sawSPN1, sawSPN2 bool
+	for _, c := range got {
+		switch c.spn {
+		case "cifs/dc01.dom":
+			sawMachine = true
+			if c.username != "DC01$" {
+				t.Errorf("machine candidate has wrong username: %s", c.username)
+			}
+		case "MSSQLSvc/sql01.dom.local:1433":
+			sawSPN1 = true
+		case "MSSQLSvc/sql01.dom.local":
+			sawSPN2 = true
+		default:
+			t.Errorf("unexpected SPN: %s", c.spn)
+		}
+		if c.hash == "" {
+			t.Errorf("candidate missing hash: %+v", c)
+		}
+	}
+	if !sawMachine {
+		t.Error("missing expected cifs/dc01.dom candidate")
+	}
+	if !sawSPN1 || !sawSPN2 {
+		t.Errorf("missing kerberoasted SPN candidates: spn1=%v spn2=%v", sawSPN1, sawSPN2)
+	}
+}
 
 func TestExtractKrbtgtNTHash(t *testing.T) {
 	tests := []struct {

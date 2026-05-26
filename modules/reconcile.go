@@ -104,6 +104,40 @@ func ReconcileCrossCheck(predicted core.ExecutionResult, cap core.Capability, to
 				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
 			})
 		}
+	case strings.Contains(capLower, "unconstrained_delegation"):
+		// Confirmation that the captured TGT actually let us DCSync —
+		// secretsdump prints "Dumping Domain Credentials" and the krbtgt
+		// hash on success. Absence of either means no usable TGT yet.
+		if !containsAny(outputLower, "dumping domain credentials", "krbtgt", "samr", "service rpc") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "dcsync_via_captured_tgt",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "kerberoast"):
+		if !containsAny(outputLower, "krb5tgs", "tgs hash", "hashcat") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "kerberos_tgs_hash",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "asrep_roast"):
+		if !containsAny(outputLower, "krb5asrep", "asrep", "hashcat") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "asrep_hash",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "s4u_delegation"):
+		// impacket-getST prints "Saving ticket in" + ".ccache" on success.
+		// Failures usually contain "KDC_ERR_BADOPTION" or
+		// "KDC_ERR_S_PRINCIPAL_UNKNOWN" which we treat as mismatch.
+		if !containsAny(outputLower, "saving ticket in", ".ccache", "impersonating", "got tgs") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "tgs_obtained",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
 	}
 
 	if len(mismatches) > 0 {

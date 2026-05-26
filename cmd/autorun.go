@@ -111,7 +111,7 @@ past failed phases instead of stopping.`,
 			fmt.Printf("      %s\n\n", lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(rec.Rationale))
 
 			state.Phases[rec.Phase] = core.PhaseInProgress
-			DB.SavePhases(state.Phases)
+			DB.SavePhases(state)
 
 			success := false
 			start := time.Now()
@@ -294,7 +294,7 @@ past failed phases instead of stopping.`,
 
 			if success {
 				state.Phases[rec.Phase] = core.PhaseComplete
-				DB.SavePhases(state.Phases)
+				DB.SavePhases(state)
 				fmt.Printf("\n      %s  %s  %s\n",
 					utils.SuccessStyle.Render("✓ complete"),
 					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("·"),
@@ -317,7 +317,7 @@ past failed phases instead of stopping.`,
 						state.SkipReasons[rec.Phase] = core.SkipNoPath
 					}
 				}
-				DB.SavePhases(state.Phases)
+				DB.SavePhases(state)
 				fmt.Printf("\n      %s  %s\n",
 					utils.ErrorStyle.Render("✗ failed"),
 					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))

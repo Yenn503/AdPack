@@ -93,9 +93,15 @@ func (r *CapabilityRegistry) Register(exec CapabilityExecutor) {
 // AccessRightToCapability maps a privilege edge to the capability
 // that can execute it. This is the central dispatch function that
 // makes the planner→executor translation deterministic.
+const ADCS_CERT_ENROLL Capability = "ADCS_CERT_ENROLL"
+const ADCS_PKINIT_AUTH Capability = "ADCS_PKINIT_AUTH"
+
 func AccessRightToCapability(edge PrivilegeEdge) Capability {
 	if strings.EqualFold(edge.EdgeType, "cert") {
 		return "CERT_AUTH"
+	}
+	if strings.EqualFold(edge.EdgeType, "adcs_cert") {
+		return ADCS_PKINIT_AUTH
 	}
 	if strings.EqualFold(edge.EdgeType, "dcsync") {
 		return "DCSync"
@@ -115,9 +121,23 @@ func AccessRightToCapability(edge PrivilegeEdge) Capability {
 	if strings.EqualFold(edge.EdgeType, "spray") {
 		return "LDAP_SPRAY"
 	}
-	switch strings.ToUpper(edge.AccessRight) {
+	right := strings.ToUpper(edge.AccessRight)
+	// Delegation rights are matched before the switch so partial-string
+	// variants (e.g. "AllowedToActOnBehalfOfOtherIdentity") are recognised
+	// without enumerating every spelling collectors emit.
+	if strings.Contains(right, "UNCONSTRAINED") || right == "TRUSTED_FOR_DELEGATION" {
+		return "UNCONSTRAINED_DELEGATION"
+	}
+	if strings.Contains(right, "ALLOWEDTODELEGATE") ||
+		strings.Contains(right, "ALLOWEDTOACT") ||
+		right == "TRUSTED_TO_AUTH_FOR_DELEGATION" {
+		return "S4U_DELEGATION"
+	}
+	switch right {
 	case "DCSYNC", "GETCHANGES", "GETCHANGESALL":
 		return "DCSync"
+	case "ADCS_ESC1", "ADCS_ESC13":
+		return ADCS_CERT_ENROLL
 	case "ADDMEMBER", "ADDSELF", "MEMBEROF":
 		return "ADD_MEMBER"
 	case "FORCECHANGEPASSWORD":
@@ -135,6 +155,17 @@ func (r *CapabilityRegistry) Resolve(cap Capability) (CapabilityExecutor, Capabi
 		return nil, CapabilityUnimplemented
 	}
 	return exec, CapabilityAvailable
+}
+
+// Capabilities returns every Capability registered with this registry as a
+// slice of plain strings (the planner's expected representation). Order is
+// not guaranteed; callers needing determinism should sort the result.
+func (r *CapabilityRegistry) Capabilities() []string {
+	out := make([]string, 0, len(r.executors))
+	for cap := range r.executors {
+		out = append(out, string(cap))
+	}
+	return out
 }
 
 // ApplyDelta applies a PostStateDelta to ADState.

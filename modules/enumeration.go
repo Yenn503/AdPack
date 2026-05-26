@@ -185,7 +185,16 @@ func parseNetExecUsers(output, domain string) ([]core.User, []core.Credential) {
 	return users, creds
 }
 
-// extractSecretFromDesc pulls the password value from a description string
+// extractSecretFromDesc pulls the password value from a description string.
+//
+// Real-world AD descriptions often wrap or trail the password with punctuation:
+//   - "Samwell Tarly (Password : Heartsbane)"          -> Heartsbane
+//   - "John's password: 'P@ssw0rd!',"                   -> P@ssw0rd!
+//   - 'service account [pwd: "ServicePass1!"]'          -> ServicePass1!
+//
+// We strip leading separators after the phrase, take the first whitespace
+// delimited token, and then strip trailing/leading wrapping punctuation
+// while preserving password-internal punctuation like '!', '@', '#'.
 func extractSecretFromDesc(desc, phrase string) string {
 	lower := strings.ToLower(desc)
 	idx := strings.Index(lower, phrase)
@@ -193,14 +202,22 @@ func extractSecretFromDesc(desc, phrase string) string {
 		return ""
 	}
 	rest := strings.TrimSpace(desc[idx+len(phrase):])
-	// Strip leading punctuation
-	rest = strings.TrimLeft(rest, ":= ")
-	// Take first word
+	// Strip leading separators that join the phrase to its value.
+	rest = strings.TrimLeft(rest, ":= \t\"'`")
+	// First whitespace-delimited token.
 	parts := strings.Fields(rest)
-	if len(parts) > 0 {
-		return parts[0]
+	if len(parts) == 0 {
+		return ""
 	}
-	return ""
+	tok := parts[0]
+	// Strip wrapping punctuation that commonly bookends the value but is
+	// never a legitimate password character at the boundary. Anything
+	// inside the token (e.g. P@ss!w0rd) is preserved.
+	const trailingJunk = `)]}>"',;.`
+	const leadingJunk = `([{<"'`
+	tok = strings.TrimRight(tok, trailingJunk)
+	tok = strings.TrimLeft(tok, leadingJunk)
+	return tok
 }
 
 // looksLikePassword returns true if the string looks like a password

