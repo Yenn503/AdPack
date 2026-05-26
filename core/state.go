@@ -227,15 +227,18 @@ const (
 )
 
 type Credential struct {
-	ID        int      `json:"id" db:"id"`
-	Type      CredType `json:"type" db:"type"`
-	Username  string   `json:"username" db:"username"`
-	Domain    string   `json:"domain" db:"domain"`
-	Secret    string   `json:"secret,omitempty" db:"secret"`
-	Hash      string   `json:"hash,omitempty" db:"hash"`
-	Target    string   `json:"target" db:"target"`
-	Validated bool     `json:"validated" db:"validated"`
-	Source    string   `json:"source" db:"source"`
+	ID            int      `json:"id" db:"id"`
+	Type          CredType `json:"type" db:"type"`
+	Username      string   `json:"username" db:"username"`
+	Domain        string   `json:"domain" db:"domain"`
+	Secret        string   `json:"secret,omitempty" db:"secret"`
+	Hash          string   `json:"hash,omitempty" db:"hash"`
+	Target        string   `json:"target" db:"target"`
+	Validated     bool     `json:"validated" db:"validated"`
+	Source        string   `json:"source" db:"source"`
+	SourceTool    string   `json:"source_tool" db:"source_tool"`
+	TargetAccount string   `json:"target_account" db:"target_account"`
+	Confidence    float64  `json:"confidence" db:"confidence"`
 }
 
 type BloodhoundMeta struct {
