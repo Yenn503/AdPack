@@ -112,6 +112,8 @@ type DispatchResult struct {
 // The caller should always ApplyDelta — the verdict tells you at what
 // confidence the edges should be materialised.
 func ExecuteAndReconcile(ctx context.Context, edge core.PrivilegeEdge, cap core.Capability, state *core.ADState, domain, user, pass, hash, targetIP string) (ReconVerdict, error) {
+	// Dispatch guard: all executor invocation goes through the capability registry.
+	// This ensures planner state tracking is never bypassed.
 	reg := CapabilityRegistry
 	if reg == nil {
 		return ReconVerdict{Trustworthy: false, Summary: "no capability registry"}, fmt.Errorf("capability registry not configured")
