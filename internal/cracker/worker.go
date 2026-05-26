@@ -2,6 +2,7 @@ package cracker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,7 +60,11 @@ func (w *CrackWorker) crack(job *CrackJob) (string, error) {
 	cmd := exec.CommandContext(ctx, w.hashcat, "-m", mode, "-a", "0",
 		hashFile, w.wordlist, "--outfile", filepath.Join(dir, "found.txt"),
 		"--potfile-disable", "--status", "-O")
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return "", nil
+		}
+	}
 
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {

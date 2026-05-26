@@ -7,24 +7,21 @@ import (
 )
 
 const (
-	MaxQueueDepth    = 10000
-	DedupTTL         = 30 * time.Minute
-	RateLimitPerType = 10
+	MaxQueueDepth = 10000
+	DedupTTL      = 30 * time.Minute
 )
 
 type HashQueue struct {
-	mu      sync.Mutex
-	items   []*CrackJob
-	seen    map[string]time.Time
-	rateLim map[HashType]int
-	events  chan CrackEvent
+	mu     sync.Mutex
+	items  []*CrackJob
+	seen   map[string]time.Time
+	events chan CrackEvent
 }
 
 func NewHashQueue() *HashQueue {
 	q := &HashQueue{
-		seen:    make(map[string]time.Time),
-		rateLim: make(map[HashType]int),
-		events:  make(chan CrackEvent, 1000),
+		seen:   make(map[string]time.Time),
+		events: make(chan CrackEvent, 1000),
 	}
 	q.startCleanupLoop()
 	return q
