@@ -231,6 +231,13 @@ func dispatchTool(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 		hashes = ParseNTLMOutput(output)
 	}
 
+	// Bridge: feed captured hashes into the cracker pipeline
+	for _, h := range hashes {
+		if EnqueueHash != nil {
+			EnqueueHash(h.HashType, h.Hash, h.Username, "")
+		}
+	}
+
 	return DispatchResult{
 		ToolOutput: output,
 		ExitCode:   exitCode,

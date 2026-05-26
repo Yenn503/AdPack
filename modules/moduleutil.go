@@ -18,3 +18,7 @@ var RuntimeFactory func() core.RuntimeProvider
 
 // CapabilityRegistry is injected from cmd/. Default nil (noop).
 var CapabilityRegistry *core.CapabilityRegistry
+
+// EnqueueHash is injected from cmd/ to feed captured hashes into the cracker pipeline.
+// Default noop so headless tests don't panic.
+var EnqueueHash func(hashType, hash, username, domain string)

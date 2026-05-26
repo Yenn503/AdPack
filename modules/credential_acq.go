@@ -985,6 +985,9 @@ func executeSecretsdumpPipeline(state *core.ADState, host core.Host) *core.ToolR
 				Value: c.Secret, Confidence: 0.9,
 				RawOutput: r.Stdout, Timestamp: time.Now(),
 			})
+			if EnqueueHash != nil {
+				EnqueueHash("ntlm", c.Hash, c.Username, c.Domain)
+			}
 		}
 		fmt.Printf("[+] Secretsdump: %d credentials found\n", len(creds))
 	} else {

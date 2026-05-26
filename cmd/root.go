@@ -140,6 +140,29 @@ func init() {
 		return runtime.NewSupervisor()
 	}
 	modules.CapabilityRegistry = core.NewCapabilityRegistry()
+	modules.EnqueueHash = func(hashType, hash, username, domain string) {
+		if crackQueue == nil {
+			return
+		}
+		var typ cracker.HashType
+		switch hashType {
+		case "krb5tgs":
+			typ = cracker.HashKRB5TGS
+		case "krb5asrep":
+			typ = cracker.HashKRB5ASREP
+		case "ntlm":
+			typ = cracker.HashNTLM
+		default:
+			return
+		}
+		crackQueue.Enqueue(&cracker.CrackJob{
+			HashType: typ,
+			Hash:     hash,
+			Username: username,
+			Domain:   domain,
+			Priority: cracker.PriorityOther,
+		})
+	}
 	modules.CapabilityRegistry.Register(&addmember.Executor{})
 	modules.CapabilityRegistry.Register(&forcechangepassword.Executor{})
 	modules.CapabilityRegistry.Register(&writedacl.Executor{})
