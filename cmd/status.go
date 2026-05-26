@@ -72,8 +72,18 @@ var statusCmd = &cobra.Command{
 				statusStr = utils.SuccessStyle.Render("✓ complete")
 			case core.PhaseSkipped:
 				statusStr = utils.InfoStyle.Render("⊘ skipped")
+				if state.SkipReasons != nil {
+					if r, ok := state.SkipReasons[p]; ok && r != "" {
+						statusStr += lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(" [" + string(r) + "]")
+					}
+				}
 			case core.PhaseFailed:
 				statusStr = utils.ErrorStyle.Render("✗ failed")
+				if state.SkipReasons != nil {
+					if r, ok := state.SkipReasons[p]; ok && r != "" {
+						statusStr += lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(" [" + string(r) + "]")
+					}
+				}
 			default:
 				statusStr = lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("○ pending")
 			}
