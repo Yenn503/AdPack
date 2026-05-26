@@ -170,6 +170,7 @@ func ExecuteAndReconcile(ctx context.Context, edge core.PrivilegeEdge, cap core.
 
 // dispatchTool runs the real command-line tool for the given capability.
 func dispatchTool(ctx context.Context, edge core.PrivilegeEdge, cap core.Capability, domain, user, pass, hash, targetIP string) (DispatchResult, error) {
+	fmt.Printf("[dispatch] capability=%s edge=%s→%s\n", cap, edge.SourcePrincipal, edge.TargetPrincipal)
 	dCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 

