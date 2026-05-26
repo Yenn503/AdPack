@@ -305,6 +305,18 @@ past failed phases instead of stopping.`,
 					status = core.PhaseUntouched
 				}
 				state.Phases[rec.Phase] = status
+				if status == core.PhaseFailed {
+					switch rec.Phase {
+					case core.PhaseCredentialAcq:
+						state.SkipReasons[rec.Phase] = core.SkipNoCreds
+					case core.PhaseSessionHarvest:
+						state.SkipReasons[rec.Phase] = core.SkipNoSession
+					case core.PhasePrivEsc:
+						state.SkipReasons[rec.Phase] = core.SkipNoSystemContext
+					default:
+						state.SkipReasons[rec.Phase] = core.SkipNoPath
+					}
+				}
 				DB.SavePhases(state.Phases)
 				fmt.Printf("\n      %s  %s\n",
 					utils.ErrorStyle.Render("✗ failed"),
