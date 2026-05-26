@@ -7,7 +7,9 @@ import (
 
 	"adpack/config"
 	"adpack/core"
+	"adpack/internal/cracker"
 	"adpack/internal/executorbackend"
+	"adpack/internal/executorbackend/adcs"
 	"adpack/internal/executorbackend/addmember"
 	"adpack/internal/executorbackend/asrep_roast"
 	"adpack/internal/executorbackend/certauth"
@@ -36,6 +38,10 @@ var (
 	dbPath  string
 	Cfg     *config.Config
 	DB      *storage.DB
+
+	crackQueue  *cracker.HashQueue
+	crackWorker *cracker.CrackWorker
+	crackMat    *cracker.CredentialMaterializer
 )
 
 var version = "v0.1.0"
@@ -94,6 +100,24 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 		if err != nil {
 			return fmt.Errorf("open db: %w", err)
 		}
+
+		if crackQueue == nil {
+			crackQueue = cracker.NewHashQueue()
+			crackWorker = cracker.NewCrackWorker(crackQueue, "/usr/bin/hashcat", "/usr/share/wordlists/rockyou.txt")
+			go crackWorker.Run()
+			crackMat = cracker.NewCredentialMaterializer(crackQueue, func(cred cracker.CrackedCredential) {
+				fmt.Printf("[+] CRACKED: %s\\%s -> %s\n", cred.Domain, cred.Username, cred.Secret)
+				DB.SaveCred(core.Credential{
+					Type:      core.CredPlaintext,
+					Username:  cred.Username,
+					Domain:    cred.Domain,
+					Secret:    cred.Secret,
+					Source:    "cracker",
+					Validated: true,
+				})
+			})
+			go crackMat.Run()
+		}
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -129,6 +153,8 @@ func init() {
 	modules.CapabilityRegistry.Register(&ldap_spray.Executor{})
 	modules.CapabilityRegistry.Register(&unconstrained_delegation.Executor{})
 	modules.CapabilityRegistry.Register(&s4u_delegation.Executor{})
+	modules.CapabilityRegistry.Register(&adcs.CertEnrollExecutor{})
+	modules.CapabilityRegistry.Register(&adcs.PKINITAuthExecutor{})
 
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	rootCmd.PersistentFlags().StringVarP(&dbPath, "db", "d", "", "database path (default ~/.adpack/state.db)")
