@@ -49,7 +49,7 @@ func TestMaterializerConsumesCrackComplete(t *testing.T) {
 	mu.Unlock()
 }
 
-func TestMaterializerSkipsErrorEvents(t *testing.T) {
+func TestMaterializerSkipsEmptyResult(t *testing.T) {
 	q := NewHashQueue()
 	called := false
 	m := NewCredentialMaterializer(q, func(c CrackedCredential) {

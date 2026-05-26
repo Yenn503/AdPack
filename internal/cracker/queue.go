@@ -21,24 +21,44 @@ type HashQueue struct {
 }
 
 func NewHashQueue() *HashQueue {
-	return &HashQueue{
+	q := &HashQueue{
 		seen:    make(map[string]time.Time),
 		rateLim: make(map[HashType]int),
 		events:  make(chan CrackEvent, 1000),
 	}
+	q.startCleanupLoop()
+	return q
+}
+
+func (q *HashQueue) startCleanupLoop() {
+	go func() {
+		for {
+			time.Sleep(5 * time.Minute)
+			q.mu.Lock()
+			now := time.Now()
+			for hash, enqueued := range q.seen {
+				if now.Sub(enqueued) > DedupTTL {
+					delete(q.seen, hash)
+				}
+			}
+			q.mu.Unlock()
+		}
+	}()
 }
 
 func (q *HashQueue) Enqueue(job *CrackJob) error {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	if len(q.items) >= MaxQueueDepth {
+		q.mu.Unlock()
 		return fmt.Errorf("queue full (%d items)", MaxQueueDepth)
 	}
 	if exp, ok := q.seen[job.Hash]; ok && time.Since(exp) < DedupTTL {
+		q.mu.Unlock()
 		return nil
 	}
 	q.items = append(q.items, job)
 	q.seen[job.Hash] = time.Now()
+	q.mu.Unlock()
 	q.events <- CrackEvent{Type: "hash_enqueued", Job: job}
 	return nil
 }

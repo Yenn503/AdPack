@@ -22,7 +22,7 @@ func (m *CredentialMaterializer) Run() {
 		if event.Type != "crack_complete" || event.Error != nil {
 			continue
 		}
-		if event.Result == "" {
+		if event.Result == "" || event.Job == nil {
 			continue
 		}
 		cred := CrackedCredential{
