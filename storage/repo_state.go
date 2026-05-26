@@ -5,219 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 )
-
-// edgeRow is the on-disk representation of a core.PrivilegeEdge.
-// Slice fields are JSON-encoded; timestamps are RFC3339 strings so they
-// round-trip through SQLite's TEXT affinity without lossy formats.
-type edgeRow struct {
-	ID                 int     `db:"id"`
-	SourcePrincipal    string  `db:"source_principal"`
-	TargetPrincipal    string  `db:"target_principal"`
-	AccessRight        string  `db:"access_right"`
-	EdgeType           string  `db:"edge_type"`
-	Domain             string  `db:"domain"`
-	Source             string  `db:"source"`
-	Confidence         float64 `db:"confidence"`
-	Weight             float64 `db:"weight"`
-	Exploitability     float64 `db:"exploitability"`
-	Noise              float64 `db:"noise"`
-	RequiresJSON       string  `db:"requires_json"`
-	ValidationState    string  `db:"validation_state"`
-	ObservedAt         string  `db:"observed_at"`
-	ObservedBy         string  `db:"observed_by"`
-	PreconditionsJSON  string  `db:"preconditions_json"`
-	Provenance         string  `db:"provenance"`
-	LastVerifiedAt     string  `db:"last_verified_at"`
-	VerificationMethod string  `db:"verification_method"`
-}
-
-func edgeToRow(e core.PrivilegeEdge) (edgeRow, error) {
-	reqJSON := "[]"
-	if len(e.Requires) > 0 {
-		b, err := json.Marshal(e.Requires)
-		if err != nil {
-			return edgeRow{}, fmt.Errorf("marshal requires: %w", err)
-		}
-		reqJSON = string(b)
-	}
-	preJSON := "[]"
-	if len(e.Preconditions) > 0 {
-		b, err := json.Marshal(e.Preconditions)
-		if err != nil {
-			return edgeRow{}, fmt.Errorf("marshal preconditions: %w", err)
-		}
-		preJSON = string(b)
-	}
-	state := string(e.ValidationState)
-	if state == "" {
-		state = string(core.EdgeInferred)
-	}
-	obs := ""
-	if !e.ObservedAt.IsZero() {
-		obs = e.ObservedAt.UTC().Format(time.RFC3339Nano)
-	}
-	lv := ""
-	if !e.LastVerifiedAt.IsZero() {
-		lv = e.LastVerifiedAt.UTC().Format(time.RFC3339Nano)
-	}
-	return edgeRow{
-		SourcePrincipal:    e.SourcePrincipal,
-		TargetPrincipal:    e.TargetPrincipal,
-		AccessRight:        e.AccessRight,
-		EdgeType:           e.EdgeType,
-		Domain:             e.Domain,
-		Source:             e.Source,
-		Confidence:         e.Confidence,
-		Weight:             e.Weight,
-		Exploitability:     e.Exploitability,
-		Noise:              e.Noise,
-		RequiresJSON:       reqJSON,
-		ValidationState:    state,
-		ObservedAt:         obs,
-		ObservedBy:         e.ObservedBy,
-		PreconditionsJSON:  preJSON,
-		Provenance:         e.Provenance,
-		LastVerifiedAt:     lv,
-		VerificationMethod: e.VerificationMethod,
-	}, nil
-}
-
-func rowToEdge(r edgeRow) (core.PrivilegeEdge, error) {
-	var req []string
-	if r.RequiresJSON != "" && r.RequiresJSON != "[]" {
-		if err := json.Unmarshal([]byte(r.RequiresJSON), &req); err != nil {
-			return core.PrivilegeEdge{}, fmt.Errorf("unmarshal requires: %w", err)
-		}
-	}
-	var pre []core.ExecutionPrecondition
-	if r.PreconditionsJSON != "" && r.PreconditionsJSON != "[]" {
-		if err := json.Unmarshal([]byte(r.PreconditionsJSON), &pre); err != nil {
-			return core.PrivilegeEdge{}, fmt.Errorf("unmarshal preconditions: %w", err)
-		}
-	}
-	parseTime := func(s string) time.Time {
-		if s == "" {
-			return time.Time{}
-		}
-		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-			return t
-		}
-		if t, err := time.Parse(time.RFC3339, s); err == nil {
-			return t
-		}
-		return time.Time{}
-	}
-	return core.PrivilegeEdge{
-		ID:                 r.ID,
-		SourcePrincipal:    r.SourcePrincipal,
-		TargetPrincipal:    r.TargetPrincipal,
-		AccessRight:        r.AccessRight,
-		EdgeType:           r.EdgeType,
-		Domain:             r.Domain,
-		Source:             r.Source,
-		Confidence:         r.Confidence,
-		Weight:             r.Weight,
-		Exploitability:     r.Exploitability,
-		Noise:              r.Noise,
-		Requires:           req,
-		ValidationState:    core.EdgeValidationState(r.ValidationState),
-		ObservedAt:         parseTime(r.ObservedAt),
-		ObservedBy:         r.ObservedBy,
-		Preconditions:      pre,
-		Provenance:         r.Provenance,
-		LastVerifiedAt:     parseTime(r.LastVerifiedAt),
-		VerificationMethod: r.VerificationMethod,
-	}, nil
-}
-
-const edgeUpsertSQL = `INSERT INTO edges(
-		source_principal,target_principal,access_right,edge_type,domain,source,
-		confidence,weight,exploitability,noise,requires_json,validation_state,
-		observed_at,observed_by,preconditions_json,provenance,last_verified_at,verification_method
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-	ON CONFLICT(source_principal,target_principal,access_right,edge_type,domain) DO UPDATE SET
-		source=excluded.source,
-		confidence=excluded.confidence,
-		weight=excluded.weight,
-		exploitability=excluded.exploitability,
-		noise=excluded.noise,
-		requires_json=excluded.requires_json,
-		validation_state=excluded.validation_state,
-		observed_at=excluded.observed_at,
-		observed_by=excluded.observed_by,
-		preconditions_json=excluded.preconditions_json,
-		provenance=excluded.provenance,
-		last_verified_at=excluded.last_verified_at,
-		verification_method=excluded.verification_method`
-
-// SaveEdge upserts a single privilege edge.
-func (db *DB) SaveEdge(e core.PrivilegeEdge) error {
-	r, err := edgeToRow(e)
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(edgeUpsertSQL,
-		r.SourcePrincipal, r.TargetPrincipal, r.AccessRight, r.EdgeType, r.Domain, r.Source,
-		r.Confidence, r.Weight, r.Exploitability, r.Noise, r.RequiresJSON, r.ValidationState,
-		r.ObservedAt, r.ObservedBy, r.PreconditionsJSON, r.Provenance, r.LastVerifiedAt, r.VerificationMethod,
-	)
-	return err
-}
-
-// SaveEdges upserts each edge inside a single transaction.
-func (db *DB) SaveEdges(ee []core.PrivilegeEdge) error {
-	if len(ee) == 0 {
-		return nil
-	}
-	tx, err := db.Beginx()
-	if err != nil {
-		return fmt.Errorf("save edges begin: %w", err)
-	}
-	defer tx.Rollback()
-	stmt, err := tx.Preparex(edgeUpsertSQL)
-	if err != nil {
-		return fmt.Errorf("save edges prepare: %w", err)
-	}
-	for _, e := range ee {
-		r, err := edgeToRow(e)
-		if err != nil {
-			return err
-		}
-		if _, err := stmt.Exec(
-			r.SourcePrincipal, r.TargetPrincipal, r.AccessRight, r.EdgeType, r.Domain, r.Source,
-			r.Confidence, r.Weight, r.Exploitability, r.Noise, r.RequiresJSON, r.ValidationState,
-			r.ObservedAt, r.ObservedBy, r.PreconditionsJSON, r.Provenance, r.LastVerifiedAt, r.VerificationMethod,
-		); err != nil {
-			return fmt.Errorf("save edge %s→%s: %w", e.SourcePrincipal, e.TargetPrincipal, err)
-		}
-	}
-	return tx.Commit()
-}
-
-// LoadEdges returns all persisted privilege edges.
-func (db *DB) LoadEdges() ([]core.PrivilegeEdge, error) {
-	var rows []edgeRow
-	if err := db.Select(&rows, "SELECT * FROM edges"); err != nil {
-		return nil, fmt.Errorf("load edges: %w", err)
-	}
-	out := make([]core.PrivilegeEdge, 0, len(rows))
-	for _, r := range rows {
-		e, err := rowToEdge(r)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, nil
-}
-
-// ClearEdges deletes all rows from the edges table. Used by `adpack reset`.
-func (db *DB) ClearEdges() error {
-	_, err := db.Exec("DELETE FROM edges")
-	return err
-}
 
 func (db *DB) SaveHost(h core.Host) error {
 	_, err := db.Exec(`INSERT INTO hosts(ip,hostname,domain,os,is_dc,ports_open,discovery_src,edr,evasion_hist) VALUES(?,?,?,?,?,?,?,?,?)
@@ -270,23 +58,9 @@ func (db *DB) SaveCred(c core.Credential) error {
 		return fmt.Errorf("encrypt hash: %w", err)
 	}
 
-	// Trust-preserving UPSERT: if the existing row is already validated
-	// and the incoming row is *not* validated, keep the existing
-	// secret/hash/source. Otherwise the new row wins. This prevents a
-	// scraped-from-description credential (Validated=false) from
-	// overwriting a manually-seeded or AS-REP/Kerberoast-cracked one
-	// (Validated=true) and silently breaking every downstream tool call.
-	_, err = db.Exec(`INSERT INTO credentials(type,username,domain,secret,hash,target,validated,source,source_tool,target_account,confidence) VALUES(?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(type, username, domain, target) DO UPDATE SET
-			secret    = CASE WHEN credentials.validated = 1 AND excluded.validated = 0 THEN credentials.secret    ELSE excluded.secret    END,
-			hash      = CASE WHEN credentials.validated = 1 AND excluded.validated = 0 THEN credentials.hash      ELSE excluded.hash      END,
-			source    = CASE WHEN credentials.validated = 1 AND excluded.validated = 0 THEN credentials.source    ELSE excluded.source    END,
-			validated = CASE WHEN credentials.validated = 1                            THEN 1                     ELSE excluded.validated END,
-			source_tool    = excluded.source_tool,
-			target_account = excluded.target_account,
-			confidence     = excluded.confidence`,
-		c.Type, c.Username, c.Domain, encSecret, encHash, c.Target, boolInt(c.Validated), c.Source,
-		c.SourceTool, c.TargetAccount, c.Confidence)
+	_, err = db.Exec(`INSERT INTO credentials(type,username,domain,secret,hash,target,validated,source) VALUES(?,?,?,?,?,?,?,?)
+		ON CONFLICT(type, username, domain, target) DO UPDATE SET secret=excluded.secret,hash=excluded.hash,validated=excluded.validated,source=excluded.source`,
+		c.Type, c.Username, c.Domain, encSecret, encHash, c.Target, boolInt(c.Validated), c.Source)
 	return err
 }
 func (db *DB) SaveCreds(cc []core.Credential) error {
@@ -434,8 +208,8 @@ func (db *DB) SaveState(s *core.ADState) error {
 		}
 	}
 
-	stmtCred, err := tx.Preparex(`INSERT INTO credentials(type,username,domain,secret,hash,target,validated,source,source_tool,target_account,confidence) VALUES(?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(type, username, domain, target) DO UPDATE SET secret=excluded.secret,hash=excluded.hash,validated=excluded.validated,source=excluded.source,source_tool=excluded.source_tool,target_account=excluded.target_account,confidence=excluded.confidence`)
+	stmtCred, err := tx.Preparex(`INSERT INTO credentials(type,username,domain,secret,hash,target,validated,source) VALUES(?,?,?,?,?,?,?,?)
+		ON CONFLICT(type, username, domain, target) DO UPDATE SET secret=excluded.secret,hash=excluded.hash,validated=excluded.validated,source=excluded.source`)
 	if err != nil {
 		return err
 	}
@@ -450,7 +224,7 @@ func (db *DB) SaveState(s *core.ADState) error {
 			return fmt.Errorf("encrypt hash: %w", err)
 		}
 
-		if _, err := stmtCred.Exec(c.Type, c.Username, c.Domain, encSecret, encHash, c.Target, boolInt(c.Validated), c.Source, c.SourceTool, c.TargetAccount, c.Confidence); err != nil {
+		if _, err := stmtCred.Exec(c.Type, c.Username, c.Domain, encSecret, encHash, c.Target, boolInt(c.Validated), c.Source); err != nil {
 			return err
 		}
 	}
@@ -524,31 +298,6 @@ func (db *DB) SaveState(s *core.ADState) error {
 		return err
 	}
 
-	// Edges: full replace inside the transaction because ApplyDelta can also
-	// remove edges. Upsert alone would leak stale rows.
-	if _, err := tx.Exec("DELETE FROM edges"); err != nil {
-		return fmt.Errorf("save state clear edges: %w", err)
-	}
-	if len(s.Edges) > 0 {
-		stmtEdge, err := tx.Preparex(edgeUpsertSQL)
-		if err != nil {
-			return fmt.Errorf("save state edges prepare: %w", err)
-		}
-		for _, e := range s.Edges {
-			r, err := edgeToRow(e)
-			if err != nil {
-				return err
-			}
-			if _, err := stmtEdge.Exec(
-				r.SourcePrincipal, r.TargetPrincipal, r.AccessRight, r.EdgeType, r.Domain, r.Source,
-				r.Confidence, r.Weight, r.Exploitability, r.Noise, r.RequiresJSON, r.ValidationState,
-				r.ObservedAt, r.ObservedBy, r.PreconditionsJSON, r.Provenance, r.LastVerifiedAt, r.VerificationMethod,
-			); err != nil {
-				return fmt.Errorf("save state edge %s→%s: %w", e.SourcePrincipal, e.TargetPrincipal, err)
-			}
-		}
-	}
-
 	return tx.Commit()
 }
 
@@ -592,10 +341,6 @@ func (db *DB) LoadState() (*core.ADState, error) {
 		return nil, err
 	}
 	s.ADCS, err = db.LoadADCSTemplates()
-	if err != nil {
-		return nil, err
-	}
-	s.Edges, err = db.LoadEdges()
 	if err != nil {
 		return nil, err
 	}

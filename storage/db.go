@@ -358,27 +358,6 @@ func migrate(db *sqlx.DB) error {
 		outbound_trust INTEGER DEFAULT 0
 	);
 	INSERT OR IGNORE INTO bloodhound_meta(id,collected,ingested) VALUES(1,0,0);
-	CREATE TABLE IF NOT EXISTS edges (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		source_principal TEXT NOT NULL,
-		target_principal TEXT NOT NULL,
-		access_right TEXT NOT NULL DEFAULT '',
-		edge_type TEXT NOT NULL DEFAULT '',
-		domain TEXT NOT NULL DEFAULT '',
-		source TEXT NOT NULL DEFAULT '',
-		confidence REAL NOT NULL DEFAULT 0,
-		weight REAL NOT NULL DEFAULT 0,
-		exploitability REAL NOT NULL DEFAULT 0,
-		noise REAL NOT NULL DEFAULT 0,
-		requires_json TEXT NOT NULL DEFAULT '[]',
-		validation_state TEXT NOT NULL DEFAULT 'inferred',
-		observed_at TEXT NOT NULL DEFAULT '',
-		observed_by TEXT NOT NULL DEFAULT '',
-		preconditions_json TEXT NOT NULL DEFAULT '[]',
-		provenance TEXT NOT NULL DEFAULT '',
-		last_verified_at TEXT NOT NULL DEFAULT '',
-		verification_method TEXT NOT NULL DEFAULT ''
-	);
 	`
 	_, err := db.Exec(schema)
 	if err != nil {
@@ -401,10 +380,6 @@ func migrate(db *sqlx.DB) error {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_unique ON groups_t(name, domain);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_gpos_unique ON gpos(name, domain);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_adcs_unique ON adcs_templates(name, domain);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_priv_edges_unique ON edges(source_principal, target_principal, access_right, edge_type, domain);
-		CREATE INDEX IF NOT EXISTS idx_priv_edges_source ON edges(source_principal);
-		CREATE INDEX IF NOT EXISTS idx_priv_edges_target ON edges(target_principal);
-		CREATE INDEX IF NOT EXISTS idx_priv_edges_provenance ON edges(provenance);
 	`)
 
 	for _, m := range []string{
@@ -413,9 +388,6 @@ func migrate(db *sqlx.DB) error {
 		`ALTER TABLE execution_nodes ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))`,
 		`ALTER TABLE users ADD COLUMN no_preauth INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN spns TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE credentials ADD COLUMN source_tool TEXT DEFAULT ''`,
-		`ALTER TABLE credentials ADD COLUMN target_account TEXT DEFAULT ''`,
-		`ALTER TABLE credentials ADD COLUMN confidence REAL DEFAULT 0.0`,
 	} {
 		db.Exec(m) // best-effort for existing DBs
 	}
