@@ -299,24 +299,36 @@ const (
 	PhaseInProgress PhaseStatus = 1
 	PhaseComplete   PhaseStatus = 2
 	PhaseSkipped    PhaseStatus = 3
+	PhaseFailed     PhaseStatus = 4
+)
+
+type SkipReason string
+
+const (
+	SkipNoCreds         SkipReason = "NO_CREDS"
+	SkipNoSession       SkipReason = "NO_SESSION"
+	SkipNoPath          SkipReason = "NO_PATH"
+	SkipNoDCSyncRights  SkipReason = "NO_DCSYNC_RIGHTS"
+	SkipNoSystemContext SkipReason = "NO_SYSTEM_CONTEXT"
 )
 
 type ADState struct {
-	Hosts      []Host                  `json:"hosts"`
-	Users      []User                  `json:"users"`
-	Groups     []Group                 `json:"groups"`
-	Computers  []Computer              `json:"computers"`
-	Sessions   []Session               `json:"sessions"`
-	Creds      []Credential            `json:"creds"`
-	GPOs       []GPO                   `json:"gpos"`
-	ADCS       []ADCSTemplate          `json:"adcs"`
-	Edges      []PrivilegeEdge         `json:"edges"`
-	EdgeEvents map[EdgeKey][]EdgeEvent `json:"edge_events,omitempty"`
-	BH         BloodhoundMeta          `json:"bloodhound"`
-	Exec       ExecutionState          `json:"exec"`
-	Runtime    RuntimeState            `json:"runtime"`
-	Mutation   StateMutation           `json:"mutation"`
-	Phases     map[Phase]PhaseStatus   `json:"phases"`
+	Hosts       []Host                  `json:"hosts"`
+	Users       []User                  `json:"users"`
+	Groups      []Group                 `json:"groups"`
+	Computers   []Computer              `json:"computers"`
+	Sessions    []Session               `json:"sessions"`
+	Creds       []Credential            `json:"creds"`
+	GPOs        []GPO                   `json:"gpos"`
+	ADCS        []ADCSTemplate          `json:"adcs"`
+	Edges       []PrivilegeEdge         `json:"edges"`
+	EdgeEvents  map[EdgeKey][]EdgeEvent `json:"edge_events,omitempty"`
+	BH          BloodhoundMeta          `json:"bloodhound"`
+	Exec        ExecutionState          `json:"exec"`
+	Runtime     RuntimeState            `json:"runtime"`
+	Mutation    StateMutation           `json:"mutation"`
+	Phases      map[Phase]PhaseStatus   `json:"phases"`
+	SkipReasons map[Phase]SkipReason    `json:"skip_reasons,omitempty"`
 }
 
 type Gap struct {
@@ -390,7 +402,7 @@ func (s *ADState) NextPhase() *Phase {
 
 	depsMet := func(p Phase) bool {
 		for _, dep := range p.Dependencies() {
-			if s.Phases[dep] != PhaseComplete && s.Phases[dep] != PhaseSkipped {
+			if s.Phases[dep] != PhaseComplete && s.Phases[dep] != PhaseSkipped && s.Phases[dep] != PhaseFailed {
 				return false
 			}
 		}
@@ -398,7 +410,7 @@ func (s *ADState) NextPhase() *Phase {
 	}
 	for _, p := range AllPhases {
 		st := s.Phases[p]
-		if st == PhaseComplete || st == PhaseSkipped {
+		if st == PhaseComplete || st == PhaseSkipped || st == PhaseFailed {
 			continue
 		}
 		if depsMet(p) {
@@ -410,8 +422,9 @@ func (s *ADState) NextPhase() *Phase {
 
 func NewADState() *ADState {
 	return &ADState{
-		Phases:     make(map[Phase]PhaseStatus),
-		EdgeEvents: make(map[EdgeKey][]EdgeEvent),
+		Phases:      make(map[Phase]PhaseStatus),
+		SkipReasons: make(map[Phase]SkipReason),
+		EdgeEvents:  make(map[EdgeKey][]EdgeEvent),
 	}
 }
 

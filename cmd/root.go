@@ -17,12 +17,15 @@ import (
 	"adpack/internal/executorbackend/kerberoast"
 	"adpack/internal/executorbackend/ldap_spray"
 	"adpack/internal/executorbackend/rbcd"
+	"adpack/internal/executorbackend/s4u_delegation"
 	"adpack/internal/executorbackend/shadowcred"
+	"adpack/internal/executorbackend/unconstrained_delegation"
 	"adpack/internal/executorbackend/writedacl"
 	"adpack/internal/runtime"
 	"adpack/modules"
 	"adpack/storage"
 	"adpack/utils"
+
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 	"github.com/spf13/cobra"
@@ -124,6 +127,8 @@ func init() {
 	modules.CapabilityRegistry.Register(&kerberoast.Executor{})
 	modules.CapabilityRegistry.Register(&asrep_roast.Executor{})
 	modules.CapabilityRegistry.Register(&ldap_spray.Executor{})
+	modules.CapabilityRegistry.Register(&unconstrained_delegation.Executor{})
+	modules.CapabilityRegistry.Register(&s4u_delegation.Executor{})
 
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	rootCmd.PersistentFlags().StringVarP(&dbPath, "db", "d", "", "database path (default ~/.adpack/state.db)")
@@ -212,6 +217,9 @@ func init() {
 				case core.PhaseSkipped:
 					statusStr = "skipped"
 					statusStyle = lipgloss.NewStyle().Foreground(utils.ColorMuted)
+				case core.PhaseFailed:
+					statusStr = "failed"
+					statusStyle = lipgloss.NewStyle().Foreground(utils.ColorError)
 				default:
 					statusStyle = lipgloss.NewStyle().Foreground(utils.ColorMuted)
 				}

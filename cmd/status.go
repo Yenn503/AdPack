@@ -72,6 +72,8 @@ var statusCmd = &cobra.Command{
 				statusStr = utils.SuccessStyle.Render("✓ complete")
 			case core.PhaseSkipped:
 				statusStr = utils.InfoStyle.Render("⊘ skipped")
+			case core.PhaseFailed:
+				statusStr = utils.ErrorStyle.Render("✗ failed")
 			default:
 				statusStr = lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("○ pending")
 			}

@@ -324,6 +324,7 @@ func (m *model) rebuildTables() {
 	cols := []table.Column{
 		{Title: "Phase", Width: 16},
 		{Title: "Status", Width: 12},
+		{Title: "Reason", Width: 18},
 	}
 	rows := []table.Row{}
 	for _, p := range core.AllPhases {
@@ -333,9 +334,14 @@ func (m *model) rebuildTables() {
 			core.PhaseInProgress: "in-progress",
 			core.PhaseComplete:   "done",
 			core.PhaseSkipped:    "skipped",
+			core.PhaseFailed:     "failed",
 		}[st]
+		reason := ""
+		if (st == core.PhaseSkipped || st == core.PhaseFailed) && m.state.SkipReasons != nil {
+			reason = string(m.state.SkipReasons[p])
+		}
 		rows = append(rows, table.Row{
-			string(p), label,
+			string(p), label, reason,
 		})
 	}
 	t := table.New(table.WithColumns(cols), table.WithRows(rows), table.WithFocused(false))

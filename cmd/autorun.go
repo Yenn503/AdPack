@@ -266,6 +266,9 @@ past failed phases instead of stopping.`,
 					for _, ev := range result.Evidence {
 						DB.SaveEvidence(ev)
 					}
+					if err := DB.SaveState(state); err != nil {
+						fmt.Printf("[!] save state after privesc: %v\n", err)
+					}
 					success = true
 					fmt.Printf("      %s  Privesc checks completed\n", utils.SuccessStyle.Render("✓"))
 				}
@@ -275,6 +278,9 @@ past failed phases instead of stopping.`,
 				if result.Success {
 					for _, ev := range result.Evidence {
 						DB.SaveEvidence(ev)
+					}
+					if err := DB.SaveState(state); err != nil {
+						fmt.Printf("[!] save state after persistence: %v\n", err)
 					}
 					success = true
 					fmt.Printf("      %s  Persistence mechanisms deployed\n", utils.SuccessStyle.Render("✓"))
@@ -294,7 +300,7 @@ past failed phases instead of stopping.`,
 					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("·"),
 					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))
 			} else {
-				status := core.PhaseSkipped
+				status := core.PhaseFailed
 				if !skipFail {
 					status = core.PhaseUntouched
 				}
@@ -313,6 +319,11 @@ past failed phases instead of stopping.`,
 			fmt.Println()
 			phasesRun++
 			time.Sleep(500 * time.Millisecond)
+		}
+
+		// ── Save final state ──────────────────────────────────────────────
+		if err := DB.SaveState(state); err != nil {
+			fmt.Printf("[!] final save state: %v\n", err)
 		}
 
 		// ── Summary ───────────────────────────────────────────────────────
