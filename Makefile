@@ -1,7 +1,7 @@
 .PHONY: build install clean test lint help
 
 BINARY_NAME=adpack
-VERSION=v0.1.0
+VERSION=v0.3.0-dev
 BUILD_DIR=bin
 GO=go
 
@@ -14,7 +14,7 @@ help: ## Show this help message
 build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build -ldflags="-s -w -X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
+	$(GO) build -ldflags="-s -w -X adpack/cmd.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
 install: build ## Install the binary to GOPATH/bin

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
-	"adpack/core"
 	"adpack/utils"
 )
 
@@ -15,9 +15,39 @@ type nxcTool struct{}
 
 var NetExec = nxcTool{}
 
-func (nxcTool) Name() string { return "netexec" }
+// NetexecCommand and NetexecPrefixArgs are package-level globals set once
+// during initialization. The proxy transport calls SetProxyMode() before any
+// concurrent use to wrap netexec in proxychains4.
+var (
+	netexecMu         sync.RWMutex
+	NetexecCommand    = "netexec"
+	NetexecPrefixArgs []string
+)
+
+// SetProxyMode configures netexec to run through proxychains4.
+// Must be called before any concurrent execution (typically once at startup).
+func SetProxyMode(addr string) {
+	netexecMu.Lock()
+	defer netexecMu.Unlock()
+	NetexecCommand = "proxychains4"
+	NetexecPrefixArgs = []string{"-q", "netexec"}
+}
+
+func getNetexecCommand() string {
+	netexecMu.RLock()
+	defer netexecMu.RUnlock()
+	return NetexecCommand
+}
+
+func getNetexecPrefixArgs() []string {
+	netexecMu.RLock()
+	defer netexecMu.RUnlock()
+	return NetexecPrefixArgs
+}
+
+func (nxcTool) Name() string { return getNetexecCommand() }
 func (nxcTool) Available() bool {
-	_, err := utils.FindTool("netexec")
+	_, err := utils.FindTool(getNetexecCommand())
 	return err == nil
 }
 
@@ -31,8 +61,93 @@ type NetExecTarget struct {
 	Hash     string
 }
 
+// NxcAuthSucceeded inspects nxc stdout/stderr to determine whether the
+// authentication step itself worked. nxc exits with code 0 even when auth
+// fails (it just prints `[-] domain\user:pass` and moves on), so a naive
+// `r.Success` check yields false positives for every command that depends on
+// a working session.
+//
+// Returns true only if a positive auth line is present AND no negative auth
+// line is present for the same principal. The caller passes the actual
+// username it sent so we don't get fooled by null-session probes that nxc
+// adds at startup.
+func NxcAuthSucceeded(out, username string) bool {
+	if out == "" {
+		return false
+	}
+	pos := false
+	for _, line := range strings.Split(out, "\n") {
+		// Per-principal positive marker, e.g.
+		//   SMB ... [+] dom\user:pass
+		// We do not need to match the whole user — nxc may print just `\:`
+		// for null auth; restrict to lines that mention the username we sent.
+		if strings.Contains(line, "[+]") && strings.Contains(line, username) {
+			pos = true
+		}
+		// Hard auth failure markers.
+		if strings.Contains(line, "[-]") && strings.Contains(line, username) {
+			lo := strings.ToLower(line)
+			for _, m := range []string{
+				"status_logon_failure",
+				"status_access_denied",
+				"status_account_locked",
+				"status_account_disabled",
+				"status_password_expired",
+				"kdc_err_preauth_failed",
+				"kdc_err_c_principal_unknown",
+				"invalid credentials",
+				"authentication failed",
+			} {
+				if strings.Contains(lo, m) {
+					return false
+				}
+			}
+		}
+	}
+	return pos
+}
+
+// NxcCommandSucceeded checks whether nxc actually executed an `-x <cmd>`
+// shell command on the remote host. nxc on a non-admin auth simply skips
+// the exec phase silently and exits 0; we need stronger evidence than the
+// process exit code.
+//
+// Strong evidence: nxc prints `Executed command via <METHOD>` *or* the
+// stdout contains a typical Windows identity tag like `nt authority\` /
+// a `domain\user` style line that only appears in real command output.
+func NxcCommandSucceeded(out string) bool {
+	if out == "" {
+		return false
+	}
+	lo := strings.ToLower(out)
+	if strings.Contains(lo, "executed command via") ||
+		strings.Contains(lo, "command executed with no output") {
+		return true
+	}
+	// Fallback: real `whoami`-style output contains a domain\user token on
+	// its own line (the leading `[*]` from the protocol summary doesn't).
+	for _, line := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(line)
+		// Skip nxc framing.
+		if t == "" || strings.HasPrefix(t, "[") {
+			continue
+		}
+		// Anything that looks like `domain\username` *not* followed by `:`
+		// (which would be the auth banner) is real command output.
+		if i := strings.IndexByte(t, '\\'); i > 0 && i < len(t)-1 {
+			if !strings.Contains(t[i:], ":") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (n nxcTool) Run(ctx context.Context, target NetExecTarget, subcmd string, extraArgs []string) (utils.CmdResult, error) {
-	args := []string{target.Protocol, target.Host}
+	prefix := getNetexecPrefixArgs()
+	args := make([]string, 0, len(prefix)+3+len(extraArgs))
+	args = append(args, prefix...)
+	args = append(args, target.Protocol, target.Host)
 	if target.Port > 0 {
 		args = append(args, fmt.Sprintf("--port=%d", target.Port))
 	}
@@ -52,53 +167,46 @@ func (n nxcTool) Run(ctx context.Context, target NetExecTarget, subcmd string, e
 		args = append(args, subcmd)
 	}
 	args = append(args, extraArgs...)
-	r := utils.RunCommandCtx(ctx, "netexec", args)
+	r := utils.RunCommandCtx(ctx, getNetexecCommand(), args)
 	if !r.Success {
 		return r, fmt.Errorf("netexec failed: %s", r.Stderr)
 	}
+
+	combined := r.Stdout + "\n" + r.Stderr
+
+	// Validate auth evidence when credentials are provided. nxc exits 0 even
+	// on auth failure (it prints a [-] line and moves on), so exit code alone
+	// is insufficient. This check catches false-positive auth probes that
+	// would otherwise poison planner state and confidence scoring.
+	if target.Username != "" && !NxcAuthSucceeded(combined, target.Username) {
+		r.Success = false
+		return r, fmt.Errorf("auth failed for %s\\%s on %s",
+			target.Domain, target.Username, target.Host)
+	}
+
+	// Validate execution evidence for remote command execution (-x/-X).
+	// nxc exits 0 even when the user lacks admin rights and the command
+	// silently no-ops. This catches false-positive exec results that
+	// would make deploy/lateral/persistence look successful when they
+	// did nothing.
+	// Check both subcmd (direct -x/-X) and extraArgs (used by --exec-method).
+	if subcmd == "-x" || subcmd == "-X" {
+		if !NxcCommandSucceeded(combined) {
+			r.Success = false
+			return r, fmt.Errorf("command execution failed on %s (not admin?)", target.Host)
+		}
+	}
+	for _, a := range extraArgs {
+		if a == "-x" || a == "-X" {
+			if !NxcCommandSucceeded(combined) {
+				r.Success = false
+				return r, fmt.Errorf("command execution failed on %s (not admin?)", target.Host)
+			}
+			break
+		}
+	}
+
 	return r, nil
-}
-
-func (n nxcTool) AuthTest(ctx context.Context, target NetExecTarget) bool {
-	_, err := n.Run(ctx, target, "", nil)
-	return err == nil
-}
-
-func (n nxcTool) EnumUsers(ctx context.Context, target string) ([]core.User, error) {
-	r := utils.RunCommandCtx(ctx, "netexec", []string{"ldap", target, "--users"})
-	if !r.Success {
-		return nil, fmt.Errorf("netexec ldap enum failed: %s", r.Stderr)
-	}
-	var users []core.User
-	for _, line := range strings.Split(r.Stdout, "\n") {
-		if strings.Contains(line, "USER:") {
-			parts := strings.Split(line, "USER:")
-			if len(parts) > 1 {
-				username := strings.TrimSpace(strings.Split(parts[1], " ")[0])
-				if username != "" {
-					users = append(users, core.User{Username: username, Source: "netexec"})
-				}
-			}
-		}
-	}
-	return users, nil
-}
-
-func (n nxcTool) EnumShares(ctx context.Context, target NetExecTarget) ([]string, error) {
-	r, err := n.Run(ctx, target, "--shares", nil)
-	if err != nil {
-		return nil, err
-	}
-	var shares []string
-	for _, line := range strings.Split(r.Stdout, "\n") {
-		if strings.Contains(line, "SHARE:") {
-			parts := strings.Split(line, "SHARE:")
-			if len(parts) > 1 {
-				shares = append(shares, strings.TrimSpace(strings.Split(parts[1], " ")[0]))
-			}
-		}
-	}
-	return shares, nil
 }
 
 func (n nxcTool) PutFile(ctx context.Context, target NetExecTarget, localPath, remoteDir string) (utils.CmdResult, error) {
@@ -171,42 +279,4 @@ func (n nxcTool) RunFailover(ctx context.Context, target NetExecTarget, command 
 		}
 	}
 	return last, lastErr
-}
-
-// RunSystemCheck attempts to obtain SYSTEM context on the target by running
-// `whoami` through smbexec (service → SYSTEM) then atexec (schtask → SYSTEM).
-// Returns (method, true) when SYSTEM is confirmed, ("", false) otherwise.
-//
-// Skips wmiexec because wmiexec runs as the authenticated user, never SYSTEM.
-//
-// Two success paths are accepted:
-//  1. whoami output contains "nt authority\system" (output retrieved cleanly).
-//  2. nxc reports "executed command via" + "could not retrieve output file"
-//     (command ran as SYSTEM but Defender ate the output file). This is still
-//     SYSTEM — smbexec/atexec always run as LocalSystem.
-func (n nxcTool) RunSystemCheck(ctx context.Context, target NetExecTarget, perAttempt time.Duration) (string, utils.CmdResult, bool) {
-	if perAttempt <= 0 {
-		perAttempt = 45 * time.Second
-	}
-	for _, method := range []string{"smbexec", "atexec"} {
-		attemptCtx, cancel := context.WithTimeout(ctx, perAttempt)
-		r, err := n.Run(attemptCtx, target, "--exec-method", []string{method, "-x", "whoami"})
-		cancel()
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", r, false
-			}
-			continue
-		}
-		out := strings.ToLower(r.Stdout + r.Stderr)
-		if strings.Contains(out, "nt authority") && strings.Contains(out, "system") {
-			return method, r, true
-		}
-		// AV eating the output file is still SYSTEM — the task/service ran.
-		if strings.Contains(out, "executed command via") &&
-			strings.Contains(out, "could not retrieve output file") {
-			return method, r, true
-		}
-	}
-	return "", utils.CmdResult{}, false
 }

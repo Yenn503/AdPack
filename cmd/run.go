@@ -9,6 +9,7 @@ import (
 	"adpack/core"
 	"adpack/modules"
 	"adpack/utils"
+
 	"charm.land/lipgloss/v2"
 	"github.com/spf13/cobra"
 )
@@ -16,6 +17,9 @@ import (
 var (
 	evasionProfile string
 	targetHost     string
+	executePaths   bool
+	dryRun         bool
+	resume         bool
 )
 
 var runCmd = &cobra.Command{
@@ -40,6 +44,31 @@ var runCmd = &cobra.Command{
 			return fmt.Errorf("load state: %w", err)
 		}
 
+		// Scope enforcement
+		if len(Cfg.Scope) > 0 {
+			scope, err := core.NewScope(Cfg.Scope)
+			if err != nil {
+				return fmt.Errorf("invalid scope: %w", err)
+			}
+			if targetHost != "" && !scope.Contains(targetHost) {
+				return fmt.Errorf("target %s is outside allowed scope %s", targetHost, scope)
+			}
+			fmt.Printf("  [Scope] %s\n\n", scope)
+		}
+
+		// Dry-run mode
+		if dryRun {
+			plan := core.DryRun(phase, state)
+			fmt.Printf("  Dry-run for phase %s:\n", phase)
+			for _, a := range plan.Actions {
+				fmt.Printf("    • %s\n", a)
+			}
+			if plan.Destructive {
+				fmt.Printf("\n  ⚠  DESTRUCTIVE: %s (use --confirm to execute)\n", phase)
+			}
+			return nil
+		}
+
 		// Provider event logging
 		sink := core.ProviderEventSink(core.NoopSink{})
 		if providerLogPath != "" {
@@ -54,8 +83,43 @@ var runCmd = &cobra.Command{
 		// Phase header
 		printPhaseHeader(phase)
 
+		// Resume: restore phase execution tracking
+		if resume {
+			exec, ok := state.PhaseExecutions[phase]
+			if ok && exec.Complete {
+				fmt.Printf("  [Resume] Phase %s already complete, skipping\n", phase)
+				return nil
+			}
+			if ok {
+				pending := exec.PendingHosts()
+				if len(pending) > 0 {
+					fmt.Printf("  [Resume] Re-running %d failed/pending hosts\n", len(pending))
+				}
+				done := exec.SkippedHosts()
+				if len(done) > 0 {
+					fmt.Printf("  [Resume] Skipping %d already-processed hosts\n", len(done))
+				}
+			}
+		}
+
+		// Initialize phase execution tracker
+		if state.PhaseExecutions == nil {
+			state.PhaseExecutions = make(map[core.Phase]*core.PhaseExecution)
+		}
+		if _, exists := state.PhaseExecutions[phase]; !exists {
+			state.PhaseExecutions[phase] = core.NewPhaseExecution(phase)
+		}
+		exec := state.PhaseExecutions[phase]
+
+		// Mark all hosts pending for this phase
+		for _, h := range state.Hosts {
+			if _, tracked := exec.Hosts[h.IP]; !tracked {
+				exec.Hosts[h.IP] = core.HostPending
+			}
+		}
+
 		state.Phases[phase] = core.PhaseInProgress
-		if err := DB.SavePhases(state.Phases); err != nil {
+		if err := DB.SavePhases(state); err != nil {
 			return fmt.Errorf("save phases: %w", err)
 		}
 
@@ -67,7 +131,11 @@ var runCmd = &cobra.Command{
 			success = result.Success
 			if result.Success {
 				for _, h := range result.Hosts {
+					if resume && exec.Hosts[h.IP] == core.HostDone {
+						continue
+					}
 					DB.SaveHost(h)
+					exec.MarkDone(h.IP)
 				}
 				for _, ev := range result.Evidence {
 					DB.SaveEvidence(ev)
@@ -91,6 +159,9 @@ var runCmd = &cobra.Command{
 				for _, ev := range result.Evidence {
 					DB.SaveEvidence(ev)
 				}
+				if targetHost != "" {
+					exec.MarkDone(targetHost)
+				}
 				printResult("Users enumerated", len(result.Users))
 				if len(result.Creds) > 0 {
 					printResult("Credentials found in descriptions", len(result.Creds))
@@ -107,6 +178,9 @@ var runCmd = &cobra.Command{
 				for _, c := range result.Creds {
 					DB.SaveCred(c)
 				}
+				if targetHost != "" {
+					exec.MarkDone(targetHost)
+				}
 				printResult("Credentials acquired", len(result.Creds))
 				for _, c := range result.Creds {
 					printCredRow(c)
@@ -118,6 +192,9 @@ var runCmd = &cobra.Command{
 						fmt.Printf("    %s  %s\n", utils.ErrorStyle.Render("→"), ev.Value)
 					}
 				}
+				if targetHost != "" {
+					exec.MarkFailed(targetHost)
+				}
 			}
 
 		case core.PhaseValidation:
@@ -126,7 +203,13 @@ var runCmd = &cobra.Command{
 			for _, ev := range result.Evidence {
 				DB.SaveEvidence(ev)
 			}
-			// Persist validated state
+			if targetHost != "" {
+				if success {
+					exec.MarkDone(targetHost)
+				} else {
+					exec.MarkFailed(targetHost)
+				}
+			}
 			if err := DB.SaveState(state); err != nil {
 				return fmt.Errorf("save state: %w", err)
 			}
@@ -146,6 +229,9 @@ var runCmd = &cobra.Command{
 				}
 				DB.SaveSessions(result.Sessions)
 				state.Sessions = result.Sessions
+				if targetHost != "" {
+					exec.MarkDone(targetHost)
+				}
 				printResult("Sessions harvested", len(result.Sessions))
 			}
 
@@ -174,6 +260,9 @@ var runCmd = &cobra.Command{
 				for _, u := range result.Users {
 					DB.SaveUser(u)
 				}
+				if targetHost != "" {
+					exec.MarkDone(targetHost)
+				}
 				printResult("Computers found", len(result.Computers))
 				printResult("GPOs found", len(result.GPOs))
 				printResult("ADCS templates found", len(result.ADCS))
@@ -183,17 +272,27 @@ var runCmd = &cobra.Command{
 			result := modules.RunLateral(state, targetHost)
 			success = result.Success
 			if result.Success {
+				for _, h := range result.Hosts {
+					if resume && exec.Hosts[h.IP] == core.HostDone {
+						continue
+					}
+					DB.SaveHost(h)
+					exec.MarkDone(h.IP)
+				}
 				for _, ev := range result.Evidence {
 					DB.SaveEvidence(ev)
 				}
 			}
 
 		case core.PhasePrivEsc:
-			result := modules.RunPrivesc(state, targetHost, evasionProfile)
+			result := modules.RunPrivesc(state, targetHost, evasionProfile, executePaths)
 			success = result.Success
 			if result.Success {
 				for _, ev := range result.Evidence {
 					DB.SaveEvidence(ev)
+				}
+				if targetHost != "" {
+					exec.MarkDone(targetHost)
 				}
 				printResult("Privesc checks completed", 0)
 			}
@@ -205,6 +304,9 @@ var runCmd = &cobra.Command{
 				for _, ev := range result.Evidence {
 					DB.SaveEvidence(ev)
 				}
+				if targetHost != "" {
+					exec.MarkDone(targetHost)
+				}
 				printResult("Persistence mechanisms deployed", 0)
 			}
 
@@ -212,13 +314,14 @@ var runCmd = &cobra.Command{
 			return fmt.Errorf("phase %q has no implementation", phase)
 		}
 
-		// Update phase status
+		// Update phase execution tracking
 		if success {
+			exec.Complete = true
 			state.Phases[phase] = core.PhaseComplete
 		} else {
 			state.Phases[phase] = core.PhaseUntouched
 		}
-		DB.SavePhases(state.Phases)
+		DB.SavePhases(state)
 
 		// Footer
 		fmt.Println()
@@ -304,6 +407,9 @@ func init() {
 	runCmd.Flags().StringVarP(&targetHost, "target", "t", "",
 		"Target host IP or hostname")
 	runCmd.Flags().StringVar(&providerLogPath, "provider-log", "", "Write provider acquisition events as JSONL to this path")
+	runCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
+	runCmd.Flags().BoolVar(&resume, "resume", false, "Resume phase execution, skipping completed hosts")
+	runCmd.Flags().BoolVarP(&executePaths, "execute", "x", false, "Execute planned privilege escalation paths")
 	runCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return phaseNames(), cobra.ShellCompDirectiveNoFileComp
 	}

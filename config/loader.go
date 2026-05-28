@@ -26,16 +26,3 @@ func Load(path string) (*Config, error) {
 	}
 	return &cfg, nil
 }
-
-func Save(path string, cfg *Config) error {
-	if path == "" {
-		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, ".adpack", "config.yaml")
-	}
-	os.MkdirAll(filepath.Dir(path), 0755)
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-	return os.WriteFile(path, data, 0644)
-}

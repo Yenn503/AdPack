@@ -4,12 +4,37 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"adpack/config"
 	"adpack/core"
+	"adpack/internal/cracker"
+	"adpack/internal/executorbackend"
+	"adpack/internal/executorbackend/adcs"
+	"adpack/internal/executorbackend/addmember"
+	"adpack/internal/executorbackend/asrep_roast"
+	"adpack/internal/executorbackend/certauth"
+	"adpack/internal/executorbackend/dcsync"
+	"adpack/internal/executorbackend/forcechangepassword"
+	"adpack/internal/executorbackend/genericall"
+	"adpack/internal/executorbackend/kerberoast"
+	krbrelayup "adpack/internal/executorbackend/krb_relay_up"
+	"adpack/internal/executorbackend/ldap_spray"
+	"adpack/internal/executorbackend/mssql"
+	"adpack/internal/executorbackend/rbcd"
+	"adpack/internal/executorbackend/s4u_delegation"
+	"adpack/internal/executorbackend/shadowcred"
+	targetedkerberoast "adpack/internal/executorbackend/targeted_kerberoast"
+	"adpack/internal/executorbackend/unconstrained_delegation"
+	"adpack/internal/executorbackend/webshell"
+	"adpack/internal/executorbackend/writedacl"
+	"adpack/internal/runtime"
+	"adpack/internal/transport/local"
+	"adpack/internal/transport/proxy"
 	"adpack/modules"
 	"adpack/storage"
 	"adpack/utils"
+
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 	"github.com/spf13/cobra"
@@ -20,6 +45,16 @@ var (
 	dbPath  string
 	Cfg     *config.Config
 	DB      *storage.DB
+
+	crackQueue  *cracker.HashQueue
+	crackWorker *cracker.CrackWorker
+	crackMat    *cracker.CredentialMaterializer
+
+	// Cracker CLI flags
+	hashcatPathFlag string
+	wordlistFlag    string
+	rulesFlag       string
+	crackTimeoutF   int
 )
 
 var version = "v0.1.0"
@@ -78,6 +113,42 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 		if err != nil {
 			return fmt.Errorf("open db: %w", err)
 		}
+
+		if crackQueue == nil {
+			crackQueue = cracker.NewHashQueue()
+
+			hashcatPath := Cfg.Cracking.HashcatPath
+			wordlist := Cfg.Cracking.Wordlist
+			rules := Cfg.Cracking.Rules
+			timeout := time.Duration(Cfg.Cracking.Timeout) * time.Second
+			if hashcatPathFlag != "" {
+				hashcatPath = hashcatPathFlag
+			}
+			if wordlistFlag != "" {
+				wordlist = wordlistFlag
+			}
+			if rulesFlag != "" {
+				rules = strings.Split(rulesFlag, ",")
+			}
+			if crackTimeoutF > 0 {
+				timeout = time.Duration(crackTimeoutF) * time.Second
+			}
+
+			crackWorker = cracker.NewCrackWorker(crackQueue, hashcatPath, wordlist, rules, timeout)
+			go crackWorker.Run()
+			crackMat = cracker.NewCredentialMaterializer(crackQueue, func(cred cracker.CrackedCredential) {
+				fmt.Printf("[+] CRACKED: %s\\%s -> %s\n", cred.Domain, cred.Username, cred.Secret)
+				DB.SaveCred(core.Credential{
+					Type:      core.CredPlaintext,
+					Username:  cred.Username,
+					Domain:    cred.Domain,
+					Secret:    cred.Secret,
+					Source:    "cracker",
+					Validated: true,
+				})
+			})
+			go crackMat.Run()
+		}
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -95,8 +166,77 @@ func Execute() {
 }
 
 func init() {
+	modules.ExecutorFactory = executorbackend.New
+	modules.TransportFactory = func(target core.HostRef, domain, user, pass, hash string) core.Transport {
+		proxyAddr := Cfg.ProxyAddress
+		if proxyAddr == "" {
+			proxyAddr = os.Getenv("ADPACK_PROXY")
+		}
+		if proxyAddr != "" {
+			return proxy.New(target, domain, user, pass, hash, proxyAddr)
+		}
+		return local.New(target, domain, user, pass, hash)
+	}
+	modules.RuntimeFactory = func() core.RuntimeProvider {
+		return runtime.NewSupervisor()
+	}
+	modules.CapabilityRegistry = core.NewCapabilityRegistry()
+	modules.EnqueueHash = func(hashType, hash, username, domain string) {
+		if crackQueue == nil {
+			return
+		}
+		var typ cracker.HashType
+		switch hashType {
+		case "krb5tgs":
+			typ = cracker.HashKRB5TGS
+		case "krb5asrep":
+			typ = cracker.HashKRB5ASREP
+		case "ntlm":
+			typ = cracker.HashNTLM
+		default:
+			return
+		}
+		crackQueue.Enqueue(&cracker.CrackJob{
+			HashType: typ,
+			Hash:     hash,
+			Username: username,
+			Domain:   domain,
+			Priority: cracker.PriorityOther,
+		})
+	}
+	modules.CapabilityRegistry.Register(&addmember.Executor{})
+	modules.CapabilityRegistry.Register(&forcechangepassword.Executor{})
+	modules.CapabilityRegistry.Register(&writedacl.Executor{})
+	modules.CapabilityRegistry.Register(&genericall.Executor{})
+	modules.CapabilityRegistry.Register(&certauth.Executor{})
+	modules.CapabilityRegistry.Register(&dcsync.Executor{})
+	modules.CapabilityRegistry.Register(&rbcd.Executor{})
+	modules.CapabilityRegistry.Register(&shadowcred.Executor{})
+	modules.CapabilityRegistry.Register(&kerberoast.Executor{})
+	modules.CapabilityRegistry.Register(&asrep_roast.Executor{})
+	modules.CapabilityRegistry.Register(&ldap_spray.Executor{})
+	modules.CapabilityRegistry.Register(&unconstrained_delegation.Executor{})
+	modules.CapabilityRegistry.Register(&s4u_delegation.Executor{})
+	modules.CapabilityRegistry.Register(&adcs.CertEnrollExecutor{})
+	modules.CapabilityRegistry.Register(&adcs.PKINITAuthExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.ImpersonateExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.SysadminExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.XPCMDShellExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.UserImpersonateExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.NTLMCoerceExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.LinkedServerExecutor{})
+	modules.CapabilityRegistry.Register(&adcs.ESC4Executor{})
+	modules.CapabilityRegistry.Register(&adcs.ESC7Executor{})
+	modules.CapabilityRegistry.Register(&targetedkerberoast.Executor{})
+	modules.CapabilityRegistry.Register(&krbrelayup.Executor{})
+	modules.CapabilityRegistry.Register(&webshell.Executor{})
+
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	rootCmd.PersistentFlags().StringVarP(&dbPath, "db", "d", "", "database path (default ~/.adpack/state.db)")
+	rootCmd.PersistentFlags().StringVar(&hashcatPathFlag, "hashcat-path", "", "path to hashcat binary (overrides config)")
+	rootCmd.PersistentFlags().StringVar(&wordlistFlag, "wordlist", "", "path to wordlist (overrides config)")
+	rootCmd.PersistentFlags().StringVar(&rulesFlag, "rules", "", "comma-separated hashcat rule files (overrides config)")
+	rootCmd.PersistentFlags().IntVar(&crackTimeoutF, "crack-timeout", 0, "timeout in seconds per hash (overrides config)")
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "completion [bash|zsh|fish|powershell]",
@@ -182,6 +322,9 @@ func init() {
 				case core.PhaseSkipped:
 					statusStr = "skipped"
 					statusStyle = lipgloss.NewStyle().Foreground(utils.ColorMuted)
+				case core.PhaseFailed:
+					statusStr = "failed"
+					statusStyle = lipgloss.NewStyle().Foreground(utils.ColorError)
 				default:
 					statusStyle = lipgloss.NewStyle().Foreground(utils.ColorMuted)
 				}
@@ -205,6 +348,22 @@ func init() {
 				}
 				fmt.Printf("  %-12s %s\n", p.Name, p.Description)
 			}
+			return nil
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "loot",
+		Short: "Display comprehensive loot summary from current state",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			state, err := DB.LoadState()
+			if err != nil {
+				return fmt.Errorf("load state: %w", err)
+			}
+			modules.PrintLootSummary(state)
+			fmt.Println()
+			modules.PrintVulnCoverage(modules.AssessVulnCoverage(state))
+			fmt.Println()
 			return nil
 		},
 	})

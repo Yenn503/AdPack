@@ -55,17 +55,6 @@ func (p phantomKillerTool) Run(ctx context.Context, req ExecutionRequest) (*Exec
 	return cmdResultToExecResult(r), nil
 }
 
-func (p phantomKillerTool) DeployViaSMB(ctx context.Context, target NetExecTarget, localPath, remoteDir string) (*ExecutionResult, error) {
-	if !p.Available() {
-		return nil, &ToolError{Tool: "PhantomKiller", Op: "deploy", Err: fmt.Errorf("PhantomKiller.exe not found locally")}
-	}
-	cr, err := NetExec.PutFile(ctx, target, localPath, remoteDir)
-	if err != nil {
-		return cmdResultToExecResult(cr), &ToolError{Tool: "PhantomKiller", Op: "deploy", Err: err, ExitCode: cr.ExitCode}
-	}
-	return cmdResultToExecResult(cr), nil
-}
-
 func (p phantomKillerTool) ExecRemote(ctx context.Context, target NetExecTarget, remotePath string, mode PhantomKillerMode, pid int) (*ExecutionResult, error) {
 	cmd := remotePath
 	if mode == PhantomKillerModeKill && pid > 0 {

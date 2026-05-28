@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"adpack/core"
+
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +18,9 @@ var resetCmd = &cobra.Command{
 				if err := DB.ResetPhase(phase); err != nil {
 					return fmt.Errorf("reset phase %s: %w", phase, err)
 				}
+			}
+			if err := DB.ClearEdges(); err != nil {
+				return fmt.Errorf("clear edges: %w", err)
 			}
 			fmt.Println("All phases reset.")
 			return nil

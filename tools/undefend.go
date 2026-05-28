@@ -15,37 +15,25 @@ func (unDefendTool) Available() bool {
 	return utils.ToolAvailable("UnDefend.exe") || utils.ToolAvailable("UnDefend") || utils.ToolAvailable("undefend")
 }
 
-type UnDefendMode string
-
-const (
-	UnDefendPassive    UnDefendMode = "passive"
-	UnDefendAggressive UnDefendMode = "aggressive"
-	UnDefendKiller     UnDefendMode = "killer"
-)
-
 type UnDefendConfig struct {
 	Binary string
-	Mode   UnDefendMode
+	Kill   bool
 }
 
 func DefaultUnDefendConfig() UnDefendConfig {
 	return UnDefendConfig{
 		Binary: "UnDefend.exe",
-		Mode:   UnDefendPassive,
 	}
 }
 
 func (u unDefendTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
 	cfg := DefaultUnDefendConfig()
 	if len(req.Args) > 0 {
-		cfg.Mode = UnDefendMode(req.Args[0])
+		cfg.Kill = req.Args[0] == "--kill"
 	}
 	var args []string
-	switch cfg.Mode {
-	case UnDefendAggressive:
-		args = []string{"-aggressive"}
-	case UnDefendKiller:
-		args = []string{"-killer"}
+	if cfg.Kill {
+		args = []string{"--kill"}
 	}
 	r := utils.RunCommandCtx(ctx, cfg.Binary, args)
 	if !r.Success {
@@ -54,23 +42,10 @@ func (u unDefendTool) Run(ctx context.Context, req ExecutionRequest) (*Execution
 	return cmdResultToExecResult(r), nil
 }
 
-func (u unDefendTool) DeployViaSMB(ctx context.Context, target NetExecTarget, localPath, remoteDir string) (*ExecutionResult, error) {
-	if !u.Available() {
-		return nil, &ToolError{Tool: "UnDefend", Op: "deploy", Err: fmt.Errorf("UnDefend.exe not found locally")}
-	}
-	cr, err := NetExec.PutFile(ctx, target, localPath, remoteDir)
-	if err != nil {
-		return cmdResultToExecResult(cr), &ToolError{Tool: "UnDefend", Op: "deploy", Err: err, ExitCode: cr.ExitCode}
-	}
-	return cmdResultToExecResult(cr), nil
-}
-
-func (u unDefendTool) ExecRemote(ctx context.Context, target NetExecTarget, remotePath string, mode UnDefendMode) (*ExecutionResult, error) {
+func (u unDefendTool) ExecRemote(ctx context.Context, target NetExecTarget, remotePath string, kill bool) (*ExecutionResult, error) {
 	cmd := remotePath
-	if mode == UnDefendAggressive {
-		cmd += " -aggressive"
-	} else if mode == UnDefendKiller {
-		cmd += " -killer"
+	if kill {
+		cmd += " --kill"
 	}
 	cr, err := NetExec.Run(ctx, target, "-x", []string{fmt.Sprintf(`start /B %s`, cmd)})
 	if err != nil {

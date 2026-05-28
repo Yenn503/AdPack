@@ -161,3 +161,72 @@ SMB    192.168.57.11   445    DOMAIN     other.domain.com\SRV02$`
 		t.Errorf("qualified computer domain: got %s, want other.domain.com", computers[1].Domain)
 	}
 }
+
+func TestParseDaclReadACEs_RealOutput(t *testing.T) {
+	input := `LDAP   192.168.57.10   389    KINGSLANDING     [*] Windows 10 / Server 2019 Build 17763 (name:KINGSLANDING) (domain:sevenkingdoms.local) (signing:None) (channel binding:Never)
+LDAP   192.168.57.10   389    KINGSLANDING     [+] sevenkingdoms.local\Administrator:8dCT-DJjgScp (Pwn3d!)
+DACLREAD 192.168.57.10   389    KINGSLANDING     Be careful, this module cannot read the DACLS recursively.
+DACLREAD 192.168.57.10   389    KINGSLANDING     Target principal found in LDAP (CN=Domain Admins,CN=Users,DC=sevenkingdoms,DC=local)
+DACLREAD 192.168.57.10   389    KINGSLANDING     ACE[0] info
+DACLREAD 192.168.57.10   389    KINGSLANDING        ACE Type                  : ACCESS_ALLOWED_OBJECT_ACE
+DACLREAD 192.168.57.10   389    KINGSLANDING        Access mask               : ReadProperty
+DACLREAD 192.168.57.10   389    KINGSLANDING        Trustee (SID)             : BUILTIN\Pre-Windows 2000 Compatible Access (S-1-5-32-554)
+DACLREAD 192.168.57.10   389    KINGSLANDING     ACE[9] info
+DACLREAD 192.168.57.10   389    KINGSLANDING        ACE Type                  : ACCESS_ALLOWED_OBJECT_ACE
+DACLREAD 192.168.57.10   389    KINGSLANDING        Access mask               : ReadProperty, WriteProperty
+DACLREAD 192.168.57.10   389    KINGSLANDING        Trustee (SID)             : Cert Publishers (S-1-5-21-2392717932-3013346883-3168203123-517)
+DACLREAD 192.168.57.10   389    KINGSLANDING     ACE[15] info
+DACLREAD 192.168.57.10   389    KINGSLANDING        ACE Type                  : ACCESS_ALLOWED_OBJECT_ACE
+DACLREAD 192.168.57.10   389    KINGSLANDING        Access mask               : ControlAccess
+DACLREAD 192.168.57.10   389    KINGSLANDING        Object type (GUID)        : User-Change-Password (ab721a53-1e2f-11d0-9819-00aa0040529b)
+DACLREAD 192.168.57.10   389    KINGSLANDING        Trustee (SID)             : Everyone (S-1-1-0)
+DACLREAD 192.168.57.10   389    KINGSLANDING     ACE[18] info
+DACLREAD 192.168.57.10   389    KINGSLANDING        Access mask               : ReadAndExecute, ReadAndWrite, Read, Write, WriteDACL, ReadControl, WriteProperties, ListChildObjects, DeleteChild, CreateChild (0xe01bf)
+DACLREAD 192.168.57.10   389    KINGSLANDING        Trustee (SID)             : Domain Admins (S-1-5-21-2392717932-3013346883-3168203123-512)
+DACLREAD 192.168.57.10   389    KINGSLANDING     ACE[19] info
+DACLREAD 192.168.57.10   389    KINGSLANDING        Access mask               : ReadAndExecute, ReadAndWrite, Read, Write, WriteDACL, ReadControl, WriteProperties, ListChildObjects, DeleteChild, CreateChild (0xe01bf)
+DACLREAD 192.168.57.10   389    KINGSLANDING        Trustee (SID)             : Enterprise Admins (S-1-5-21-2392717932-3013346883-3168203123-519)
+DACLREAD 192.168.57.10   389    KINGSLANDING     ACE[20] info
+DACLREAD 192.168.57.10   389    KINGSLANDING        Access mask               : FullControl, Modify, ReadAndExecute, ReadAndWrite, Read, Write, WriteDACL, Delete, ListObject, WriteProperties, Self, CreateChild (0xf01ff)
+DACLREAD 192.168.57.10   389    KINGSLANDING        Trustee (SID)             : lord.varys (S-1-5-21-2392717932-3013346883-3168203123-1121)
+DACLREAD 192.168.57.10   389    KINGSLANDING     ACE[21] info
+DACLREAD 192.168.57.10   389    KINGSLANDING        Access mask               : Modify, ReadAndExecute, ReadAndWrite, Read, Write, WriteDACL, ListObject, WriteProperties, Self (0xf01bf)
+DACLREAD 192.168.57.10   389    KINGSLANDING        Trustee (SID)             : Administrators (S-1-5-32-544)
+`
+	edges := parseDaclReadACEs(input, "sevenkingdoms.local", "Domain Admins")
+
+	// We expect:
+	//   - ACE[0]: skipped (ReadProperty + BUILTIN trustee)
+	//   - ACE[9]: Cert Publishers → WriteProperty → Domain Admins
+	//   - ACE[15]: skipped (Everyone skip prefix)
+	//   - ACE[18]: Domain Admins → WriteDacl → Domain Admins
+	//   - ACE[19]: Enterprise Admins → WriteDacl → Domain Admins
+	//   - ACE[20]: lord.varys → GenericAll → Domain Admins
+	//   - ACE[21]: Administrators → WriteDacl → Domain Admins
+
+	if len(edges) != 5 {
+		t.Fatalf("got %d edges, want 5", len(edges))
+	}
+
+	// Build lookup map for assertions
+	type edgeKey struct{ src, right, tgt string }
+	got := make(map[edgeKey]bool)
+	for _, e := range edges {
+		got[edgeKey{e.SourcePrincipal, e.AccessRight, e.TargetPrincipal}] = true
+	}
+
+	cases := []struct {
+		src, right, tgt string
+	}{
+		{"Cert Publishers", "WriteProperty", "Domain Admins"},
+		{"Domain Admins", "WriteDacl", "Domain Admins"},
+		{"Enterprise Admins", "WriteDacl", "Domain Admins"},
+		{"lord.varys", "GenericAll", "Domain Admins"},
+		{"Administrators", "WriteDacl", "Domain Admins"},
+	}
+	for _, c := range cases {
+		if !got[edgeKey{c.src, c.right, c.tgt}] {
+			t.Errorf("missing edge: %s → %s → %s", c.src, c.right, c.tgt)
+		}
+	}
+}
