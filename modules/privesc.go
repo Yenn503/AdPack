@@ -1547,6 +1547,9 @@ func findNanodump() string {
 	if utils.ToolAvailable("nanodump") {
 		return "nanodump"
 	}
+	if utils.ToolAvailable("nanodump.exe") {
+		return "nanodump.exe"
+	}
 	return ""
 }
 

