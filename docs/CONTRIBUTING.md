@@ -1,214 +1,135 @@
-# Contributing to adpack
+# Contributing to AdPack
 
-Guidelines for contributing code, docs, and bug reports.
+Development guidelines and contribution process.
 
-## Getting Started
+## Development Environment
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/yourusername/adpack.git`
-3. Create a feature branch: `git checkout -b feature/your-feature-name`
-4. Make your changes
-5. Test your changes
-6. Commit with clear messages
-7. Push to your fork
-8. Open a pull request
+- Go 1.25+
+- Linux or WSL2 (primary target platform)
+- Git for version control
 
-## Code Style
-
-### Go Code
-
-- Follow standard Go conventions and idioms
-- Run `gofmt`, `go vet`, and `staticcheck` before committing
-- Use meaningful variable and function names
-- Keep functions focused and under 50 lines when possible
+```bash
+git clone https://github.com/Yenn503/AdPack.git
+cd adpack
+go mod download
+go build -o adpack .
+```
 
 ## Project Structure
 
 ```
 adpack/
-├── cmd/                    # CLI commands (one file per command)
-├── core/                   # Domain models, interfaces (Transport, provider, identity)
-├── modules/                # Attack phase implementations + provider layer
-├── tools/                  # External tool wrappers (NetExec, nanodump, deploy)
-├── storage/                # Database layer (SQLite, migrations, event persistence)
-├── utils/                  # Shared utilities (command runner, theme, config)
-├── tui/                    # Interactive bubbletea dashboard
-├── config/                 # Configuration loading
-├── internal/
-│   ├── cracker/            # Hash cracking pipeline (queue, worker, materializer)
-│   ├── executorbackend/    # Capability executors (ADCS, DCSync, RBCD, etc.)
-│   ├── resolver/           # Artifact resolution pipeline (cert, shadowcred)
-│   ├── runtime/            # Managed services (Responder, Relay, Coercer)
-│   └── transport/          # Transport implementations (local SMB/WMI/WinRM)
-└── planner/                # Attack path planning (Dijkstra over edge graph)
+  cmd/            # CLI commands — one file per command group
+  config/         # YAML config loading and validation
+  core/           # Domain model — no external dependencies beyond stdlib + lipgloss
+  internal/       # Internal packages — not importable externally
+    bloodhound/   # BloodHound integration
+    cracker/      # Hashcat cracking pipeline
+    executorbackend/  # Capability executors (one package per technique)
+    resolver/     # Identity resolution
+    runtime/      # Process supervision
+    transport/    # Transport layer (local, proxy, sliver)
+  modules/        # Attack modules — orchestration logic
+  planner/        # Attack path planning
+  storage/        # SQLite persistence
+  tools/          # External tool wrappers
+  tui/            # Terminal UI (Bubble Tea)
+  utils/          # Shared utilities (theme, command execution, logging)
 ```
 
-## Adding Features
+## Code Style
 
-### New Attack Phase
+- Standard Go formatting (`gofmt`, `goimports`)
+- No comments or documentation in code unless explicitly required
+- Imports grouped: stdlib, third-party, internal
+- Error handling: always wrap errors with context using `fmt.Errorf("context: %w", err)`
+- Use `adpack/utils` styled output helpers (`Step`, `StepOk`, `StepWarn`, `StepInfo`) instead of raw `fmt.Println`
+- Concurrency: use `sync.RWMutex` for shared state, `defer recover()` in goroutines
 
-1. Add phase constant to `core/state.go`:
+## Adding a New Command
+
+1. Create `cmd/<command>.go` with cobra command definition
+2. Create `modules/<module>.go` with implementation logic
+3. Register the command in `cmd/<command>.go` `init()` function
+4. Add to README.md command table
+5. Add to docs/USAGE.md
+
+Example command structure:
 ```go
-const PhaseNewPhase Phase = "new_phase"
-```
+package cmd
 
-2. Wire into `core/state.go` dependency map and phase ordering
+import (
+    "adpack/modules"
+    "github.com/spf13/cobra"
+)
 
-3. Create module in `modules/newphase.go` using tool wrappers
+var myCmd = &cobra.Command{
+    Use:   "mycommand",
+    Short: "Description",
+    RunE: func(cmd *cobra.Command, args []string) error {
+        return (&modules.MyModule{}).DoSomething(flag1, flag2)
+    },
+}
 
-4. Add CLI command in `cmd/run.go`
-
-### New Tool Wrapper
-
-1. Create `tools/newtool.go` with a package-level singleton:
-```go
-type newTool struct{}
-
-var NewTool = newTool{}
-
-func (newTool) Name() string { return "newtool" }
-func (newTool) Available() bool { return utils.ToolAvailable("newtool") }
-func (newTool) Run(ctx context.Context, args []string) (utils.CmdResult, error) {
-    return utils.RunCommandCtx(ctx, "newtool", args), nil
+func init() {
+    myCmd.Flags().StringVar(&flag1, "flag1", "", "Description")
+    rootCmd.AddCommand(myCmd)
 }
 ```
 
-2. Import and use the singleton from modules or other tools:
-```go
-if tools.NewTool.Available() {
-    result, err := tools.NewTool.Run(ctx, []string{"arg1", "arg2"})
-}
-```
+## Adding a New Transport
 
-### New Evasion Profile
+1. Create `internal/transport/<name>/<name>.go`
+2. Implement the `core.Transport` interface:
+   - `Execute(ctx, target, command) (string, error)`
+   - `Upload(ctx, target, localPath, remotePath) error`
+   - `Download(ctx, target, remotePath, localPath) error`
+3. Wire into `cmd/root.go` `TransportFactory`
 
-1. Add to the profile map in `modules/evasion.go` via `registerProfile` and add to `AllProfiles()` list
-2. Wire the profile name as a case in pipeline switching logic in `modules/credential_acq.go`
-3. Register the profile in `BaseProfileFor()` mapping in `modules/evasion.go`
-4. Create tool wrapper in `tools/` if it uses a new binary
+## Adding a New Capability Executor
+
+1. Create `internal/executorbackend/<name>/<name>.go`
+2. Implement the executor interface from `core/capability.go`
+3. Register in `cmd/root.go` `init()` via `CapabilityRegistry.Register()`
 
 ## Testing
 
-### Running Tests
-
 ```bash
-go test ./...
+go test ./...                    # Run all tests
+go test -v ./modules/            # Verbose module tests
+go test -race ./...              # Race detection
+go vet ./...                     # Static analysis
 ```
 
-### Writing Tests
+Test files follow Go convention: `<name>_test.go` alongside the source file.
 
-- Place tests in `*_test.go` files
-- Use table-driven tests for multiple cases
-- Mock external dependencies
-- Test error conditions
+## Before Submitting
 
-Example:
+1. Run `go build -o bin/adpack.exe .` — must compile clean
+2. Run `go vet ./...` — no warnings
+3. Run `go test ./...` — all tests pass
+4. Update documentation if adding/changing commands
+5. Update CHANGELOG.md under an `Unreleased` section
 
-```go
-func TestParseCredentials(t *testing.T) {
-    tests := []struct {
-        name     string
-        input    string
-        expected int
-    }{
-        {"valid output", "Username: admin\nPassword: pass123", 1},
-        {"empty output", "", 0},
-        {"malformed", "invalid data", 0},
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            result := parseCredentials(tt.input)
-            if len(result) != tt.expected {
-                t.Errorf("got %d, want %d", len(result), tt.expected)
-            }
-        })
-    }
-}
-```
+## Commit Guidelines
 
-## Documentation
+- Atomic commits — one logical change per commit
+- Descriptive commit messages
+- No binary files in commits (use .gitignore patterns)
 
-### Code Comments
+## Release Process
 
-- Document all exported functions
-- Explain complex algorithms
-- Include usage examples for non-obvious code
+1. Update version in `cmd/root.go` (`version` variable)
+2. Update version badge in README.md
+3. Move `Unreleased` changes to a new version section in CHANGELOG.md
+4. Tag: `git tag v0.X.0`
+5. Build: `go build -o adpack .`
 
-### README Updates
+## Security Considerations
 
-- Update README.md when adding features
-- Include examples for new commands
-- Update configuration section for new options
-
-## Pull Request Process
-
-1. **Title**: Use clear, descriptive titles
-   - Good: "Add Kerberoasting support to credential_acq module"
-   - Bad: "Update code"
-
-2. **Description**: Include:
-   - What changed and why
-   - How to test the changes
-   - Any breaking changes
-   - Related issues
-
-3. **Checklist**:
-   - [ ] Code follows project style
-   - [ ] Tests pass
-   - [ ] Documentation updated
-   - [ ] No unnecessary dependencies added
-   - [ ] Commit messages are clear
-
-## Commit Messages
-
-Use conventional commit format:
-
-```
-type(scope): brief description
-
-Longer explanation if needed.
-
-Fixes #123
-```
-
-Types:
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `refactor`: Code refactoring
-- `test`: Test additions or changes
-- `chore`: Maintenance tasks
-
-Examples:
-```
-feat(modules): add Kerberoasting to credential_acq
-
-Implements Kerberoasting attack using NetExec and GetUserSPNs.
-Automatically detects servicePrincipalName attributes and requests
-TGS tickets for offline cracking.
-
-Fixes #45
-```
-
-## Code Review
-
-All submissions require review. We look for:
-
-- Code quality and readability
-- Test coverage
-- Documentation completeness
-- Security considerations
-- Performance implications
-
-## Questions?
-
-Open an issue for:
-- Feature requests
-- Bug reports
-- Design discussions
-- General questions
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
+- Never hardcode credentials or API keys
+- Use `0600` permissions for files containing secrets
+- Validate all user input (session names, file paths, target IPs)
+- Use `exec.Command` (not shell) for external tool execution where possible
+- PowerShell command injection: use encoded commands or temp file uploads for complex scripts
+- Session export files: always use restrictive permissions (`0600`)

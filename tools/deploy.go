@@ -169,12 +169,11 @@ func randomizedName(localPath string) string {
 	return fmt.Sprintf("%s_%s%s", stem, hex.EncodeToString(b[:]), ext)
 }
 
-// RandString returns n random bytes as a hex string. Panics if rand.Read fails
-// (extremely unlikely on any real system).
-func RandString(n int) string {
+// RandString returns n random bytes as a hex string. Returns error if rand.Read fails.
+func RandString(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		panic("rand.Read: " + err.Error())
+		return "", fmt.Errorf("rand.Read: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }

@@ -3,20 +3,22 @@ package utils
 import "charm.land/lipgloss/v2"
 
 var (
-	// Monochrome UI chrome
-	ColorPrimary       = lipgloss.Color("#FFFFFF") // Pure white
-	ColorSecondary     = lipgloss.Color("#A0A0A0") // Light gray
-	ColorMuted         = lipgloss.Color("#666666") // Medium gray
-	ColorHighlight     = lipgloss.Color("#E0E0E0") // Near-white
-	ColorTextOnPrimary = lipgloss.Color("#1A1A1A") // Dark text on white bg
+	// Vibrant primary palette — no white
+	ColorPrimary       = lipgloss.Color("#00E5FF") // Electric Cyan
+	ColorSecondary     = lipgloss.Color("#82B1FF") // Soft Blue
+	ColorMuted         = lipgloss.Color("#546E7A") // Blue Grey
+	ColorHighlight     = lipgloss.Color("#FFD740") // Bright Amber
+	ColorTextOnPrimary = lipgloss.Color("#0D1117") // Deep Navy
 
-	// Semantic event colors
-	ColorSuccess = lipgloss.Color("#2E7D32") // Forest Green
-	ColorWarning = lipgloss.Color("#F57C00") // Amber
-	ColorError   = lipgloss.Color("#C62828") // Deep Red
-	ColorInfo    = lipgloss.Color("#0288D1") // Light Blue
-	ColorCyan    = lipgloss.Color("#00BCD4") // Cyan accent
-	ColorPurple  = lipgloss.Color("#7C4DFF") // Purple accent
+	// Semantic event colors — rich and vibrant
+	ColorSuccess = lipgloss.Color("#00E676") // Bright Green
+	ColorWarning = lipgloss.Color("#FF9100") // Deep Orange
+	ColorError   = lipgloss.Color("#FF1744") // Vivid Red
+	ColorInfo    = lipgloss.Color("#448AFF") // Bright Blue
+	ColorCyan    = lipgloss.Color("#18FFFF") // Pure Cyan
+	ColorPurple  = lipgloss.Color("#B388FF") // Soft Purple
+	ColorPink    = lipgloss.Color("#FF80AB") // Pink accent
+	ColorLime    = lipgloss.Color("#C6FF00") // Lime accent
 
 	// Common Styles
 	BaseStyle = lipgloss.NewStyle().Foreground(ColorHighlight)

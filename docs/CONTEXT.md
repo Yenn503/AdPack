@@ -1,103 +1,157 @@
-# adpack — Domain Language
+# AdPack Context
 
-## Mission
-adpack is a state-aware AD attack tool for red teams and pentesters. Tracks evidence, detects gaps, suggests next steps, dumps creds from AD.
+Domain language, architecture, and design decisions for adpack.
 
-## Core Concepts
+## Domain Language
 
-| Term | Definition |
-|------|------------|
-| **Phase** | One of 9 sequential AD attack stages: discovery → enumeration → credential_acq → session_harvest → graph_analysis → lateral → validation → privesc → persistence |
-| **State** | SQLite snapshot of hosts, users, creds, sessions, phase status |
-| **Gap** | Missing prerequisite — e.g., "no hosts discovered", "no creds acquired" |
-| **Evidence** | Timestamped tool execution record |
-| **Pipeline** | Sequence of tool executions for cred acquisition (e.g., mimikatz→donut→netexec→pypykatz) |
-| **Evasion Profile** | Config for delivery method, injection technique, pre-conditions for LSASS dump |
-| **Target** | Remote Windows host (SMB/WMI/WinRM) |
-| **Pre-condition** | Defensive measure before dump — e.g., killing Defender via UnDefend, freezing EDR via EDR-Freeze |
-| **HostRef** | Canonical identity key for a machine. Every observation surface (LDAP, SMB sessions) collapses to the same HostRef when referring to the same host |
-| **ProviderEvent** | Acquisition-boundary event envelope recording one provider call outcome (method, transport, duration, entity count, raw stdout/stderr) |
-| **Identity Drift Snapshot** | Structured counters (resolved, unresolved, mismatches, duplicates) emitted per session harvest run, measuring how well identity converges under real traffic |
+### Core Concepts
 
-## Phase Dependencies
-```
-discovery → enumeration → credential_acq → session_harvest → lateral
-                        → graph_analysis  → validation
-                                          → privesc        → persistence
-```
+- **Phase**: A discrete stage in the AD attack lifecycle. 9 phases from discovery to persistence.
+- **State (ADState)**: The accumulated knowledge about the target environment — hosts, users, creds, sessions, edges, phase progress.
+- **Gap**: A missing prerequisite detected by state analysis (e.g., "no hosts discovered", "no credentials validated").
+- **Edge (PrivilegeEdge)**: A directed privilege relationship between two AD principals (e.g., GenericAll, DCSync, HasSession).
+- **Edge Event**: A state mutation applied to an edge via a reducer (validation, degradation, staleness).
+- **HostRef**: Canonical identity key `{Name, Domain}` for a target machine. All values normalised to uppercase.
+- **Credential**: A secret material (plaintext, NTLM hash, Kerberos ticket, certificate, token) bound to a domain user.
+- **Session**: An active user logon session discovered on a target host.
+- **Provider**: An abstraction over external tool execution. Emits structured `ProviderEvent` envelopes.
+- **Transport**: Pluggable command execution interface (local, proxy/SOCKS5, Sliver C2).
+- **Evasion Profile**: A named configuration controlling how credential acquisition tools are deployed (standard, bypass, custom).
 
-Actual dependency rules from code:
-- **discovery**: no dependencies
-- **enumeration**: depends on discovery
-- **credential_acq**: depends on enumeration
-- **session_harvest**: depends on enumeration + credential_acq
-- **graph_analysis**: depends on enumeration
-- **lateral**: depends on credential_acq + session_harvest
-- **validation**: depends on credential_acq
-- **privesc**: depends on enumeration + graph_analysis
-- **persistence**: depends on credential_acq + privesc
-
-## Evasion Profiles
-3 profiles: standard, bypass, custom
-Each selects delivery (donut/exe) + optional pre-condition (Defender kill via UnDefend).
-
-## Tool Ecosystem
-| Tool | Role |
-|------|------|
-| NetExec (nxc) | SMB/WMI/WinRM remote execution, file transfer, auth testing. The canonical exec-method failover order used by `RunFailover` is **wmiexec → smbexec → atexec**, with a per-attempt timeout so any single stuck transport is bounded |
-| nanodump | LSASS minidump with evasion techniques (fork, snapshot, WER) |
-| go-mimikatz | Go port of mimikatz for sekurlsa::logonpasswords, dcsync (requires Windows build; falls back to nanodump+pypykatz) |
-| pypykatz | Offline LSASS dump parsing |
-| UnDefend | Defender kill — aggressive mode (--kill) runs automatically after SYSTEM access |
-| impacket-secretsdump | DRSUAPI dump for Golden Ticket forge + DCSync |
-| impacket-ticketer | Forge TGTs given krbtgt hash + Domain SID |
-| impacket-dacledit | Native LDAP DACL write for AdminSDHolder backdoor |
-| impacket-rbcd | RBCD configuration on victim computer object |
-| impacket-lookupsid | Domain SID resolution for ticket forging |
-| bloodyAD | LDAP attack tool used as fallback for AdminSDHolder + RBCD when impacket modules absent |
-
-## Provider Layer
-
-The provider boundary separates acquisition from interpretation:
-
-| Layer | Responsibility | Files |
-|-------|---------------|-------|
-| **Provider interface** | Defines `DirectoryProvider` with EnumerateComputers, EnumerateGPOs, EnumerateADCSTemplates, EnumerateSessions, EnumerateDelegation | `core/provider.go` |
-| **NetExec provider** | Routes enumeration via nxc LDAP/SMB with fallback (e.g., GPO falls back from LDAP --gpos to SMB gpolocal) | `modules/netexec_provider.go` |
-| **Parsers** | Format-specific extraction. Two-stage grammar for computers: `DOMAIN\COMPUTER$` (qualified) or `COMPUTER$` (bare with injected domain) | `modules/netexec_parsers.go`, `modules/parserutil.go` |
-| **Provider events** | Every method call emits a `ProviderEvent` (method, transport, duration, entity count, raw stdout/stderr) | `core/provider.go`, `core/jsonl_sink.go` |
-
-## Post-SYSTEM Credential Dump
-
-After SYSTEM access is confirmed (via smbexec/atexec), the tool runs a two-stage dump:
-
-1. **SAM + LSA secrets** via `nxc sam` and `nxc lsa` (extracts local admin hashes, cached domain credentials, DCC2 hashes)
-2. **UnDefend --kill** (disables Defender)
-3. **Deep dump** via nanodump+pypykatz cascading pipeline (only if SAM/LSA didn't already produce creds)
-
-## Child-to-Parent Domain Escalation
-
-DCSyncs child DC krbtgt → forges golden ticket with `-sid-history` (Enterprise Admins SID) → DCSyncs parent domain. Requires DA-equivalent creds on the child domain. Runs as privesc sub-phase 7.
-
-## Identity Normalisation
-
-Observations from different surfaces are collapsed to a canonical `HostRef{Name, Domain}`:
+### Phase Dependency DAG
 
 ```
-LDAP computer object  → ResolveComputerRef(name, domain)
-SMB session username  → ResolveSessionRef(username, fallbackDomain)
+discovery
+  └─ enumeration
+       ├─ credential_acq
+       │    ├─ session_harvest
+       │    │    └─ lateral
+       │    └─ validation
+       ├─ graph_analysis
+       │    └─ privesc
+       │         └─ persistence
+       └─ (enumeration feeds all downstream)
 ```
 
-Resolution rules for sessions:
-1. `DOMAIN\NAME$` → extract both directly
-2. `NAME$` → attach fallbackDomain
-3. no trailing `$` → not a machine account (returns false)
+### Credential Types
 
-## Operational Primitives
-| Primitive | Purpose |
-|-----------|---------|
-| `tools.NetExec.RunFailover` | Canonical exec-method failover: **wmiexec → smbexec → atexec**. Each method gets the same per-attempt timeout; the first one that returns (success or clean failure) wins. Use this for everything *except* SYSTEM-context proof. |
-| `tools.NetExec.RunSystemCheck` | **smbexec → atexec only** — deliberately skips wmiexec. Used by privesc to confirm SYSTEM. wmiexec runs commands under the authenticated user's token via DCOM/WMI and frequently does NOT yield SYSTEM. smbexec drops a temporary service and atexec uses Task Scheduler — both run as LocalSystem, so they're the only reliable failover paths for SYSTEM proof. |
-| `tools.Deploy` | Hash + randomized-name SMB upload; returns remote path + SHA256 for evidence |
-| `tools.CleanupRemote` | Best-effort delete of dropped artifacts (paired with `defer`) |
-| `tools.DeployAndExec` | One-shot deploy → exec → optional retrieve → cleanup; for self-contained payloads |
+| Type | Description | Example |
+|------|-------------|---------|
+| `plaintext` | Cleartext password | `Heartsbane` |
+| `hash` | NTLM hash | `dbd13e1c4...` |
+| `ticket` | Kerberos ticket (ccache/kirbi) | `Administrator@CORP.LOCAL.ccache` |
+| `token` | Windows access token | (in-memory only) |
+| `certificate` | PKI certificate (PFX/PEM) | `Administrator.pfx` |
+
+### Edge Types
+
+| Type | Description | Source |
+|------|-------------|--------|
+| `acl` | DACL-based privilege (GenericAll, WriteDacl, etc.) | BloodHound, daclread |
+| `mssql_impersonation` | MSSQL user impersonation | MSSQL enumeration |
+| `mssql_xp_cmdshell` | MSSQL command execution | MSSQL enumeration |
+| `mssql_linked_server` | MSSQL linked server access | MSSQL enumeration |
+| `adcs_esc1` | ESC1 certificate template | ADCS enumeration |
+| `adcs_esc8` | ESC8 web enrollment | ADCS enumeration |
+| `unconstrained_delegation` | Unconstrained delegation | BloodHound |
+| `rbcd` | Resource-based constrained delegation | BloodHound |
+| `shadow_cred` | Shadow credentials (KeyCredentialLink) | BloodHound |
+
+### Edge Validation States
+
+```
+inferred → observed → validated
+                    → stale
+                    → degraded
+                    → probabilistic
+```
+
+## Architecture
+
+### Package Layout
+
+```
+adpack/
+  cmd/            # CLI commands (cobra)
+  config/         # YAML config loading and validation
+  core/           # Domain model: state, edges, events, sessions, reports
+  internal/
+    bloodhound/   # BloodHound data collection and ingestion
+    cracker/      # Hashcat cracking pipeline (worker pool + queue)
+    executorbackend/  # Capability executors (DCSync, RBCD, ADCS, etc.)
+    resolver/     # Identity resolution and normalisation
+    runtime/      # Process supervision and lifecycle
+    transport/    # Transport implementations (local, proxy, sliver)
+  modules/        # Attack modules: discovery, enumeration, privesc, etc.
+  planner/        # Attack path planning and recommendation
+  storage/        # SQLite persistence layer
+  tools/          # External tool wrappers (ldapsearch, etc.)
+  tui/            # Terminal UI (Bubble Tea)
+  utils/          # Shared utilities: theme, command execution, logging
+```
+
+### Key Design Decisions
+
+1. **State-grounded execution**: Every action reads from and writes to `ADState`. The planner queries state to recommend next actions. No action is taken without state awareness.
+
+2. **Provider boundary**: External tool execution is quarantined behind the `DirectoryProvider` interface. Orchestration never touches stdout, parsing, or transport directly. Every provider call emits a structured `ProviderEvent`.
+
+3. **Identity normalisation**: `HostRef{Name, Domain}` is the canonical identity key. All values are normalised to uppercase. `ResolveComputerRef` and `ResolveSessionRef` collapse LDAP + SMB observations to the same key.
+
+4. **Edge event sourcing**: Privilege edges are mutated through a reducer pattern (`ReduceEdgeEvent`). Events are append-only logged per edge key. This enables audit trails and confidence tracking.
+
+5. **Pluggable transport**: The `Transport` interface abstracts command execution. Three implementations: local (direct exec), proxy (SOCKS5 via proxychains), Sliver (C2 implant).
+
+6. **Cascading credential acquisition**: Credential dumping degrades gracefully: go-mimikatz → nanodump+pypykatz → nxc SAM/LSA. Each tier is attempted only if the previous fails.
+
+7. **Concurrency safety**: `ADState` is protected by `sync.RWMutex`. Cracking pipeline runs in background goroutines with panic recovery.
+
+8. **Session portability**: Engagement state is serializable to portable JSON envelopes. Sessions can be exported, transferred, and imported across machines.
+
+### Data Flow
+
+```
+User Input (CLI)
+  └─ cmd/*.go (cobra commands)
+       └─ modules/*.go (attack logic)
+            ├─ core/state.go (read/write ADState)
+            ├─ internal/transport/ (command execution)
+            ├─ internal/cracker/ (hash cracking)
+            └─ storage/ (SQLite persistence)
+                 └─ core/session.go (JSON export/import)
+```
+
+### Concurrency Model
+
+- **Main goroutine**: CLI command execution, state mutations
+- **CrackWorker goroutine**: Background hashcat job processing with panic recovery
+- **CredentialMaterializer goroutine**: Polls crack queue for results, saves to DB
+- **Signal handler goroutine**: Listens for SIGINT/SIGTERM, triggers graceful shutdown
+- **State mutex**: `sync.RWMutex` protects all concurrent access to `ADState`
+
+## Configuration
+
+See `config.example.yaml` for the full reference. Key sections:
+
+- `db_path`: SQLite database location (use `$HOME`, not `~`)
+- `nxc_path`, `bh_python`: External tool paths
+- `cracking`: Hashcat configuration (path, wordlist, rules, timeout)
+- `proxy_address`: SOCKS5 proxy for transport routing
+- `viper`: Neo4j connection for BloodHound graph queries
+- `evasion`: Default evasion profile and auto AV kill toggle
+- `scope`: Optional CIDR whitelist for attack targets
+
+## Testing
+
+```bash
+go test ./...                    # Run all tests
+go test -v ./modules/            # Verbose module tests
+go test -cover ./...             # With coverage
+```
+
+Test coverage includes:
+- Parser variance tests (computer, session, GPO parsing)
+- Identity normalisation and cross-observation collapse
+- Edge event reduction
+- Credential acquisition pipeline
+- State mutation and gap detection

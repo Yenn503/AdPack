@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"adpack/config"
@@ -57,7 +60,11 @@ var (
 	crackTimeoutF   int
 )
 
-var version = "v0.1.0"
+var (
+	version = "v0.4.0"
+	rootCtx context.Context
+	cancel  context.CancelFunc
+)
 
 const BannerTemplate = `
     ___       ______             __  
@@ -114,6 +121,20 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 			return fmt.Errorf("open db: %w", err)
 		}
 
+		// Signal handler for graceful shutdown
+		rootCtx, cancel = context.WithCancel(context.Background())
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			select {
+			case <-sigCh:
+				fmt.Fprintf(os.Stderr, "\n[!] Interrupt received — shutting down...\n")
+				cancel()
+			case <-rootCtx.Done():
+			}
+			signal.Stop(sigCh)
+		}()
+
 		if crackQueue == nil {
 			crackQueue = cracker.NewHashQueue()
 
@@ -135,7 +156,14 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 			}
 
 			crackWorker = cracker.NewCrackWorker(crackQueue, hashcatPath, wordlist, rules, timeout)
-			go crackWorker.Run()
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "[!] crackWorker panic: %v\n", r)
+					}
+				}()
+				crackWorker.Run()
+			}()
 			crackMat = cracker.NewCredentialMaterializer(crackQueue, func(cred cracker.CrackedCredential) {
 				fmt.Printf("[+] CRACKED: %s\\%s -> %s\n", cred.Domain, cred.Username, cred.Secret)
 				DB.SaveCred(core.Credential{
@@ -147,7 +175,14 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 					Validated: true,
 				})
 			})
-			go crackMat.Run()
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "[!] crackMat panic: %v\n", r)
+					}
+				}()
+				crackMat.Run()
+			}()
 		}
 		return nil
 	},

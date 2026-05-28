@@ -1,6 +1,7 @@
 package core
 
 import (
+	"sync"
 	"time"
 )
 
@@ -316,6 +317,7 @@ const (
 )
 
 type ADState struct {
+	mu              sync.RWMutex              `json:"-"`
 	Hosts           []Host                    `json:"hosts"`
 	Users           []User                    `json:"users"`
 	Groups          []Group                   `json:"groups"`
@@ -343,6 +345,8 @@ type Gap struct {
 }
 
 func (s *ADState) DetectGaps() []Gap {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var g []Gap
 	if len(s.Hosts) == 0 {
 		g = append(g, Gap{PhaseDiscovery, "high", "No hosts discovered"})
@@ -381,6 +385,8 @@ func (s *ADState) DetectGaps() []Gap {
 }
 
 func (s *ADState) NextPhase() *Phase {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	// Fast-track logic: if we have DA creds validated, jump to persistence or lateral movement
 	hasDA := false
 	for _, c := range s.Creds {
@@ -438,6 +444,8 @@ func NewADState() *ADState {
 // edge in-place, and appends the event to the event log. Returns the
 // volatility score from the reducer.
 func (s *ADState) EmitEdgeEvent(edgeKey EdgeKey, ev EdgeEvent) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i, e := range s.Edges {
 		if EdgeKeyOf(e) != edgeKey {
 			continue

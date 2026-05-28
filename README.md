@@ -12,7 +12,7 @@
     <img src="https://img.shields.io/badge/Go-1.25+-black?style=for-the-badge&logo=go&logoColor=white" alt="Go">
   </a>
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20WSL-white?style=for-the-badge&logo=linux&logoColor=black" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-0.3.0-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/Version-0.4.0-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
 </p>
 
 <p align="center">
@@ -145,14 +145,14 @@ See [USAGE.md](docs/USAGE.md) for the full command reference.
 - Detects admin rights and lateral movement viability
 
 ### Evasion
-- 3 evasion profiles from basic to kernel-level techniques
-- Automatic AV kill after SYSTEM access
-- PPLShade kernel bypass, EDR-Freeze, and PhantomKiller BYOVD
-- In-memory execution via Donut
+- 3 evasion profiles: `standard` (Donut + go-mimikatz), `bypass` (UnDefend pre-flight), `custom`
+- Automatic AV kill after SYSTEM access via UnDefend
+- In-memory execution via Donut shellcode injection
+- Internal credential acquisition pipeline supports PPLShade, EDR-Freeze, PhantomKiller as fallback stages
 - See the [evasion profiles table](#evasion-profiles) below
 
 ### Transport Interface
-Commands execute through a pluggable `Transport` interface supporting SMB, WinRM, and WMI exec methods with automatic failover. The default `local` transport uses the operator's own network position; custom transports can be swapped in for C2 relay or proxied access.
+Commands execute through a pluggable `Transport` interface supporting SMB, WinRM, and WMI exec methods with automatic failover. The default `local` transport uses the operator's own network position. **Sliver C2 transport** is available for executing commands through Sliver implants (`internal/transport/sliver/`). Custom transports can be swapped in for any C2 framework.
 
 ### Cracking Pipeline
 Extracted hashes (NTLM, Kerberoast, AS-REP) are automatically enqueued into a background hashcat worker pool. Cracked credentials materialise into the state database and trigger re-evaluation of privesc paths.
@@ -293,6 +293,35 @@ Installs Go 1.25+, NetExec, Donut, pypykatz, nanodump, adpack binary, default co
 See [docs/SETUP.md](docs/SETUP.md).
 
 ---
+
+## All Commands (v0.4.0)
+
+| Command | Description |
+|---------|-------------|
+| `adpack autorun` | Full automated attack chain |
+| `adpack run <phase>` | Execute a single attack phase |
+| `adpack status` | Current state and gaps |
+| `adpack next` | Recommended next phase |
+| `adpack interactive` | TUI dashboard |
+| `adpack session save/load/list/delete/export/import` | Engagement session management |
+| `adpack kerb tgt/list/destroy/s4u` | Kerberos ticket management |
+| `adpack adcs find/esc1-esc13/auth` | ADCS exploitation |
+| `adpack zerologon check/exploit/dcsync/restore` | CVE-2020-1472 exploit |
+| `adpack nopac check/exploit/dcsync/scan` | CVE-2021-42278/42287 exploit |
+| `adpack coerce printerbug/petitpotam/dfscoerce/shadow/all` | NTLM coercion |
+| `adpack trust list/keys/inter-realm/sidhistory` | Domain trust attacks |
+| `adpack shadow ntds/ifm/parse` | NTDS.dit extraction |
+| `adpack gpo create/runkey/task/localadmin/find` | GPO abuse |
+| `adpack dpapi backupkey/masterkey/blob/vault/chrome/triage/credentials` | DPAPI decryption |
+| `adpack gmsa list/read` | gMSA account enumeration |
+| `adpack laps list` | LAPS password enumeration |
+| `adpack cred list/export/status/verify` | Credential inventory |
+| `adpack report html/md/json` | Engagement reports |
+| `adpack validate tools/config/setup` | Validation suite |
+| `adpack bloodhound collect` | BloodHound collection |
+| `adpack ingest` | Import tool output |
+| `adpack query` | Cypher queries |
+| `adpack phases/profiles/loot/reset` | Utility commands |
 
 ## Documentation
 

