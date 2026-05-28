@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"adpack/utils"
 )
 
 // PayloadDeployment is the canonical "drop a binary, run it, clean up" primitive
@@ -75,6 +77,11 @@ type DeploymentResult struct {
 func Deploy(ctx context.Context, target NetExecTarget, localPath, remoteDir, remoteName string) (remotePath, sha256hex string, err error) {
 	if localPath == "" {
 		return "", "", fmt.Errorf("Deploy: localPath required")
+	}
+	// Resolve through exe/ so callers can pass bare filenames like
+	// "UnDefend.exe" whether they sit in CWD or exe/.
+	if resolved := utils.ResolveLocalPath(localPath); resolved != "" {
+		localPath = resolved
 	}
 	if remoteDir == "" {
 		remoteDir = `C:\Windows\Temp\`

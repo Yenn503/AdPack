@@ -35,7 +35,11 @@ func (u unDefendTool) Run(ctx context.Context, req ExecutionRequest) (*Execution
 	if cfg.Kill {
 		args = []string{"--kill"}
 	}
-	r := utils.RunCommandCtx(ctx, cfg.Binary, args)
+	binary := cfg.Binary
+	if resolved := utils.ResolveLocalPath(binary); resolved != "" {
+		binary = resolved
+	}
+	r := utils.RunCommandCtx(ctx, binary, args)
 	if !r.Success {
 		return cmdResultToExecResult(r), &ToolError{Tool: "UnDefend", Op: "run", ExitCode: r.ExitCode, Err: fmt.Errorf("%s", r.Stderr)}
 	}

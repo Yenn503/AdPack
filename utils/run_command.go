@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -55,22 +56,51 @@ func RunCommandCtx(ctx context.Context, name string, args []string) CmdResult {
 	return r
 }
 
+// ResolveLocalPath finds a local artifact file by checking:
+//  1. CWD directly (name as-is)
+//  2. exe/ subdirectory of CWD
+//  3. exe/ subdirectory of the running adpack binary's location
+//
+// Returns the resolved path or empty string if not found anywhere.
+// Unlike FindTool/ToolAvailable this does NOT require the executable bit —
+// it works for DLLs and other non-executable payloads too.
+func ResolveLocalPath(name string) string {
+	if fi, err := os.Stat(name); err == nil && !fi.IsDir() {
+		return name
+	}
+	exePath := filepath.Join("exe", name)
+	if fi, err := os.Stat(exePath); err == nil && !fi.IsDir() {
+		return exePath
+	}
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		exePath2 := filepath.Join(exeDir, "exe", name)
+		if fi, err := os.Stat(exePath2); err == nil && !fi.IsDir() {
+			return exePath2
+		}
+	}
+	return ""
+}
+
 // FindTool returns the resolved path to `name` if it is executable, checking
-// PATH first and then the current working directory. A file that exists but
-// has no execute bit set (Unix) is treated as "not found" because invoking it
-// would yield a "permission denied" error at exec time, which is harder to
-// debug than a clean "not found" up front.
+// PATH first and then ResolveLocalPath. A file that exists but has no execute
+// bit set (Unix) is treated as "not found" because invoking it would yield a
+// "permission denied" error at exec time, which is harder to debug than a
+// clean "not found" up front.
 func FindTool(name string) (string, error) {
 	if p, err := exec.LookPath(name); err == nil {
 		return p, nil
 	}
-	// Fallback: a relative or absolute path that exists in CWD. We require the
-	// executable bit (mode & 0111) so e.g. a stray data file with the same
+	// Fallback: ResolveLocalPath which checks CWD, exe/CWD, and exe/bindir.
+	// We require the executable bit so e.g. a stray data file with the same
 	// basename as the tool isn't reported as "available".
-	if fi, err := os.Stat(name); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-		return name, nil
+	p := ResolveLocalPath(name)
+	if p != "" {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+			return p, nil
+		}
 	}
-	return "", fmt.Errorf("tool %s not found in PATH or not executable in CWD", name)
+	return "", fmt.Errorf("tool %s not found in PATH, CWD, or exe/", name)
 }
 
 // ToolAvailable mirrors FindTool but returns only a bool. Same executability
@@ -80,7 +110,11 @@ func ToolAvailable(name string) bool {
 	if _, err := exec.LookPath(name); err == nil {
 		return true
 	}
-	fi, err := os.Stat(name)
+	p := ResolveLocalPath(name)
+	if p == "" {
+		return false
+	}
+	fi, err := os.Stat(p)
 	if err != nil || fi.IsDir() {
 		return false
 	}

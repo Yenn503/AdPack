@@ -12,8 +12,10 @@ type nanodumpTool struct{}
 
 var Nanodump = nanodumpTool{}
 
-func (nanodumpTool) Name() string    { return "nanodump" }
-func (nanodumpTool) Available() bool { return utils.ToolAvailable("nanodump") }
+func (nanodumpTool) Name() string { return "nanodump" }
+func (nanodumpTool) Available() bool {
+	return utils.ToolAvailable("nanodump") || utils.ToolAvailable("nanodump.exe")
+}
 
 type NanodumpConfig struct {
 	Binary   string
@@ -39,7 +41,13 @@ func (n nanodumpTool) Run(ctx context.Context, req ExecutionRequest) (*Execution
 		args = append(args, "--werfault")
 	}
 	args = append(args, req.Args...)
-	cr := utils.RunCommandCtx(ctx, "nanodump", args)
+	binary := "nanodump"
+	if resolved := utils.ResolveLocalPath(binary); resolved != "" {
+		binary = resolved
+	} else if resolved := utils.ResolveLocalPath("nanodump.exe"); resolved != "" {
+		binary = resolved
+	}
+	cr := utils.RunCommandCtx(ctx, binary, args)
 	if !cr.Success {
 		return cmdResultToExecResult(cr), &ToolError{
 			Tool: "nanodump", Op: "Run",

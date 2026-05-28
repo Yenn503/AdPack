@@ -35,7 +35,11 @@ func (m miniPlasmaTool) Run(ctx context.Context, req ExecutionRequest) (*Executi
 	if cfg.Stage > 0 {
 		args = append(args, fmt.Sprintf("%d", cfg.Stage))
 	}
-	r := utils.RunCommandCtx(ctx, cfg.Binary, args)
+	binary := cfg.Binary
+	if resolved := utils.ResolveLocalPath(binary); resolved != "" {
+		binary = resolved
+	}
+	r := utils.RunCommandCtx(ctx, binary, args)
 	if !r.Success {
 		return cmdResultToExecResult(r), &ToolError{Tool: "MiniPlasma", Op: "run", ExitCode: r.ExitCode, Err: fmt.Errorf("%s", r.Stderr)}
 	}

@@ -205,10 +205,15 @@ install_donut() {
 
 # Install nanodump
 install_nanodump() {
+    local repo_root
+    repo_root="$(cd "$(dirname "$0")" && pwd)"
+    local exe_dir="$repo_root/exe"
+    mkdir -p "$exe_dir"
+    
     info "Checking nanodump installation..."
     
-    if [[ -f "$TOOLS_DIR/nanodump.exe" ]]; then
-        success "nanodump already installed"
+    if [[ -f "$exe_dir/nanodump.exe" ]]; then
+        success "nanodump already installed in exe/"
         return 0
     fi
     
@@ -220,8 +225,8 @@ install_nanodump() {
     # Build with MinGW
     if command -v x86_64-w64-mingw32-gcc &> /dev/null; then
         x86_64-w64-mingw32-gcc -o nanodump.exe source/nanodump.c -ldbghelp -s &>> "$LOG_FILE"
-        cp nanodump.exe "$TOOLS_DIR/"
-        success "nanodump built and installed"
+        cp nanodump.exe "$exe_dir/"
+        success "nanodump built and installed to exe/"
     else
         warn "MinGW not available. Skipping nanodump build."
         warn "You can build it manually on Windows or download a pre-compiled binary."
@@ -233,23 +238,44 @@ install_nanodump() {
 
 # Install go-mimikatz
 install_gomimikatz() {
+    local repo_root
+    repo_root="$(cd "$(dirname "$0")" && pwd)"
+    local exe_dir="$repo_root/exe"
+    mkdir -p "$exe_dir"
+    
     info "Checking go-mimikatz installation..."
     
-    if command -v go-mimikatz &> /dev/null; then
-        success "go-mimikatz already installed"
-        return 0
+    # Linux binary for local execution
+    if ! command -v go-mimikatz &> /dev/null; then
+        info "Building go-mimikatz (Linux binary for local use)..."
+        cd /tmp
+        git clone https://github.com/vyrus001/go-mimikatz.git &>> "$LOG_FILE"
+        cd go-mimikatz
+        go build -o go-mimikatz main.go &>> "$LOG_FILE"
+        sudo cp go-mimikatz /usr/local/bin/
+        cd /tmp
+        rm -rf go-mimikatz
+        success "go-mimikatz (Linux) installed to /usr/local/bin/"
+    else
+        info "go-mimikatz (Linux) already on PATH"
     fi
     
-    info "Building go-mimikatz..."
-    cd /tmp
-    git clone https://github.com/vyrus001/go-mimikatz.git &>> "$LOG_FILE"
-    cd go-mimikatz
-    go build -o go-mimikatz main.go &>> "$LOG_FILE"
-    sudo cp go-mimikatz /usr/local/bin/
-    cd /tmp
-    rm -rf go-mimikatz
-    
-    success "go-mimikatz installed"
+    # Windows PE for remote SMB deployment
+    if [[ ! -f "$exe_dir/go-mimikatz.exe" ]]; then
+        info "Cross-compiling go-mimikatz.exe (Windows PE for SMB deploy)..."
+        cd /tmp
+        if [[ ! -d go-mimikatz ]]; then
+            git clone https://github.com/vyrus001/go-mimikatz.git &>> "$LOG_FILE"
+        fi
+        cd go-mimikatz
+        GOOS=windows GOARCH=amd64 go build -o go-mimikatz.exe main.go &>> "$LOG_FILE"
+        cp go-mimikatz.exe "$exe_dir/"
+        cd /tmp
+        rm -rf go-mimikatz
+        success "go-mimikatz.exe built and installed to exe/"
+    else
+        info "go-mimikatz.exe already in exe/"
+    fi
 }
 
 # Install pypykatz
@@ -290,10 +316,15 @@ install_scarecrow() {
 
 # Install SweetPotato
 install_sweetpotato() {
+    local repo_root
+    repo_root="$(cd "$(dirname "$0")" && pwd)"
+    local exe_dir="$repo_root/exe"
+    mkdir -p "$exe_dir"
+    
     info "Checking SweetPotato installation..."
     
-    if [[ -f "$TOOLS_DIR/SweetPotato.exe" ]]; then
-        success "SweetPotato already installed"
+    if [[ -f "$exe_dir/SweetPotato.exe" ]]; then
+        success "SweetPotato already installed in exe/"
         return 0
     fi
     
@@ -304,157 +335,40 @@ install_sweetpotato() {
     
     # Build with msbuild if available, otherwise download release
     if command -v msbuild &> /dev/null || command -v xbuild &> /dev/null; then
-        # Try to build with mono
         if command -v msbuild &> /dev/null; then
             msbuild SweetPotato.sln /p:Configuration=Release &>> "$LOG_FILE"
-            cp bin/Release/SweetPotato.exe "$TOOLS_DIR/" 2>/dev/null || true
+            cp bin/Release/SweetPotato.exe "$exe_dir/" 2>/dev/null || true
         fi
     fi
     
     # If build failed or not available, download from releases
-    if [[ ! -f "$TOOLS_DIR/SweetPotato.exe" ]]; then
+    if [[ ! -f "$exe_dir/SweetPotato.exe" ]]; then
         info "Downloading SweetPotato from releases..."
-        wget -q https://github.com/CCob/SweetPotato/releases/latest/download/SweetPotato.exe -O "$TOOLS_DIR/SweetPotato.exe" 2>/dev/null || \
+        wget -q https://github.com/CCob/SweetPotato/releases/latest/download/SweetPotato.exe -O "$exe_dir/SweetPotato.exe" 2>/dev/null || \
         warn "Could not download SweetPotato. You may need to build it manually on Windows."
     fi
     
     cd /tmp
     rm -rf SweetPotato
     
-    if [[ -f "$TOOLS_DIR/SweetPotato.exe" ]]; then
-        success "SweetPotato installed"
+    if [[ -f "$exe_dir/SweetPotato.exe" ]]; then
+        success "SweetPotato installed in exe/"
     else
         warn "SweetPotato not installed. Build manually if needed."
     fi
 }
 
-# Install UnDefend
-install_undefend() {
-    info "Checking UnDefend installation..."
-    
-    if [[ -f "$TOOLS_DIR/UnDefend.exe" ]]; then
-        success "UnDefend already installed"
-        return 0
-    fi
-    
-    info "Cloning UnDefend..."
-    cd /tmp
-    
-    if ! git clone https://github.com/Nightmare-Eclipse/UnDefend.git &>> "$LOG_FILE"; then
-        warn "Could not clone UnDefend. Skipping."
-        warn "Place pre-built UnDefend.exe at $TOOLS_DIR/UnDefend.exe"
-        return 1
-    fi
-    
-    cd UnDefend
-    
-    # Cross-compile with MinGW
-    if command -v x86_64-w64-mingw32-g++ &> /dev/null; then
-        info "Cross-compiling UnDefend.exe with MinGW..."
-        x86_64-w64-mingw32-g++ -DUNICODE -D_UNICODE UnDefend.cpp \
-            -o "$TOOLS_DIR/UnDefend.exe" \
-            -static -lshlwapi -lole32 -loleaut32 -luser32 \
-            -static-libgcc -static-libstdc++ &>> "$LOG_FILE"
-    fi
-    
-    cd /tmp
-    rm -rf UnDefend
-    
-    if [[ -f "$TOOLS_DIR/UnDefend.exe" ]]; then
-        success "UnDefend cross-compiled and installed"
-    else
-        warn "UnDefend MinGW build failed (missing SERVICE_NOTIFY_2W in MinGW headers)."
-        warn "Build on Windows with Visual Studio and copy to $TOOLS_DIR/UnDefend.exe"
-    fi
-}
-
-# Install BlueHammer
-install_bluehammer() {
-    info "Checking BlueHammer installation..."
-    
-    if [[ -f "$TOOLS_DIR/FunnyApp.exe" ]] || [[ -f "$TOOLS_DIR/BlueHammer.exe" ]]; then
-        success "BlueHammer already installed"
-        return 0
-    fi
-    
-    info "Cloning BlueHammer..."
-    cd /tmp
-    
-    if git clone https://github.com/Nightmare-Eclipse/BlueHammer.git &>> "$LOG_FILE"; then
-        cd BlueHammer
-        info "BlueHammer source cloned (requires Visual Studio 2022 on Windows to build)"
-        warn "BlueHammer is a 3313-line MSVC project with RPC IDL, cfapi.h, Windows Update Agent COM."
-        warn "Cannot cross-compile from Linux. Build on Windows:"
-        warn "  1. Open FunnyApp.sln in Visual Studio 2022"
-        warn "  2. Build Release x64"
-        warn "  3. Copy FunnyApp.exe to $TOOLS_DIR/"
-        cd /tmp
-        rm -rf BlueHammer
-    else
-        warn "Could not clone BlueHammer. Skipping."
-    fi
-    
-    if [[ -f "$TOOLS_DIR/FunnyApp.exe" ]]; then
-        success "BlueHammer installed"
-    else
-        warn "BlueHammer not built. Clone and build on Windows with VS 2022."
-    fi
-}
-
-# Install PhantomKiller
-install_phantomkiller() {
-    info "Checking PhantomKiller installation..."
-    
-    if [[ -f "$TOOLS_DIR/PhantomKiller.exe" ]] && [[ -f "$TOOLS_DIR/PhantomKiller.sys" ]]; then
-        success "PhantomKiller already installed"
-        return 0
-    fi
-    
-    info "Downloading PhantomKiller from GitHub release..."
-    cd /tmp
-    
-    wget -q "https://github.com/redteamfortress/PhantomKiller/releases/download/v1.0.0/PhantomKiller.zip" \
-        -O PhantomKiller.zip &>> "$LOG_FILE"
-    
-    if [[ -f "PhantomKiller.zip" ]] && [[ -s "PhantomKiller.zip" ]]; then
-        unzip -o PhantomKiller.zip &>> "$LOG_FILE"
-        cp PhantomKiller.exe "$TOOLS_DIR/" 2>/dev/null || true
-        cp PhantomKiller.sys "$TOOLS_DIR/" 2>/dev/null || true
-        rm -f PhantomKiller.zip
-        # Copy any other extracted files (BootRepair.sys etc.)
-        for f in *.exe *.sys; do
-            [[ -f "$f" ]] && cp "$f" "$TOOLS_DIR/" 2>/dev/null || true
-        done
-    else
-        # Fallback: try cloning and building
-        info "Release download failed, attempting build from source..."
-        if git clone https://github.com/redteamfortress/PhantomKiller.git &>> "$LOG_FILE"; then
-            cd PhantomKiller
-            if [[ -f "build.sh" ]]; then
-                bash build.sh &>> "$LOG_FILE"
-            fi
-            cp PhantomKiller.exe "$TOOLS_DIR/" 2>/dev/null || true
-            cp *.sys "$TOOLS_DIR/" 2>/dev/null || true
-            cd /tmp
-            rm -rf PhantomKiller
-        else
-            warn "Could not clone PhantomKiller."
-        fi
-    fi
-    
-    if [[ -f "$TOOLS_DIR/PhantomKiller.exe" ]]; then
-        success "PhantomKiller installed ($(ls -lh "$TOOLS_DIR/PhantomKiller.exe" | awk '{print $5}'))"
-    else
-        warn "PhantomKiller not installed. Download from GitHub releases or build manually."
-    fi
-}
-
 # Install MiniPlasma
 install_miniplasma() {
+    local repo_root
+    repo_root="$(cd "$(dirname "$0")" && pwd)"
+    local exe_dir="$repo_root/exe"
+    mkdir -p "$exe_dir"
+    
     info "Checking MiniPlasma installation..."
     
-    if [[ -f "$TOOLS_DIR/MiniPlasma.exe" ]]; then
-        success "MiniPlasma already installed"
+    if [[ -f "$exe_dir/MiniPlasma.exe" ]]; then
+        success "MiniPlasma already installed in exe/"
         return 0
     fi
     
@@ -465,7 +379,7 @@ install_miniplasma() {
         -O MiniPlasma.exe &>> "$LOG_FILE"
     
     if [[ -f "MiniPlasma.exe" ]] && [[ -s "MiniPlasma.exe" ]]; then
-        cp MiniPlasma.exe "$TOOLS_DIR/"
+        cp MiniPlasma.exe "$exe_dir/"
     else
         # Fallback: try building from source with mcs
         info "Release download failed, attempting build from source..."
@@ -474,7 +388,7 @@ install_miniplasma() {
             if command -v mcs &> /dev/null; then
                 mcs -out:MiniPlasma.exe -reference:System.ServiceProcess.dll \
                     Program.cs &>> "$LOG_FILE" && \
-                cp MiniPlasma.exe "$TOOLS_DIR/" 2>/dev/null || true
+                cp MiniPlasma.exe "$exe_dir/" 2>/dev/null || true
             fi
             cd /tmp
             rm -rf MiniPlasma
@@ -485,8 +399,8 @@ install_miniplasma() {
     
     rm -f /tmp/MiniPlasma.exe
     
-    if [[ -f "$TOOLS_DIR/MiniPlasma.exe" ]]; then
-        success "MiniPlasma installed ($(ls -lh "$TOOLS_DIR/MiniPlasma.exe" | awk '{print $5}'))"
+    if [[ -f "$exe_dir/MiniPlasma.exe" ]]; then
+        success "MiniPlasma installed in exe/ ($(ls -lh "$exe_dir/MiniPlasma.exe" | awk '{print $5}'))"
     else
         warn "MiniPlasma not installed. Download from GitHub releases or build with .NET."
     fi
@@ -542,6 +456,9 @@ EOF
 update_path() {
     info "Updating PATH in shell configuration..."
     
+    local repo_root
+    repo_root="$(cd "$(dirname "$0")" && pwd)"
+    
     SHELL_RC="$HOME/.bashrc"
     if [[ -f "$HOME/.zshrc" ]]; then
         SHELL_RC="$HOME/.zshrc"
@@ -554,6 +471,11 @@ update_path() {
     
     if ! grep -q '$HOME/go/bin' "$SHELL_RC"; then
         echo 'export PATH=$PATH:$HOME/go/bin' >> "$SHELL_RC"
+    fi
+    
+    # Add repo exe/ to PATH (bundled Windows PE tools)
+    if ! grep -q "$repo_root/exe" "$SHELL_RC"; then
+        echo "export PATH=\$PATH:$repo_root/exe" >> "$SHELL_RC"
     fi
     
     # Add tools directory to PATH
@@ -623,41 +545,51 @@ verify_installations() {
         warn "ScareCrow: NOT FOUND (optional)"
     fi
     
-    # Windows binaries
-    if [[ -f "$TOOLS_DIR/nanodump.exe" ]]; then
-        success "nanodump: $TOOLS_DIR/nanodump.exe"
+    # Windows binaries in exe/
+    local repo_root
+    repo_root="$(cd "$(dirname "$0")" && pwd)"
+    local exe_dir="$repo_root/exe"
+    
+    if [[ -f "$exe_dir/nanodump.exe" ]]; then
+        success "nanodump: $exe_dir/nanodump.exe"
     else
-        warn "nanodump: NOT FOUND (optional)"
+        warn "nanodump: NOT FOUND in exe/ (optional)"
     fi
     
-    if [[ -f "$TOOLS_DIR/SweetPotato.exe" ]]; then
-        success "SweetPotato: $TOOLS_DIR/SweetPotato.exe"
+    if [[ -f "$exe_dir/go-mimikatz.exe" ]]; then
+        success "go-mimikatz: $exe_dir/go-mimikatz.exe"
     else
-        warn "SweetPotato: NOT FOUND (optional)"
+        warn "go-mimikatz: NOT FOUND in exe/ (optional)"
     fi
     
-    if [[ -f "$TOOLS_DIR/UnDefend.exe" ]]; then
-        success "UnDefend: $TOOLS_DIR/UnDefend.exe"
+    if [[ -f "$exe_dir/MiniPlasma.exe" ]]; then
+        success "MiniPlasma: $exe_dir/MiniPlasma.exe"
     else
-        warn "UnDefend: NOT FOUND (build manually if needed)"
+        warn "MiniPlasma: NOT FOUND in exe/ (optional)"
     fi
     
-    if [[ -f "$TOOLS_DIR/FunnyApp.exe" ]]; then
-        success "BlueHammer: $TOOLS_DIR/FunnyApp.exe"
+    if [[ -f "$exe_dir/SweetPotato.exe" ]]; then
+        success "SweetPotato: $exe_dir/SweetPotato.exe"
     else
-        warn "BlueHammer: NOT FOUND (build manually if needed)"
+        warn "SweetPotato: NOT FOUND in exe/ (optional)"
     fi
     
-    if [[ -f "$TOOLS_DIR/PhantomKiller.exe" ]]; then
-        success "PhantomKiller: $TOOLS_DIR/PhantomKiller.exe"
+    if [[ -f "$exe_dir/PrintSpoofer64.exe" ]]; then
+        success "PrintSpoofer64: $exe_dir/PrintSpoofer64.exe"
     else
-        warn "PhantomKiller: NOT FOUND (build manually if needed)"
+        warn "PrintSpoofer64: NOT FOUND in exe/ (optional)"
     fi
     
-    if [[ -f "$TOOLS_DIR/MiniPlasma.exe" ]]; then
-        success "MiniPlasma: $TOOLS_DIR/MiniPlasma.exe"
+    if [[ -f "$exe_dir/UnDefend.exe" ]]; then
+        success "UnDefend: $exe_dir/UnDefend.exe"
     else
-        warn "MiniPlasma: NOT FOUND (build manually if needed)"
+        warn "UnDefend: NOT FOUND in exe/ (place your private build here)"
+    fi
+    
+    if [[ -f "$exe_dir/NtApiDotNet.dll" ]] && [[ -f "$exe_dir/Microsoft.Win32.TaskScheduler.dll" ]]; then
+        success "MiniPlasma DLLs: present in exe/"
+    else
+        warn "MiniPlasma DLLs: NOT FOUND in exe/ (needed for MiniPlasma EoP)"
     fi
     
     echo ""
@@ -701,9 +633,9 @@ print_summary() {
     echo -e "  • Use disk encryption and protect the key file for sensitive engagements"
     echo ""
     echo -e "${BLUE}Windows Binaries:${NC}"
-    echo -e "  • Some tools require Windows to build (UnDefend, BlueHammer, etc.)"
-    echo -e "  • Check ${YELLOW}$TOOLS_DIR/${NC} for installed binaries"
-    echo -e "  • Build missing tools manually if needed"
+    echo -e "  • Bundled in ${YELLOW}exe/${NC} directory (checked into repo)"
+    echo -e "  • UnDefend.exe is PRIVATE — place your build in ${YELLOW}exe/UnDefend.exe${NC}"
+    echo -e "  • Build missing tools manually or copy pre-built exes to ${YELLOW}exe/${NC}"
     echo ""
     echo -e "${BLUE}Documentation:${NC}"
     echo -e "  • README.md - Quick start guide"
@@ -731,9 +663,6 @@ main() {
     install_gomimikatz
     install_pypykatz
     install_scarecrow
-    install_undefend
-    install_bluehammer
-    install_phantomkiller
     install_miniplasma
     build_adpack
     create_config
