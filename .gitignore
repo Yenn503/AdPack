@@ -10,10 +10,6 @@ adpack_v030dev
 *.bin
 bin/
 
-# Track needed tool binaries under exe/ (pipeline + privesc deploy via SMB)
-!exe/*.exe
-!exe/*.dll
-
 # Database files
 *.db
 *.db-wal
