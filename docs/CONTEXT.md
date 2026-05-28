@@ -38,8 +38,8 @@ Actual dependency rules from code:
 - **persistence**: depends on credential_acq + privesc
 
 ## Evasion Profiles
-13 profiles: minimal, standard, aggressive, bypass, bof, fork, byovd, coldwer, undefend, bluehammer, phantomkiller, miniplasma, custom
-Each selects delivery (donut/bof/exe) + optional pre-conditions (Defender kill, EDR freeze, kernel driver). `BaseProfileFor(name)` collapses a tactic profile back to its operating posture (minimal / standard / aggressive / bypass / custom).
+3 profiles: standard, bypass, custom
+Each selects delivery (donut/exe) + optional pre-condition (Defender kill via UnDefend).
 
 ## Tool Ecosystem
 | Tool | Role |
@@ -49,11 +49,6 @@ Each selects delivery (donut/bof/exe) + optional pre-conditions (Defender kill, 
 | go-mimikatz | Go port of mimikatz for sekurlsa::logonpasswords, dcsync (requires Windows build; falls back to nanodump+pypykatz) |
 | pypykatz | Offline LSASS dump parsing |
 | UnDefend | Defender kill — aggressive mode (--kill) runs automatically after SYSTEM access |
-| BlueHammer | Defender RPC exploit for SAM hive leak via VSS |
-| EDR-Freeze | WerFaultSecure PPL bypass to freeze EDR processes |
-| PhantomKiller | Lenovo BootRepair.sys BYOVD — IOCTL-based EDR process termination |
-| MiniPlasma | Cloud Filter API race (CVE-2020-17103) → SYSTEM shell |
-| PrintSpoofer64 | Named pipe impersonation for SeImpersonate → SYSTEM (download via certutil + xp_cmdshell) |
 | impacket-secretsdump | DRSUAPI dump for Golden Ticket forge + DCSync |
 | impacket-ticketer | Forge TGTs given krbtgt hash + Domain SID |
 | impacket-dacledit | Native LDAP DACL write for AdminSDHolder backdoor |

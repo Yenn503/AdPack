@@ -2,6 +2,8 @@ package modules
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"adpack/core"
 )
@@ -11,6 +13,26 @@ var ExecutorFactory core.ExecutorFactory = func(_ core.HostRef, _, _, _, _ strin
 		return core.ActionResult{Success: false, Error: "executor not configured"}
 	})
 }
+
+var TransportFactory func(target core.HostRef, domain, user, pass, hash string) core.Transport = func(_ core.HostRef, _, _, _, _ string) core.Transport {
+	return noopTransport{}
+}
+
+type noopTransport struct{}
+
+func (noopTransport) Exec(_ context.Context, _ core.HostRef, _ string, _ time.Duration) core.ExecResult {
+	return core.ExecResult{Error: "transport not configured"}
+}
+
+func (noopTransport) Upload(_ context.Context, _ core.HostRef, _ []byte, _, _ string) (string, error) {
+	return "", fmt.Errorf("transport not configured")
+}
+
+func (noopTransport) Download(_ context.Context, _ core.HostRef, _ string) ([]byte, error) {
+	return nil, fmt.Errorf("transport not configured")
+}
+
+func (noopTransport) Type() string { return "noop" }
 
 // RuntimeFactory is injected by cmd/ to provide a RuntimeProvider for modules.
 // If nil, runtime-dependent features are skipped (headless/offline mode).

@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.3.0 — Production Hardening & Profile Simplification
+
+### Evasion Profiles Simplified
+- Cut from 7 tactic profiles to 3 base profiles: standard, bypass, custom
+- Removed: minimal, aggressive, nanodump, pplshade, edrfreeze, undefend, phantomkiller, dcsync
+- All credential acquisition now routes through mimikatz or UnDefend pre-condition
+- Dead tool wrappers removed (bluehammer.go, pplshade.go)
+
+### SOCKS5 Proxy Transport
+- New `internal/transport/proxy` for routing through C2 implants via proxychains4
+- Configurable via `proxy_address` in config.yaml or `ADPACK_PROXY` env var
+- Local transport unchanged; proxy transport wraps it transparently
+
+### Timing Controls
+- New `core.TimingConfig` with DelayMs, Jitter, MaxConcurrent fields
+- Configurable in config.yaml under `timing:` section
+- `Jitter` adds random variation for opsec-safe timing
+
+### TUI Improvements
+- Added computers count to status bar
+- Top privilege edges summary table
+- Running phase warning indicator
+- Color-coded phase statuses
+- Autorun key (`a`) for one-key full chain
+- Error state display
+- Dynamic header with timestamp
+
 ## v0.3.0 — Kill Chain Hardening, AV Evasion, Output Beautification
 
 ### Kill Chain Fixes

@@ -434,7 +434,7 @@ func isNumberOnly(s string) bool {
 
 // adcsEdgeSet creates PrivilegeEdges from a parsed ADCSTemplate.
 // One edge per ESC vulnerability per unique enrollment principal.
-func adcsEdgeSet(t core.ADCSTemplate, domain, caHost string, caWeb bool) []core.PrivilegeEdge {
+func adcsEdgeSet(t core.ADCSTemplate, domain, caHost string, _ bool) []core.PrivilegeEdge {
 	if !t.Enabled || t.Vuln == "" {
 		return nil
 	}

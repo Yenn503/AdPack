@@ -115,7 +115,7 @@ func TestVerify_State_integrationSignature(t *testing.T) {
 	// This will fail because ldapsearch isn't available in test env,
 	// but it should return a structured result, not panic.
 	ctx := t.Context()
-	result := VerifyState(ctx, edge, cap, "sevenkingdoms.local", "Administrator", "pass", "192.168.57.10")
+	result := VerifyState(ctx, edge, cap, "sevenkingdoms.local", "Administrator", "pass", "", "192.168.57.10")
 
 	if result.Evidence == "" {
 		t.Fatal("expected non-empty evidence even on failure")
@@ -127,11 +127,11 @@ func TestVerify_State_integrationSignature(t *testing.T) {
 func TestVerify_UnknownCap_defaultPass(t *testing.T) {
 	edge := core.PrivilegeEdge{}
 	ctx := t.Context()
-	result := VerifyState(ctx, edge, core.Capability("DCSYNC"), "d", "u", "p", "1.2.3.4")
+	result := VerifyState(ctx, edge, core.Capability("DCSYNC"), "d", "u", "p", "", "1.2.3.4")
 	if !result.Passed {
 		t.Fatal("expected DCSYNC to default-pass (tool output verified)")
 	}
-	result = VerifyState(ctx, edge, core.Capability("CERT_AUTH"), "d", "u", "p", "1.2.3.4")
+	result = VerifyState(ctx, edge, core.Capability("CERT_AUTH"), "d", "u", "p", "", "1.2.3.4")
 	if !result.Passed {
 		t.Fatal("expected CERT_AUTH to default-pass (tool output verified)")
 	}

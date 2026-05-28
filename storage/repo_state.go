@@ -625,7 +625,7 @@ func boolInt(b bool) int {
 }
 
 func (db *DB) ResetPhase(p core.Phase) error {
-	_, err := db.Exec(`INSERT INTO phase_status(phase,status) VALUES(?,0) ON CONFLICT(phase) DO UPDATE SET status=0`, string(p))
+	_, err := db.Exec(`INSERT INTO phase_status(phase,status,skip_reason) VALUES(?,0,'') ON CONFLICT(phase) DO UPDATE SET status=0,skip_reason=''`, string(p))
 	return err
 }
 

@@ -9,7 +9,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var bhOutputDir string
+var (
+	bhOutputDir     string
+	bhCollectDomain string
+	bhCollectUser   string
+	bhCollectPass   string
+	bhCollectDC     string
+)
 
 var bloodHoundCmd = &cobra.Command{
 	Use:   "bloodhound",
@@ -21,21 +27,40 @@ var bhCollectCmd = &cobra.Command{
 	Use:   "collect",
 	Short: "Run bloodhound-python collection",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		domain, user, pass, _ := getCreds()
+		domain := bhCollectDomain
+		user := bhCollectUser
+		pass := bhCollectPass
+		dc := bhCollectDC
+
+		if domain == "" || user == "" || pass == "" {
+			d, u, p, _ := getCreds()
+			if domain == "" {
+				domain = d
+			}
+			if user == "" {
+				user = u
+			}
+			if pass == "" {
+				pass = p
+			}
+		}
 		if domain == "" || user == "" {
 			return fmt.Errorf("credentials required: set --domain, --user, --password")
+		}
+		if dc == "" {
+			dc = domain
 		}
 		if bhOutputDir == "" {
 			bhOutputDir = filepath.Join(os.TempDir(), "bloodhound")
 		}
 		os.MkdirAll(bhOutputDir, 0755)
 
-		fmt.Printf("[*] Running bloodhound-python against %s...\n", domain)
+		fmt.Printf("[*] Running bloodhound-python against %s (DC: %s)...\n", domain, dc)
 		r := utils.RunCommand("bloodhound-python",
 			"-d", domain,
 			"-u", user,
 			"-p", pass,
-			"-dc", domain,
+			"-dc", dc,
 			"-c", "All",
 			"--zip",
 			"--outputdir", bhOutputDir,
@@ -68,12 +93,12 @@ func getCreds() (string, string, string, string) {
 func init() {
 	rootCmd.AddCommand(bloodHoundCmd)
 	bloodHoundCmd.AddCommand(bhCollectCmd)
-	bhCollectCmd.Flags().StringVarP(&targetHost, "domain", "d", "", "Target domain")
-	bhCollectCmd.Flags().StringVarP(&evasionProfile, "user", "u", "", "Username")
-	bhCollectCmd.Flags().StringVar(&bhOutputDir, "output", "", "Output directory")
-	bhCollectCmd.Flags().StringVar(&targetHost, "dc", "", "DC host")
+	bhCollectCmd.Flags().StringVarP(&bhCollectDomain, "domain", "d", "", "Target domain")
+	bhCollectCmd.Flags().StringVarP(&bhCollectUser, "user", "u", "", "Username")
+	bhCollectCmd.Flags().StringVarP(&bhCollectPass, "password", "p", "", "Password")
+	bhCollectCmd.Flags().StringVar(&bhCollectDC, "dc", "", "Domain controller hostname (default: same as domain)")
+	bhCollectCmd.Flags().StringVar(&bhOutputDir, "output", "", "Output directory (default: temp dir)")
 
-	// Also register as subcommand of query
 	queryCmd.AddCommand(&cobra.Command{
 		Use:   "run-bh",
 		Short: "Collect BloodHound data and update DB",

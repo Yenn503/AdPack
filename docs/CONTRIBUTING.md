@@ -26,14 +26,21 @@ Guidelines for contributing code, docs, and bug reports.
 
 ```
 adpack/
-├── cmd/           # CLI commands (one file per command)
-├── core/          # Domain models, interfaces (EventBus, provider, identity, evidence)
-├── modules/       # Attack phase implementations + provider layer
-├── tools/         # External tool wrappers (NetExec, nanodump, deploy)
-├── storage/       # Database layer (SQLite, migrations, event persistence)
-├── utils/         # Shared utilities (command runner, theme, config)
-├── tui/           # Interactive bubbletea dashboard
-└── config/        # Configuration management
+├── cmd/                    # CLI commands (one file per command)
+├── core/                   # Domain models, interfaces (Transport, provider, identity)
+├── modules/                # Attack phase implementations + provider layer
+├── tools/                  # External tool wrappers (NetExec, nanodump, deploy)
+├── storage/                # Database layer (SQLite, migrations, event persistence)
+├── utils/                  # Shared utilities (command runner, theme, config)
+├── tui/                    # Interactive bubbletea dashboard
+├── config/                 # Configuration loading
+├── internal/
+│   ├── cracker/            # Hash cracking pipeline (queue, worker, materializer)
+│   ├── executorbackend/    # Capability executors (ADCS, DCSync, RBCD, etc.)
+│   ├── resolver/           # Artifact resolution pipeline (cert, shadowcred)
+│   ├── runtime/            # Managed services (Responder, Relay, Coercer)
+│   └── transport/          # Transport implementations (local SMB/WMI/WinRM)
+└── planner/                # Attack path planning (Dijkstra over edge graph)
 ```
 
 ## Adding Features

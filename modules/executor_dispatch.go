@@ -3,6 +3,8 @@ package modules
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -14,6 +16,12 @@ import (
 	"adpack/core"
 	"adpack/tools"
 )
+
+func randomPass() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return "Chngd_" + hex.EncodeToString(b)
+}
 
 // HashCred represents a captured hash credential with its type for hashcat.
 type HashCred struct {
@@ -86,12 +94,13 @@ func ParseNTLMOutput(stdout string) []HashCred {
 // DispatchResult wraps the output of a real tool execution alongside the
 // executor's predicted delta, ready for reconciliation.
 type DispatchResult struct {
-	ToolOutput string
-	ExitCode   int
-	Predicted  core.ExecutionResult
-	Capability core.Capability
-	Edge       core.PrivilegeEdge
-	Hashes     []HashCred
+	ToolOutput    string
+	ExitCode      int
+	Predicted     core.ExecutionResult
+	Capability    core.Capability
+	Edge          core.PrivilegeEdge
+	Hashes        []HashCred
+	GeneratedPass string // popuplated for force_change_password
 }
 
 // ExecuteAndReconcile runs the real tool for a given capability on an edge,
@@ -133,7 +142,7 @@ func ExecuteAndReconcile(ctx context.Context, edge core.PrivilegeEdge, cap core.
 	}
 
 	// Phase 2: State-grounded LDAP verification (confidence signal)
-	stateResult := VerifyState(ctx, edge, cap, domain, user, pass, targetIP)
+	stateResult := VerifyState(ctx, edge, cap, domain, user, pass, dr.GeneratedPass, targetIP)
 	if !stateResult.Passed {
 		// Degrade confidence on all predicted edges rather than blocking
 		for i := range predicted.Delta.NewEdges {
@@ -178,6 +187,15 @@ func dispatchTool(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 		defer cleanup()
 	}
 
+	capLower := strings.ToLower(string(cap))
+	generatedPass := ""
+	if strings.Contains(capLower, "force_change_password") {
+		generatedPass = randomPass()
+		if len(cmd.Args) > 0 {
+			cmd.Args[len(cmd.Args)-1] = generatedPass
+		}
+	}
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -218,7 +236,6 @@ func dispatchTool(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 
 	// Parse hashes from output based on capability
 	var hashes []HashCred
-	capLower := strings.ToLower(string(cap))
 	switch {
 	case strings.Contains(capLower, "kerberoast"):
 		hashes = ParseKerberoastOutput(output)
@@ -236,12 +253,13 @@ func dispatchTool(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 	}
 
 	return DispatchResult{
-		ToolOutput: output,
-		ExitCode:   exitCode,
-		Predicted:  predicted,
-		Capability: cap,
-		Edge:       edge,
-		Hashes:     hashes,
+		ToolOutput:    output,
+		ExitCode:      exitCode,
+		Predicted:     predicted,
+		Capability:    cap,
+		Edge:          edge,
+		Hashes:        hashes,
+		GeneratedPass: generatedPass,
 	}, nil
 }
 

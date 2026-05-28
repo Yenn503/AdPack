@@ -316,22 +316,24 @@ const (
 )
 
 type ADState struct {
-	Hosts       []Host                  `json:"hosts"`
-	Users       []User                  `json:"users"`
-	Groups      []Group                 `json:"groups"`
-	Computers   []Computer              `json:"computers"`
-	Sessions    []Session               `json:"sessions"`
-	Creds       []Credential            `json:"creds"`
-	GPOs        []GPO                   `json:"gpos"`
-	ADCS        []ADCSTemplate          `json:"adcs"`
-	Edges       []PrivilegeEdge         `json:"edges"`
-	EdgeEvents  map[EdgeKey][]EdgeEvent `json:"edge_events,omitempty"`
-	BH          BloodhoundMeta          `json:"bloodhound"`
-	Exec        ExecutionState          `json:"exec"`
-	Runtime     RuntimeState            `json:"runtime"`
-	Mutation    StateMutation           `json:"mutation"`
-	Phases      map[Phase]PhaseStatus   `json:"phases"`
-	SkipReasons map[Phase]SkipReason    `json:"skip_reasons,omitempty"`
+	Hosts           []Host                    `json:"hosts"`
+	Users           []User                    `json:"users"`
+	Groups          []Group                   `json:"groups"`
+	Computers       []Computer                `json:"computers"`
+	Sessions        []Session                 `json:"sessions"`
+	Creds           []Credential              `json:"creds"`
+	GPOs            []GPO                     `json:"gpos"`
+	ADCS            []ADCSTemplate            `json:"adcs"`
+	Edges           []PrivilegeEdge           `json:"edges"`
+	EdgeEvents      map[EdgeKey][]EdgeEvent   `json:"edge_events,omitempty"`
+	BH              BloodhoundMeta            `json:"bloodhound"`
+	Exec            ExecutionState            `json:"exec"`
+	Runtime         RuntimeState              `json:"runtime"`
+	Mutation        StateMutation             `json:"mutation"`
+	Phases          map[Phase]PhaseStatus     `json:"phases"`
+	SkipReasons     map[Phase]SkipReason      `json:"skip_reasons,omitempty"`
+	Scope           []string                  `json:"scope,omitempty"`
+	PhaseExecutions map[Phase]*PhaseExecution `json:"phase_executions,omitempty"`
 }
 
 type Gap struct {
@@ -425,9 +427,10 @@ func (s *ADState) NextPhase() *Phase {
 
 func NewADState() *ADState {
 	return &ADState{
-		Phases:      make(map[Phase]PhaseStatus),
-		SkipReasons: make(map[Phase]SkipReason),
-		EdgeEvents:  make(map[EdgeKey][]EdgeEvent),
+		Phases:          make(map[Phase]PhaseStatus),
+		SkipReasons:     make(map[Phase]SkipReason),
+		EdgeEvents:      make(map[EdgeKey][]EdgeEvent),
+		PhaseExecutions: make(map[Phase]*PhaseExecution),
 	}
 }
 

@@ -1,7 +1,5 @@
 # adpack Usage Guide
 
-Usage guide for adpack.
-
 ## Table of Contents
 
 - [Installation](#installation)
@@ -14,7 +12,7 @@ Usage guide for adpack.
 
 ## Installation
 
-### ⚫ Automated Setup
+### Automated Setup
 
 Run `./setup.sh` to install everything:
 
@@ -26,9 +24,7 @@ chmod +x setup.sh
 source ~/.bashrc
 ```
 
-Installs deps, builds tools, configures environment.
-
-### ⚪ Prerequisites
+### Prerequisites
 
 ```bash
 # Install Go 1.25+
@@ -45,7 +41,7 @@ pipx install netexec
 # go-mimikatz: https://github.com/vyrus001/go-mimikatz
 ```
 
-### ⚫ Build
+### Build
 
 ```bash
 git clone https://github.com/Yenn503/adpack.git
@@ -54,7 +50,7 @@ go build -o adpack .
 sudo mv adpack /usr/local/bin/
 ```
 
-### ⚪ Verify
+### Verify
 
 ```bash
 adpack version
@@ -63,28 +59,43 @@ adpack status
 
 ## Configuration
 
-### ⚫ Default Config
+### Default Config
 
-adpack works without config. State stored in `~/.adpack/state.db`.
+adpack works without a config file. State is stored in `~/.adpack/state.db`.
 
-### ⚪ Custom Config
+### Custom Config
 
-Create `~/.adpack/config.yaml`:
+Create `~/.adpack/config.yaml`. See [config.example.yaml](../config.example.yaml) for all options:
 
 ```yaml
-# Database location
-db_path: "~/.adpack/state.db"
-
-# Tool paths (auto-detected if in PATH)
+db_path: ""
+nmap_args: ["-T4", "-sn"]
 nxc_path: "netexec"
 bh_python: "bloodhound-python"
 
-# Viper (Neo4j) connection for BloodHound queries
+cracking:
+  hashcat_path: "/usr/bin/hashcat"
+  wordlist: "/usr/share/wordlists/rockyou.txt"
+  rules: ["/usr/share/hashcat/rules/best64.rule"]
+  timeout_seconds: 600
+
 viper:
   enabled: false
   host: "localhost"
   port: 7687
 ```
+
+### Scope Enforcement
+
+Add a `scope` key to config.yaml to restrict targets to specific CIDR ranges:
+
+```yaml
+scope:
+  - "10.0.0.0/8"
+  - "192.168.1.0/24"
+```
+
+When scope is set, `adpack run --target` checks the target IP against the scope and rejects out-of-range targets. This is a safety net for production engagements.
 
 ## Attack Phases
 
@@ -100,8 +111,6 @@ adpack run discovery --target 10.0.0.5
 adpack run discovery
 ```
 
-**Output**: Discovered hosts with DC status, open ports, OS detection.
-
 ### 2. Enumeration
 
 Grabs users, computers, groups via LDAP.
@@ -110,280 +119,93 @@ Grabs users, computers, groups via LDAP.
 adpack run enumeration --target 10.0.0.5
 ```
 
-**Features**:
-- Extracts 56+ user attributes
-- Detects creds in user descriptions
-- Finds admin and DA accounts
-- Enumerates computer objects
-
 ### 3. Credential Acquisition
 
-Dumps creds using evasion profile.
+Dumps creds using an evasion profile.
 
 ```bash
-# Standard profile (Donut + go-mimikatz)
+# Standard profile
 adpack run credential_acq -e standard -t 10.0.0.5
 
-# Advanced evasion (EDR freeze + nanodump)
-adpack run credential_acq -e coldwer -t 10.0.0.5
-
-# Advanced evasion (Defender RPC technique)
-adpack run credential_acq -e bluehammer -t 10.0.0.5
+# Bypass profile (includes Defender neutralisation pre-flight)
+adpack run credential_acq -e bypass -t 10.0.0.5
 ```
-
-**Methods**:
-- LSASS memory dumps
-- Kerberoasting
-- AS-REP roasting
-- Password spraying
-- NTDS.dit extraction
 
 ### 4. Session Harvesting
 
-Finds active user sessions on domain systems and measures identity convergence.
+Finds active user sessions on domain systems.
 
 ```bash
 adpack run session_harvest --target 10.0.0.5
 ```
-
-**Methods**:
-- NetExec SMB session enumeration (`--loggedon-users`)
-- Per-host domain resolution for session identity
-- Identity drift snapshot (resolved/unresolved/duplicate counters)
 
 ### 5. Graph Analysis
 
 Collects AD structure for attack path mapping.
 
 ```bash
-# Collect BloodHound data
 adpack run graph_analysis --target 10.0.0.5
-
-# Query specific paths (stub — Neo4j integration coming soon)
 adpack query "MATCH (u:User)-[:AdminTo]->(c:Computer) RETURN u.name, c.name"
 ```
 
 ### 6. Lateral Movement
 
-Lateral movement with validated creds.
+Moves between systems with validated creds.
 
 ```bash
 adpack run lateral --target 10.0.0.6
 ```
-
-**Methods**:
-- PSExec (smbexec)
-- WinRM
-- Schtasks (atexec)
 
 ### 7. Validation
 
 Tests creds across SMB, LDAP, WinRM, RDP.
 
 ```bash
-# Validate all creds
 adpack validate
-
-# Validate against specific host
 adpack validate --target 10.0.0.5
 ```
 
-**Protocols Tested**:
-- SMB (port 445)
-- LDAP (port 389)
-- WinRM (port 5985)
-- RDP (port 3389)
-
-**Detection**:
-- Admin rights via "Pwn3d!" indicator
-- Lateral movement viability
-- Protocol-specific access levels
-
 ### 8. Privilege Escalation
 
-Checks for misconfigs and vulnerabilities for privesc.
+Checks for misconfigs and vulnerabilities.
 
 ```bash
 adpack run privesc --target 10.0.0.5
 ```
 
-**Techniques**:
-- ACL abuse
-- ADCS vulnerability checks
-- RBCD attacks
-- GPP passwords
-
 ### 9. Persistence
 
-Deploys long-term access mechanisms against a domain controller. Each technique
-is independently attempted; missing tools or insufficient privilege skip that
-technique rather than failing the whole phase.
+Deploys long-term access mechanisms.
 
 ```bash
 adpack run persistence --target 10.0.0.5
 ```
 
-**Methods (all real, all gated by tool availability):**
-
-| Technique | Implementation | External tool |
-|-----------|----------------|----------------|
-| Scheduled task (onlogon, SYSTEM) | `schtasks /create` via failover exec | NetExec only |
-| DSRM password-reuse logon | `reg add HKLM\…\Lsa /v DSRMAdminLogonBehavior /d 2` | NetExec only |
-| Golden Ticket forge | `secretsdump -just-dc-user krbtgt` → `lookupsid` for SID → `ticketer` writes ccache | impacket-secretsdump, impacket-lookupsid, impacket-ticketer |
-| AdminSDHolder GenericAll | LDAP DACL write → SDProp propagates ACE every 60min | impacket-dacledit (preferred) or bloodyAD |
-| Skeleton Key (informational) | Detected when go-mimikatz remote-exec is viable; flagged in evidence, **not** auto-deployed (high noise) | — |
-
-**Operational notes:**
-- Golden Ticket ccache lands at `/tmp/golden_<user>.ccache`; the operator
-  exports `KRB5CCNAME=<path>` to authenticate as the forged user for follow-on commands.
-- AdminSDHolder grants the *currently authenticated* user GenericAll. The ACE
-  survives password resets because SDProp re-applies it every 60 minutes.
-- DSRM is only meaningful on DCs and only over SMB/RPC — not over RDP.
-- Use `adpack reset persistence` to clear evidence and the in-memory ccache references; on-target artifacts (scheduled task, AdminSDHolder ACE, DSRM regkey, Golden Ticket validity) must be reverted manually.
-
 ## Evasion Profiles
-
-### Minimal
-
-In-memory execution for labs.
-
-```bash
-adpack run credential_acq -e minimal -t 10.0.0.5
-```
-
-**Pipeline**:
-1. Donut converts go-mimikatz to shellcode
-2. Execute in-memory via NetExec
-3. Parse output for creds
-
-**Detection Risk**: 🟡 Medium (in-memory execution, no disk writes)
 
 ### Standard
 
-Remote execution for enterprise.
+Remote execution for enterprise. Default profile.
 
 ```bash
 adpack run credential_acq -e standard -t 10.0.0.5
 ```
 
-**Pipeline**:
-1. Donut wraps go-mimikatz
-2. Upload via SMB
-3. Execute via WMI/WinRM
-4. Retrieve output
-5. Parse creds
+### Bypass
 
-**Detection Risk**: 🟡 Medium (remote execution, temporary files)
-
-### Aggressive
-
-BOF execution for C2 integration.
+Standard profile with automatic UnDefend Defender neutralisation pre-flight.
 
 ```bash
-adpack run credential_acq -e aggressive -t 10.0.0.5
+adpack run credential_acq -e bypass -t 10.0.0.5
 ```
 
-**Pipeline**:
-1. nanodump as Beacon Object File
-2. Process forking for evasion
-3. In-memory dump parsing
+### Custom
 
-**Detection Risk**: 🟢 Low (BOF execution, no new processes)
-
-### Fork
-
-LSASS process cloning.
+User-defined pipeline for custom configurations.
 
 ```bash
-adpack run credential_acq -e fork -t 10.0.0.5
+adpack run credential_acq -e custom -t 10.0.0.5
 ```
-
-**Pipeline**:
-1. Upload nanodump.exe
-2. Execute with `--fork` flag
-3. Clone LSASS process
-4. Dump cloned process
-5. Retrieve and parse
-
-**Detection Risk**: 🟢 Low (process cloning, indirect access)
-
-### BYOVD
-
-Vulnerable driver for kernel access.
-
-```bash
-adpack run credential_acq -e byovd -t 10.0.0.5
-```
-
-**Pipeline**:
-1. Upload RTCore64.sys
-2. Load vulnerable driver
-3. Patch LSASS protection
-4. Dump memory
-5. Unload driver
-
-**Detection Risk**: 🟢 Very Low (kernel-level, bypasses PPL)
-
-### ColdWer
-
-Freezes EDR during dump via WerFaultSecure PPL bypass.
-
-```bash
-adpack run credential_acq -e coldwer -t 10.0.0.5
-```
-
-**Pipeline**:
-1. Upload EDR-Freeze.exe
-2. Identify EDR processes
-3. Freeze EDR for 3 seconds
-4. Dump LSASS during freeze window
-5. Resume EDR
-
-**Detection Risk**: 🟢 Very Low (EDR blind during dump)
-
-**Technique**: Freezes EDR processes. EDR can't see the dump.
-
-### UnDefend
-
-Kills Defender before dumping via Nightmare Eclipse technique.
-
-```bash
-adpack run credential_acq -e undefend -t 10.0.0.5
-```
-
-**Pipeline**:
-1. Upload UnDefend.exe
-2. Kill MsMpEng.exe
-3. Block definition updates
-4. Dump LSASS
-5. Extract creds
-
-**Detection Risk**: 🟢 Low (Defender disabled)
-
-**Technique**: Kills Defender via service dependency method. Bypasses tamper protection.
-
-### BlueHammer
-
-Advanced RPC technique for SAM extraction from Nightmare Eclipse leaks.
-
-```bash
-adpack run credential_acq -e bluehammer -t 10.0.0.5
-```
-
-**Pipeline**:
-1. Upload FunnyApp.exe
-2. Leverage CVE-2026-33825 (Defender RPC)
-3. Trigger VSS snapshot
-4. Extract SAM hive
-5. Parse local account hashes
-
-**Detection Risk**: 🟢 Very Low (advanced technique, no LSASS access)
-
-**CVE Details**: Defender RPC bug lets unprivileged users dump SAM via VSS. No admin needed. No LSASS alerts. From Nightmare Eclipse leaks.
-
-**Assessment Value**: Tests if org can detect advanced cred theft. Simulates APT tradecraft.
-
-**Build status**: Requires Visual Studio 2022 on Windows (MSVC, RPC IDL, Windows SDK). Cannot be cross-compiled from Linux — see SETUP.md for details.
 
 ## Command Reference
 
@@ -408,7 +230,7 @@ adpack next
 
 #### run
 
-Runs attack phase.
+Runs a single attack phase.
 
 ```bash
 adpack run <phase> [flags]
@@ -417,12 +239,18 @@ Flags:
   -t, --target string             Target host IP or hostname
   -e, --evasion-profile string    Evasion profile (default "standard")
   -x, --execute                   Execute planned privilege escalation paths
+      --dry-run                   Show what would be done without executing
+      --resume                    Resume phase execution, skipping completed hosts
       --provider-log string       File path for structured provider event logging (JSONL)
 ```
 
+`--dry-run` prints the planned actions for a phase without actually executing them. Useful for reviewing what a phase will do before running it.
+
+`--resume` skips hosts that were already processed in a previous run of the same phase. Marks failed hosts for re-execution and completed hosts as done.
+
 #### autorun
 
-Auto-runs attack chain.
+Auto-runs the full attack chain.
 
 ```bash
 adpack autorun [flags]
@@ -432,7 +260,7 @@ Flags:
   -e, --evasion-profile string    Evasion profile (default "standard")
   -x, --execute                   Execute planned privilege escalation paths
   -m, --max int                   Maximum phases to run (0 = unlimited)
-      --skip-fail                 Continue past failed phases
+      --skip-fail                 Continue past failed phases instead of stopping
       --domain string             Domain for seed credentials
       --user string               Username for seed credentials
       --password string           Password for seed credentials
@@ -447,23 +275,41 @@ Tests creds across protocols.
 adpack validate [flags]
 
 Flags:
-  -t, --target string    Target host (validates against all if not specified)
+  -t, --target string    Target host (validates against all hosts if not specified)
 ```
+
+### Interactive Mode
+
+#### interactive
+
+Opens the TUI dashboard.
+
+```bash
+adpack interactive
+```
+
+Launches a terminal UI that shows:
+- Phase completion status with colour-coded indicators
+- Discovered hosts, users, and credentials
+- Phase dependency chain with gap detection
+- Live status updates
+
+The TUI refreshes automatically from the SQLite state database. Use it to monitor progress during autoruns or inspect state between phases.
 
 ### State Management
 
 #### reset
 
-Reset phase status or entire state.
+Resets phase status or entire state.
 
 ```bash
-adpack reset <phase>    # Reset specific phase
+adpack reset <phase>    # Reset specific phase status
 adpack reset state      # Clear entire database
 ```
 
 #### phases
 
-List all phases with status and dependencies.
+Lists all phases with status and dependencies.
 
 ```bash
 adpack phases
@@ -471,21 +317,23 @@ adpack phases
 
 #### profiles
 
-Show available evasion profiles.
+Shows available evasion profiles.
 
 ```bash
 adpack profiles
 ```
 
-### Utility Commands
+#### loot
 
-#### interactive
-
-Opens TUI dashboard.
+Displays a comprehensive loot summary from the current state.
 
 ```bash
-adpack interactive
+adpack loot
 ```
+
+Shows credentials, validated creds, domain info, vulnerability coverage, and backdoor status.
+
+### Utility Commands
 
 #### ingest
 
@@ -497,10 +345,49 @@ adpack ingest <file>
 
 #### query
 
-Run Cypher query against BloodHound data.
+Runs a Cypher query against the BloodHound graph (requires Neo4j connection).
 
 ```bash
 adpack query "MATCH (u:User) RETURN u.name LIMIT 10"
+```
+
+### Flags
+
+#### Global Flags
+
+```bash
+-c, --config string         Config file path
+-d, --db string             Database path (default ~/.adpack/state.db)
+    --hashcat-path string   Path to hashcat binary (overrides config)
+    --wordlist string       Path to wordlist (overrides config)
+    --rules string          Comma-separated hashcat rule files (overrides config)
+    --crack-timeout int     Timeout per hash in seconds (overrides config)
+```
+
+## Cracking Pipeline
+
+Extracted hashes are automatically enqueued into a background cracker pipeline:
+
+1. Hashes are collected from Kerberoast, AS-REP roasting, and SAM/LSA dumps
+2. Enqueued in a priority-ordered HashQueue (DA accounts first)
+3. Cracked via hashcat with configurable rules and wordlist
+4. Cracked credentials materialise into the state database
+5. Triggers re-evaluation of privesc paths when new creds arrive
+
+The cracker runs as a background goroutine, started on the first command. Configuration is in the `cracking` config section:
+
+```yaml
+cracking:
+  hashcat_path: "/usr/bin/hashcat"
+  wordlist: "/usr/share/wordlists/rockyou.txt"
+  rules: ["/usr/share/hashcat/rules/best64.rule"]
+  timeout_seconds: 600
+```
+
+Global flags override config values at runtime:
+
+```bash
+adpack run enumeration --target 10.0.0.5 --hashcat-path /opt/hashcat/hashcat
 ```
 
 ## Workflows
@@ -537,17 +424,60 @@ adpack autorun --target 10.0.0.5 --max 5
 adpack autorun --target 10.0.0.5
 ```
 
+### Resume After Interruption
+
+```bash
+# Start an autorun
+adpack autorun --target 10.0.0.5 --max 4
+
+# If it's interrupted, check status
+adpack status
+
+# Resume the next phase manually
+adpack run credential_acq --target 10.0.0.5 --resume
+
+# Or resume the full chain from where it left off
+adpack autorun --target 10.0.0.5
+```
+
+### Preview Before Execution
+
+```bash
+# See what a phase will do without running it
+adpack run credential_acq --target 10.0.0.5 --dry-run
+
+# Validate the chain plan
+adpack next
+```
+
+### Scoped engagement
+
+```yaml
+# In ~/.adpack/config.yaml:
+scope:
+  - "10.0.1.0/24"
+```
+
+```bash
+# This will work
+adpack run discovery --target 10.0.1.10
+
+# This will be rejected
+adpack run discovery --target 10.0.2.10
+# Error: target 10.0.2.10 is outside allowed scope Scope{10.0.1.0/24}
+```
+
 ### Advanced Evasion Workflow
 
 ```bash
 # 1. Enumerate target
 adpack run enumeration --target 10.0.0.5
 
-# 2. Use advanced technique to disable Defender
-adpack run credential_acq -e bluehammer -t 10.0.0.5
+# 2. Use bypass profile to neutralise Defender before dump
+adpack run credential_acq -e bypass -t 10.0.0.5
 
-# 3. Chain with LSASS dump
-adpack run credential_acq -e undefend -t 10.0.0.5
+# 3. Chain with Defender kill + dump
+adpack run credential_acq -e bypass -t 10.0.0.5
 
 # 4. Validate extracted creds
 adpack validate
@@ -555,27 +485,6 @@ adpack validate
 # 5. Lateral movement
 adpack run lateral --target 10.0.0.6
 ```
-
-### Nightmare Eclipse Techniques
-
-Orchestrates techniques from Nightmare Eclipse leaks. Nation-state level methods. Helps orgs:
-
-1. **Test defences against APT-level attacks**
-2. **Find blind spots in EDR/AV**
-3. **Check if security controls work**
-4. **Build detection for advanced attacks**
-
-**When to use:**
-- Client has mature security controls (EDR, SIEM, SOC)
-- Assessment scope includes APT simulation
-- Testing detection and response capabilities
-- Validating security investments against real-world threats
-
-**Responsible use:**
-- Only on authorised targets with explicit permission
-- Document all techniques used for client reporting
-- Help client develop detection capabilities
-- Follow responsible disclosure for any new vulnerabilities found
 
 ### Multi-Host Workflow
 
@@ -596,7 +505,7 @@ adpack status
 
 ### NetExec
 
-Main tool for remote exec and enum.
+Main tool for remote exec and enumeration.
 
 **Supported Protocols**:
 - SMB: File sharing, remote execution
@@ -604,116 +513,49 @@ Main tool for remote exec and enum.
 - WinRM: PowerShell remoting
 - MSSQL: Database queries
 
-**Usage in adpack**:
-- Discovery: LDAP ping for DC detection
-- Enumeration: `--users`, `--computers`, `--groups`
-- Validation: Authentication testing across protocols
-- Lateral: Remote command execution
-
 ### nanodump
 
-LSASS dumping with evasion.
-
-**Features**:
-- `--fork`: Clone LSASS process before dumping
-- `--snapshot`: Use VSS snapshots
-- `--dup`: Duplicate handle technique
-
-**Usage in adpack**:
-- Fork profile: Process cloning
-- Aggressive profile: BOF execution
-- BYOVD profile: Kernel-level dumping
+LSASS dumping with evasion techniques (fork, snapshot, WER).
 
 ### go-mimikatz
 
-Go port of mimikatz for cred extraction.
-
-**Commands**:
-- `sekurlsa::logonpasswords`: Extract plaintext passwords
-- `sekurlsa::tickets`: Dump Kerberos tickets
-- `lsadump::dcsync`: DCSync attack
+Go port of mimikatz for sekurlsa::logonpasswords, dcsync. Requires Windows build.
 
 ### pypykatz
 
 Offline LSASS dump parsing.
-
-**Usage**:
-- Parse nanodump output
-- Extract creds from minidumps
-- Support for multiple dump formats
 
 ## Troubleshooting
 
 ### No Hosts Discovered
 
 ```bash
-# Verify network connectivity
 ping 10.0.0.5
-
-# Check NetExec installation
 netexec --version
-
-# Manual discovery
 adpack run discovery --target 10.0.0.5
 ```
 
 ### Credential Acquisition Failed
 
 ```bash
-# Check tool availability
 which go-mimikatz
 which nanodump
-
-# Try different evasion profile
-adpack run credential_acq -e fork -t 10.0.0.5
-
-# Check logs
+adpack run credential_acq -e nanodump -t 10.0.0.5
 adpack status
 ```
 
 ### Validation Fails
 
 ```bash
-# Verify creds manually
 netexec smb 10.0.0.5 -u user -p password
-
-# Check network access
 netexec smb 10.0.0.5 -u user -p password --shares
 ```
-
-## Best Practices
-
-1. **Start with Discovery**: Always run discovery before other phases
-2. **Validate Early**: Test creds immediately after acquisition
-3. **Use Appropriate Evasion**: Match profile to target defences
-4. **Check State Frequently**: Run `adpack status` to track progress
-5. **Save Evidence**: Export logs and provider events for analysis
-6. **Test in Labs**: Use VulnAD/GOAD before production engagements
-7. **Document Findings**: Export state as JSON for reporting
 
 ## Security Considerations
 
 - Only use on authorised targets
 - Credentials are encrypted at rest using AES-GCM in SQLite
-- Protect state database with appropriate permissions (chmod 600)
-- **Credentials encrypted at rest with AES-GCM** — Use disk encryption and protect the encryption key for sensitive engagements
+- Protect state database with 600 permissions
+- Use disk encryption for sensitive engagements
 - Clean up after engagements: `adpack reset state`
-- Advanced evasion techniques should be used responsibly and legally
-- Follow responsible disclosure for vulnerabilities found
-
-### Nightmare Eclipse Ethics
-
-Nightmare Eclipse techniques mirror real adversary tradecraft. AdPack orchestrates these methods. Use to:
-
-- **Help orgs defend against advanced threats**
-- **Test security posture accurately**
-- **Help blue teams build detection**
-- **Prove if security controls work**
-
-**Do not use to:**
-- Cause harm or damage systems
-- Access unauthorised systems
-- Exfiltrate sensitive data without authorisation
-- Demonstrate capabilities for malicious purposes
-
-Red teams exist to make organisations more secure. These tools should strengthen defences, not weaken them.
+- Scope enforcement helps prevent accidental targeting of out-of-range hosts

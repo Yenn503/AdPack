@@ -23,7 +23,7 @@ type VerifyResult struct {
 // VerifyState runs a post-action LDAP re-scan to confirm the environment
 // actually changed as predicted by the executor. This replaces heuristic
 // output inference with ground-truth state verification.
-func VerifyState(ctx context.Context, edge core.PrivilegeEdge, cap core.Capability, domain, user, pass, targetIP string) VerifyResult {
+func VerifyState(ctx context.Context, edge core.PrivilegeEdge, cap core.Capability, domain, user, pass, newPass, targetIP string) VerifyResult {
 	source := edge.SourcePrincipal
 	if idx := strings.Index(source, "\\"); idx >= 0 {
 		source = source[idx+1:]
@@ -39,8 +39,9 @@ func VerifyState(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabili
 	case strings.Contains(capLower, "add_member"):
 		return verifyAddMember(ctx, source, target, domain, user, pass, targetIP)
 	case strings.Contains(capLower, "force_change_password"):
-		// newPass must match what dispatchTool used
-		newPass := "P@ssw0rd_Changed_2026!"
+		if newPass == "" {
+			return VerifyResult{Passed: false, Confidence: 0.0, Evidence: "no new password provided for verification"}
+		}
 		return verifyForceChangePassword(ctx, target, domain, user, newPass, targetIP)
 	case strings.Contains(capLower, "write_dacl"), strings.Contains(capLower, "generic_all"):
 		return verifyDacl(ctx, source, target, domain, user, pass, targetIP)
@@ -158,7 +159,7 @@ func verifyForceChangePassword(ctx context.Context, target, domain, user, newPas
 
 // verifyDacl checks whether the target object's security descriptor reflects
 // the delegated rights.
-func verifyDacl(ctx context.Context, source, target, domain, user, pass, targetIP string) VerifyResult {
+func verifyDacl(ctx context.Context, _, target, domain, user, pass, targetIP string) VerifyResult {
 	if !commandExists("ldapsearch") {
 		return VerifyResult{Passed: false, Confidence: 0.0, Evidence: "ldapsearch not available"}
 	}
@@ -276,7 +277,7 @@ func ReVerifyEdges(ctx context.Context, state *core.ADState, domain, user, pass,
 func reVerifyEdgeAt(ctx context.Context, state *core.ADState, idx int, domain, user, pass, targetIP string) bool {
 	e := state.Edges[idx]
 	cap := core.AccessRightToCapability(e)
-	vr := VerifyState(ctx, e, cap, domain, user, pass, targetIP)
+	vr := VerifyState(ctx, e, cap, domain, user, pass, "", targetIP)
 
 	key := core.EdgeKeyOf(e)
 	if vr.Passed {

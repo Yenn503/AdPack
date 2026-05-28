@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"adpack/utils"
@@ -14,9 +15,39 @@ type nxcTool struct{}
 
 var NetExec = nxcTool{}
 
-func (nxcTool) Name() string { return "netexec" }
+// NetexecCommand and NetexecPrefixArgs are package-level globals set once
+// during initialization. The proxy transport calls SetProxyMode() before any
+// concurrent use to wrap netexec in proxychains4.
+var (
+	netexecMu         sync.RWMutex
+	NetexecCommand    = "netexec"
+	NetexecPrefixArgs []string
+)
+
+// SetProxyMode configures netexec to run through proxychains4.
+// Must be called before any concurrent execution (typically once at startup).
+func SetProxyMode(addr string) {
+	netexecMu.Lock()
+	defer netexecMu.Unlock()
+	NetexecCommand = "proxychains4"
+	NetexecPrefixArgs = []string{"-q", "netexec"}
+}
+
+func getNetexecCommand() string {
+	netexecMu.RLock()
+	defer netexecMu.RUnlock()
+	return NetexecCommand
+}
+
+func getNetexecPrefixArgs() []string {
+	netexecMu.RLock()
+	defer netexecMu.RUnlock()
+	return NetexecPrefixArgs
+}
+
+func (nxcTool) Name() string { return getNetexecCommand() }
 func (nxcTool) Available() bool {
-	_, err := utils.FindTool("netexec")
+	_, err := utils.FindTool(getNetexecCommand())
 	return err == nil
 }
 
@@ -113,7 +144,10 @@ func NxcCommandSucceeded(out string) bool {
 }
 
 func (n nxcTool) Run(ctx context.Context, target NetExecTarget, subcmd string, extraArgs []string) (utils.CmdResult, error) {
-	args := []string{target.Protocol, target.Host}
+	prefix := getNetexecPrefixArgs()
+	args := make([]string, 0, len(prefix)+3+len(extraArgs))
+	args = append(args, prefix...)
+	args = append(args, target.Protocol, target.Host)
 	if target.Port > 0 {
 		args = append(args, fmt.Sprintf("--port=%d", target.Port))
 	}
@@ -133,7 +167,7 @@ func (n nxcTool) Run(ctx context.Context, target NetExecTarget, subcmd string, e
 		args = append(args, subcmd)
 	}
 	args = append(args, extraArgs...)
-	r := utils.RunCommandCtx(ctx, "netexec", args)
+	r := utils.RunCommandCtx(ctx, getNetexecCommand(), args)
 	if !r.Success {
 		return r, fmt.Errorf("netexec failed: %s", r.Stderr)
 	}

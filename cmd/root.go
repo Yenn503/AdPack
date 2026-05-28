@@ -29,6 +29,8 @@ import (
 	"adpack/internal/executorbackend/webshell"
 	"adpack/internal/executorbackend/writedacl"
 	"adpack/internal/runtime"
+	"adpack/internal/transport/local"
+	"adpack/internal/transport/proxy"
 	"adpack/modules"
 	"adpack/storage"
 	"adpack/utils"
@@ -165,6 +167,16 @@ func Execute() {
 
 func init() {
 	modules.ExecutorFactory = executorbackend.New
+	modules.TransportFactory = func(target core.HostRef, domain, user, pass, hash string) core.Transport {
+		proxyAddr := Cfg.ProxyAddress
+		if proxyAddr == "" {
+			proxyAddr = os.Getenv("ADPACK_PROXY")
+		}
+		if proxyAddr != "" {
+			return proxy.New(target, domain, user, pass, hash, proxyAddr)
+		}
+		return local.New(target, domain, user, pass, hash)
+	}
 	modules.RuntimeFactory = func() core.RuntimeProvider {
 		return runtime.NewSupervisor()
 	}
