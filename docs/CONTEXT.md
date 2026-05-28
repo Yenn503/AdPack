@@ -46,16 +46,16 @@ Each selects delivery (donut/bof/exe) + optional pre-conditions (Defender kill, 
 |------|------|
 | NetExec (nxc) | SMB/WMI/WinRM remote execution, file transfer, auth testing. The canonical exec-method failover order used by `RunFailover` is **wmiexec → smbexec → atexec**, with a per-attempt timeout so any single stuck transport is bounded |
 | nanodump | LSASS minidump with evasion techniques (fork, snapshot, WER) |
-| go-mimikatz | Go port of mimikatz for sekurlsa::logonpasswords, dcsync |
+| go-mimikatz | Go port of mimikatz for sekurlsa::logonpasswords, dcsync (requires Windows build; falls back to nanodump+pypykatz) |
 | pypykatz | Offline LSASS dump parsing |
-| UnDefend | Defender DOS — passive (block updates) or aggressive (kill) |
+| UnDefend | Defender kill — aggressive mode (--kill) runs automatically after SYSTEM access |
 | BlueHammer | Defender RPC exploit for SAM hive leak via VSS |
 | EDR-Freeze | WerFaultSecure PPL bypass to freeze EDR processes |
 | PhantomKiller | Lenovo BootRepair.sys BYOVD — IOCTL-based EDR process termination |
 | MiniPlasma | Cloud Filter API race (CVE-2020-17103) → SYSTEM shell |
+| PrintSpoofer64 | Named pipe impersonation for SeImpersonate → SYSTEM (download via certutil + xp_cmdshell) |
 | impacket-secretsdump | DRSUAPI dump for Golden Ticket forge + DCSync |
 | impacket-ticketer | Forge TGTs given krbtgt hash + Domain SID |
-| impacket-getST | S4U2self for delegation/RBCD attacks |
 | impacket-dacledit | Native LDAP DACL write for AdminSDHolder backdoor |
 | impacket-rbcd | RBCD configuration on victim computer object |
 | impacket-lookupsid | Domain SID resolution for ticket forging |
@@ -71,6 +71,18 @@ The provider boundary separates acquisition from interpretation:
 | **NetExec provider** | Routes enumeration via nxc LDAP/SMB with fallback (e.g., GPO falls back from LDAP --gpos to SMB gpolocal) | `modules/netexec_provider.go` |
 | **Parsers** | Format-specific extraction. Two-stage grammar for computers: `DOMAIN\COMPUTER$` (qualified) or `COMPUTER$` (bare with injected domain) | `modules/netexec_parsers.go`, `modules/parserutil.go` |
 | **Provider events** | Every method call emits a `ProviderEvent` (method, transport, duration, entity count, raw stdout/stderr) | `core/provider.go`, `core/jsonl_sink.go` |
+
+## Post-SYSTEM Credential Dump
+
+After SYSTEM access is confirmed (via smbexec/atexec), the tool runs a two-stage dump:
+
+1. **SAM + LSA secrets** via `nxc sam` and `nxc lsa` (extracts local admin hashes, cached domain credentials, DCC2 hashes)
+2. **UnDefend --kill** (disables Defender)
+3. **Deep dump** via nanodump+pypykatz cascading pipeline (only if SAM/LSA didn't already produce creds)
+
+## Child-to-Parent Domain Escalation
+
+DCSyncs child DC krbtgt → forges golden ticket with `-sid-history` (Enterprise Admins SID) → DCSyncs parent domain. Requires DA-equivalent creds on the child domain. Runs as privesc sub-phase 7.
 
 ## Identity Normalisation
 

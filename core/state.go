@@ -393,11 +393,11 @@ func (s *ADState) NextPhase() *Phase {
 	}
 
 	if hasDA {
-		if s.Phases[PhaseLateral] != PhaseComplete {
+		if s.Phases[PhaseLateral] != PhaseComplete && s.Phases[PhaseLateral] != PhaseFailed && s.Phases[PhaseLateral] != PhaseSkipped {
 			p := PhaseLateral
 			return &p
 		}
-		if s.Phases[PhasePersistence] != PhaseComplete {
+		if s.Phases[PhasePersistence] != PhaseComplete && s.Phases[PhasePersistence] != PhaseFailed && s.Phases[PhasePersistence] != PhaseSkipped {
 			p := PhasePersistence
 			return &p
 		}

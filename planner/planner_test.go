@@ -86,6 +86,71 @@ func TestPlanPaths_MissingCaps(t *testing.T) {
 	}
 }
 
+func TestPlanPaths_MSSQLXPCmdshellSystemTarget(t *testing.T) {
+	state := &core.ADState{
+		Hosts: []core.Host{
+			{IP: "192.168.57.22", Hostname: "CASTELBLACK", PortsOpen: "445,1433"},
+		},
+		Edges: []core.PrivilegeEdge{
+			{
+				SourcePrincipal: "samwell.tarly",
+				TargetPrincipal: "SYSTEM@192.168.57.22",
+				AccessRight:     "MSSQL_XP_CMDSHELL",
+				EdgeType:        "mssql_impersonation",
+				Domain:          "north.sevenkingdoms.local",
+				Confidence:      0.9,
+				Weight:          2,
+				Exploitability:  1.0,
+				Noise:           0.6,
+				Requires:        []string{"nxc"},
+				Preconditions: []core.ExecutionPrecondition{
+					{Kind: core.PrecondPortOpen, Target: "192.168.57.22", Port: 1433},
+				},
+			},
+		},
+	}
+
+	cfg := DefaultConfig()
+	cfg.AvailableCaps = []string{"nxc"}
+
+	plans := New(state, cfg).PlanPaths("north.sevenkingdoms.local\\samwell.tarly")
+	if len(plans) == 0 {
+		t.Fatal("expected MSSQL xp_cmdshell path to SYSTEM target")
+	}
+	if plans[0].Target != "north.sevenkingdoms.local\\SYSTEM@192.168.57.22" {
+		t.Fatalf("unexpected target: %s", plans[0].Target)
+	}
+}
+
+func TestPlanPaths_PortPreconditionBlocksWhenHostPortUnknown(t *testing.T) {
+	state := &core.ADState{
+		Hosts: []core.Host{
+			{IP: "192.168.57.22", Hostname: "CASTELBLACK", PortsOpen: "445"},
+		},
+		Edges: []core.PrivilegeEdge{
+			{
+				SourcePrincipal: "samwell.tarly",
+				TargetPrincipal: "SYSTEM@192.168.57.22",
+				AccessRight:     "MSSQL_XP_CMDSHELL",
+				EdgeType:        "mssql_impersonation",
+				Domain:          "north.sevenkingdoms.local",
+				Confidence:      0.9,
+				Weight:          2,
+				Exploitability:  1.0,
+				Noise:           0.6,
+				Preconditions: []core.ExecutionPrecondition{
+					{Kind: core.PrecondPortOpen, Target: "192.168.57.22", Port: 1433},
+				},
+			},
+		},
+	}
+
+	plans := New(state, DefaultConfig()).PlanPaths("north.sevenkingdoms.local\\samwell.tarly")
+	if len(plans) != 0 {
+		t.Fatalf("expected no plan when 1433 is unknown, got %d", len(plans))
+	}
+}
+
 func TestPlanPaths_AvoidsCycles(t *testing.T) {
 	state := &core.ADState{
 		Users: []core.User{

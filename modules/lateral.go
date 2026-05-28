@@ -3,6 +3,8 @@ package modules
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,6 +82,12 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 			continue
 		}
 		anySuccess = true
+		if m.Protocol == "mssql" {
+			markOpenPort(state, host.IP, 1433)
+			if h, found := selectTarget(state, host.IP); found {
+				host = h
+			}
+		}
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type:      "lateral_success",
 			Phase:     core.PhaseLateral,
@@ -90,6 +98,9 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 			Timestamp: time.Now(),
 		})
 		fmt.Printf("  ✓  %s succeeded\n", m.Name)
+	}
+	if anySuccess {
+		result.Hosts = append(result.Hosts, state.Hosts...)
 	}
 
 	switch {
@@ -190,4 +201,67 @@ func hasAuthFailureMarker(out, username string) bool {
 		}
 	}
 	return false
+}
+
+func markOpenPort(state *core.ADState, hostIP string, port int) {
+	if state == nil || hostIP == "" || port <= 0 {
+		return
+	}
+	// Only register the port if the host is known
+	hostFound := false
+	for i := range state.Hosts {
+		if state.Hosts[i].IP == hostIP {
+			hostFound = true
+			break
+		}
+	}
+	if !hostFound {
+		return
+	}
+	if state.Exec.OpenPorts == nil {
+		state.Exec.OpenPorts = make(map[string][]int)
+	}
+	found := false
+	for _, p := range state.Exec.OpenPorts[hostIP] {
+		if p == port {
+			found = true
+			break
+		}
+	}
+	if !found {
+		state.Exec.OpenPorts[hostIP] = append(state.Exec.OpenPorts[hostIP], port)
+		sort.Ints(state.Exec.OpenPorts[hostIP])
+	}
+	portString := strconv.Itoa(port)
+	for i := range state.Hosts {
+		if state.Hosts[i].IP != hostIP {
+			continue
+		}
+		ports := make(map[string]bool)
+		for _, part := range strings.Split(state.Hosts[i].PortsOpen, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				ports[trimmed] = true
+			}
+		}
+		if ports[portString] {
+			return
+		}
+		ports[portString] = true
+		var out []int
+		for p := range ports {
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				continue
+			}
+			out = append(out, n)
+		}
+		sort.Ints(out)
+		tokens := make([]string, 0, len(out))
+		for _, p := range out {
+			tokens = append(tokens, strconv.Itoa(p))
+		}
+		state.Hosts[i].PortsOpen = strings.Join(tokens, ",")
+		return
+	}
 }

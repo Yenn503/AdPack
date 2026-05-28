@@ -14,7 +14,7 @@ help: ## Show this help message
 build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build -ldflags="-s -w -X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
+	$(GO) build -ldflags="-s -w -X adpack/cmd.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
 install: build ## Install the binary to GOPATH/bin

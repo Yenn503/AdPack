@@ -146,6 +146,7 @@ func TestAccessRightToCapability_Dispatch(t *testing.T) {
 		{PrivilegeEdge{EdgeType: "kerberoast"}, "KERBEROAST"},
 		{PrivilegeEdge{EdgeType: "asrep"}, "ASREP_ROAST"},
 		{PrivilegeEdge{EdgeType: "spray"}, "LDAP_SPRAY"},
+		{PrivilegeEdge{AccessRight: "HasSession", EdgeType: "mssql_impersonation"}, "MSSQL_XP_CMDSHELL"},
 		{PrivilegeEdge{AccessRight: "GenericAll"}, "GenericAll"},
 	}
 	for _, tt := range tests {

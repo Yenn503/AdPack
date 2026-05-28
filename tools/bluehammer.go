@@ -42,17 +42,6 @@ func (b blueHammerTool) Run(ctx context.Context, req ExecutionRequest) (*Executi
 	return cmdResultToExecResult(r), nil
 }
 
-func (b blueHammerTool) DeployViaSMB(ctx context.Context, target NetExecTarget, localPath, remoteDir string) (*ExecutionResult, error) {
-	if !b.Available() {
-		return nil, &ToolError{Tool: "BlueHammer", Op: "deploy", Err: fmt.Errorf("FunnyApp.exe not found locally")}
-	}
-	cr, err := NetExec.PutFile(ctx, target, localPath, remoteDir)
-	if err != nil {
-		return cmdResultToExecResult(cr), &ToolError{Tool: "BlueHammer", Op: "deploy", Err: err, ExitCode: cr.ExitCode}
-	}
-	return cmdResultToExecResult(cr), nil
-}
-
 func (b blueHammerTool) ExecRemote(ctx context.Context, target NetExecTarget, remotePath string) (*ExecutionResult, error) {
 	cr, err := NetExec.Run(ctx, target, "-x", []string{fmt.Sprintf(`start /B %s`, remotePath)})
 	if err != nil {

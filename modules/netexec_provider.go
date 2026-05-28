@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"adpack/core"
@@ -21,8 +22,13 @@ func ProviderFromState(state *core.ADState, targetHost string, sink core.Provide
 	if domain == "" || user == "" {
 		return nil, fmt.Errorf("no valid credentials for graph analysis")
 	}
+	// Override host with a DC matching our domain (all provider LDAP calls need a DC)
+	dcIP := host.IP
+	if dc := findDC(state, domain); dc.IP != "" {
+		dcIP = dc.IP
+	}
 	return NewNetExecProvider(core.ProviderConfig{
-		Host: host.IP, Domain: domain,
+		Host: dcIP, Domain: domain,
 		Username: user, Password: pass, Hash: hash,
 		EventSink: sink,
 	}), nil
@@ -235,6 +241,14 @@ func (p *NetExecProvider) EnumerateACLs(ctx context.Context, targetName string) 
 // MSSQL instances using nxc mssql -M mssql_priv. Returns privilege edges
 // representing which logins can impersonate which targets.
 func (p *NetExecProvider) EnumerateMSSQLImpersonations(ctx context.Context) ([]core.PrivilegeEdge, error) {
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, dialErr := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", p.cfg.Host, 1433))
+	if dialErr != nil {
+		p.emit("EnumerateMSSQLImpersonations", "mssql", false, 0, "", "", 0, 0, dialErr)
+		return nil, fmt.Errorf("mssql 1433 unreachable on %s: %w", p.cfg.Host, dialErr)
+	}
+	conn.Close()
+
 	start := time.Now()
 	r, err := tools.NetExec.Run(ctx, p.mssqlTarget(), "-M", []string{"mssql_priv"})
 	dur := time.Since(start)
@@ -244,6 +258,27 @@ func (p *NetExecProvider) EnumerateMSSQLImpersonations(ctx context.Context) ([]c
 	}
 	edges := parseMSSQLImpersonations(r.Stdout, p.cfg.Domain, p.cfg.Host)
 	p.emit("EnumerateMSSQLImpersonations", "mssql", false, dur, r.Stdout, r.Stderr, 0, len(edges), nil)
+	return edges, nil
+}
+
+func (p *NetExecProvider) EnumerateMSSQLLinkedServers(ctx context.Context) ([]core.PrivilegeEdge, error) {
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, dialErr := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", p.cfg.Host, 1433))
+	if dialErr != nil {
+		p.emit("EnumerateMSSQLLinkedServers", "mssql", false, 0, "", "", 0, 0, dialErr)
+		return nil, fmt.Errorf("mssql 1433 unreachable on %s: %w", p.cfg.Host, dialErr)
+	}
+	conn.Close()
+
+	start := time.Now()
+	r, err := tools.NetExec.Run(ctx, p.mssqlTarget(), "-M", []string{"enum_links"})
+	dur := time.Since(start)
+	if err != nil || !r.Success {
+		p.emit("EnumerateMSSQLLinkedServers", "mssql", false, dur, r.Stdout, r.Stderr, r.ExitCode, 0, err)
+		return nil, fmt.Errorf("nxc enum_links: %w", err)
+	}
+	edges := parseMSSQLLinkedServers(r.Stdout, p.cfg.Domain, p.cfg.Host)
+	p.emit("EnumerateMSSQLLinkedServers", "mssql", false, dur, r.Stdout, r.Stderr, 0, len(edges), nil)
 	return edges, nil
 }
 

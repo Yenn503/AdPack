@@ -30,6 +30,11 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 		return result
 	}
 
+	// Prefer a DC matching our domain for LDAP enumeration
+	if dc := findDC(state, dbDomain); dc.IP != "" {
+		host = dc
+	}
+
 	user := dbUser
 	pass := dbPass
 	domain := dbDomain

@@ -2,13 +2,6 @@ package core
 
 import "strings"
 
-// ResolveComputerRef produces the canonical HostRef from an LDAP-derived
-// Computer entity. The name and domain are already split by the parser, so
-// this is a pure projection.
-func ResolveComputerRef(name, domain string) HostRef {
-	return NewHostRef(name, domain)
-}
-
 // ResolveSessionRef extracts a HostRef from an SMB session username.
 // Returns false when the username is not a machine account (no trailing $).
 //

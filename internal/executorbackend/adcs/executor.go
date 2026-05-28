@@ -13,6 +13,9 @@ const PKINIT_AUTH core.Capability = "ADCS_PKINIT_AUTH"
 const EdgeStalenessTTL = 5 * time.Minute
 
 func certipyAvailable() bool {
+	if _, err := utils.FindTool("certipy-ad"); err == nil {
+		return true
+	}
 	_, err := utils.FindTool("certipy")
 	return err == nil
 }

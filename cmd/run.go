@@ -9,6 +9,7 @@ import (
 	"adpack/core"
 	"adpack/modules"
 	"adpack/utils"
+
 	"charm.land/lipgloss/v2"
 	"github.com/spf13/cobra"
 )
@@ -184,6 +185,9 @@ var runCmd = &cobra.Command{
 			result := modules.RunLateral(state, targetHost)
 			success = result.Success
 			if result.Success {
+				for _, h := range result.Hosts {
+					DB.SaveHost(h)
+				}
 				for _, ev := range result.Evidence {
 					DB.SaveEvidence(ev)
 				}

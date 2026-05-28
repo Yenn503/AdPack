@@ -30,11 +30,3 @@ type DAGNode struct {
 	StartedAt  time.Time       `json:"started_at"`
 	FinishedAt *time.Time      `json:"finished_at,omitempty"`
 }
-
-type DAGStore interface {
-	SaveNode(n *DAGNode) error
-	UpdateNodeStatus(id string, status NodeStatus, output json.RawMessage, lastErr string) error
-	LoadNodes(campaignID string) ([]DAGNode, error)
-	LoadNode(id string) (*DAGNode, error)
-	LoadChildren(parentID string) ([]DAGNode, error)
-}

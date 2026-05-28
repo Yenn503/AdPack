@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"adpack/config"
 	"adpack/core"
@@ -17,11 +18,15 @@ import (
 	"adpack/internal/executorbackend/forcechangepassword"
 	"adpack/internal/executorbackend/genericall"
 	"adpack/internal/executorbackend/kerberoast"
+	krbrelayup "adpack/internal/executorbackend/krb_relay_up"
 	"adpack/internal/executorbackend/ldap_spray"
+	"adpack/internal/executorbackend/mssql"
 	"adpack/internal/executorbackend/rbcd"
 	"adpack/internal/executorbackend/s4u_delegation"
 	"adpack/internal/executorbackend/shadowcred"
+	targetedkerberoast "adpack/internal/executorbackend/targeted_kerberoast"
 	"adpack/internal/executorbackend/unconstrained_delegation"
+	"adpack/internal/executorbackend/webshell"
 	"adpack/internal/executorbackend/writedacl"
 	"adpack/internal/runtime"
 	"adpack/modules"
@@ -42,6 +47,12 @@ var (
 	crackQueue  *cracker.HashQueue
 	crackWorker *cracker.CrackWorker
 	crackMat    *cracker.CredentialMaterializer
+
+	// Cracker CLI flags
+	hashcatPathFlag string
+	wordlistFlag    string
+	rulesFlag       string
+	crackTimeoutF   int
 )
 
 var version = "v0.1.0"
@@ -103,7 +114,25 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 
 		if crackQueue == nil {
 			crackQueue = cracker.NewHashQueue()
-			crackWorker = cracker.NewCrackWorker(crackQueue, "/usr/bin/hashcat", "/usr/share/wordlists/rockyou.txt")
+
+			hashcatPath := Cfg.Cracking.HashcatPath
+			wordlist := Cfg.Cracking.Wordlist
+			rules := Cfg.Cracking.Rules
+			timeout := time.Duration(Cfg.Cracking.Timeout) * time.Second
+			if hashcatPathFlag != "" {
+				hashcatPath = hashcatPathFlag
+			}
+			if wordlistFlag != "" {
+				wordlist = wordlistFlag
+			}
+			if rulesFlag != "" {
+				rules = strings.Split(rulesFlag, ",")
+			}
+			if crackTimeoutF > 0 {
+				timeout = time.Duration(crackTimeoutF) * time.Second
+			}
+
+			crackWorker = cracker.NewCrackWorker(crackQueue, hashcatPath, wordlist, rules, timeout)
 			go crackWorker.Run()
 			crackMat = cracker.NewCredentialMaterializer(crackQueue, func(cred cracker.CrackedCredential) {
 				fmt.Printf("[+] CRACKED: %s\\%s -> %s\n", cred.Domain, cred.Username, cred.Secret)
@@ -178,9 +207,24 @@ func init() {
 	modules.CapabilityRegistry.Register(&s4u_delegation.Executor{})
 	modules.CapabilityRegistry.Register(&adcs.CertEnrollExecutor{})
 	modules.CapabilityRegistry.Register(&adcs.PKINITAuthExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.ImpersonateExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.SysadminExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.XPCMDShellExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.UserImpersonateExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.NTLMCoerceExecutor{})
+	modules.CapabilityRegistry.Register(&mssql.LinkedServerExecutor{})
+	modules.CapabilityRegistry.Register(&adcs.ESC4Executor{})
+	modules.CapabilityRegistry.Register(&adcs.ESC7Executor{})
+	modules.CapabilityRegistry.Register(&targetedkerberoast.Executor{})
+	modules.CapabilityRegistry.Register(&krbrelayup.Executor{})
+	modules.CapabilityRegistry.Register(&webshell.Executor{})
 
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	rootCmd.PersistentFlags().StringVarP(&dbPath, "db", "d", "", "database path (default ~/.adpack/state.db)")
+	rootCmd.PersistentFlags().StringVar(&hashcatPathFlag, "hashcat-path", "", "path to hashcat binary (overrides config)")
+	rootCmd.PersistentFlags().StringVar(&wordlistFlag, "wordlist", "", "path to wordlist (overrides config)")
+	rootCmd.PersistentFlags().StringVar(&rulesFlag, "rules", "", "comma-separated hashcat rule files (overrides config)")
+	rootCmd.PersistentFlags().IntVar(&crackTimeoutF, "crack-timeout", 0, "timeout in seconds per hash (overrides config)")
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "completion [bash|zsh|fish|powershell]",
@@ -292,6 +336,22 @@ func init() {
 				}
 				fmt.Printf("  %-12s %s\n", p.Name, p.Description)
 			}
+			return nil
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "loot",
+		Short: "Display comprehensive loot summary from current state",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			state, err := DB.LoadState()
+			if err != nil {
+				return fmt.Errorf("load state: %w", err)
+			}
+			modules.PrintLootSummary(state)
+			fmt.Println()
+			modules.PrintVulnCoverage(modules.AssessVulnCoverage(state))
+			fmt.Println()
 			return nil
 		},
 	})

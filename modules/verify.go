@@ -45,7 +45,7 @@ func VerifyState(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabili
 	case strings.Contains(capLower, "write_dacl"), strings.Contains(capLower, "generic_all"):
 		return verifyDacl(ctx, source, target, domain, user, pass, targetIP)
 	default:
-		// DCSYNC and CERT_AUTH are already validated by tool output
+		// DCSYNC, CERT_AUTH, and MSSQL are already validated by tool output
 		return VerifyResult{Passed: true, Confidence: 0.7, Evidence: "skipped (tool output verified)"}
 	}
 }

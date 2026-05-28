@@ -24,13 +24,6 @@ type NanodumpConfig struct {
 	Werfault bool
 }
 
-func DefaultNanodumpConfig() NanodumpConfig {
-	return NanodumpConfig{
-		Binary: "nanodump",
-		Output: fmt.Sprintf("lsass_%d.dmp", os.Getpid()),
-	}
-}
-
 func (n nanodumpTool) Run(ctx context.Context, req ExecutionRequest) (*ExecutionResult, error) {
 	args := []string{}
 	if req.Evasion == "fork" {
@@ -55,13 +48,6 @@ func (n nanodumpTool) Run(ctx context.Context, req ExecutionRequest) (*Execution
 		}
 	}
 	return cmdResultToExecResult(cr), nil
-}
-
-func (n nanodumpTool) DumpToFile(ctx context.Context, path string) (*ExecutionResult, error) {
-	return n.Run(ctx, ExecutionRequest{
-		Evasion: "fork",
-		Args:    []string{"--write", path},
-	})
 }
 
 func (n nanodumpTool) ParseDump(ctx context.Context, dmpPath string) (*ExecutionResult, error) {

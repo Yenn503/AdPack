@@ -12,8 +12,6 @@ const (
 	ServiceNTLMRelay ServiceType = "ntlmrelayx"
 	ServiceResponder ServiceType = "responder"
 	ServiceCoercion  ServiceType = "coercer"
-	ServiceWebDAV    ServiceType = "webdav"
-	ServiceHTTPRelay ServiceType = "http_relay"
 	ServiceResolver  ServiceType = "resolver"
 	ServiceMitm6     ServiceType = "mitm6"
 )
@@ -36,12 +34,9 @@ type ServiceEventType string
 const (
 	EvServiceStarted      ServiceEventType = "service.started"
 	EvServiceStopped      ServiceEventType = "service.stopped"
-	EvServiceFailed       ServiceEventType = "service.failed"
-	EvServiceHeartbeat    ServiceEventType = "service.heartbeat"
 	EvSessionCaptured     ServiceEventType = "session.captured"
 	EvHashCaptured        ServiceEventType = "hash.captured"
 	EvEdgeMaterialized    ServiceEventType = "edge.materialized"
-	EvEdgeInvalidated     ServiceEventType = "edge.invalidated"
 	EvCredentialAcquired  ServiceEventType = "credential.acquired"
 	EvCoerceAttempt       ServiceEventType = "coerce.attempt"
 	EvCoerceSuccess       ServiceEventType = "coerce.success"

@@ -128,6 +128,63 @@ func ReconcileCrossCheck(predicted core.ExecutionResult, cap core.Capability, to
 				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
 			})
 		}
+	case strings.Contains(capLower, "mssql_impersonate"):
+		if !containsAny(outputLower, "is_sysadmin", "1", "execute as", "impersonat") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "impersonation_sysadmin",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "mssql_sysadmin"):
+		if !containsAny(outputLower, "command(s) completed", "configuration option", "xp_cmdshell", "reconfigur") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "xp_cmdshell_enabled",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "mssql_xp_cmdshell"):
+		if !containsAny(outputLower, "nt authority", "nt service") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "command_execution_result",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "adcs_cert_enroll"):
+		if !containsAny(outputLower, "requested certificate", "saved certificate", ".pfx", "got certificate") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "certificate_enrolled",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "adcs_pkinit_auth"):
+		if !containsAny(outputLower, "got tgt", ".ccache", "ticket cache", "krb5cc") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "pkinit_tgt_obtained",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "rbcd"):
+		if !containsAny(outputLower, "allowedtoact", "delegated", "rbcd", "sdpropogat") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "rbcd_configured",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "shadow_cred"):
+		if !containsAny(outputLower, "keycredential", "shadow", "device registration", "keyset") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "shadow_credential_added",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "ldap_spray"):
+		if !containsAny(outputLower, "password spray", "spray", "valid password", "found valid cred") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "spray_completed",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+
 	case strings.Contains(capLower, "s4u_delegation"):
 		// impacket-getST prints "Saving ticket in" + ".ccache" on success.
 		// Failures usually contain "KDC_ERR_BADOPTION" or
@@ -136,6 +193,21 @@ func ReconcileCrossCheck(predicted core.ExecutionResult, cap core.Capability, to
 			mismatches = append(mismatches, ReconMismatch{
 				Field: "output_indicator", Expected: "tgs_obtained",
 				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+	case strings.Contains(capLower, "extra_sid_golden_ticket"):
+		// ExtraSid: multi-step chain that emits TICKET_SUCCESS: marker
+		// when the forged ticket is written. The full secretsdump and
+		// lookupsid output is captured in the tool output for audit.
+		if !containsAny(outputLower, "ticket_success:", "sid_history:") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "output_indicator", Expected: "forged_ticket_with_sid_history",
+				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),
+			})
+		}
+		if containsAny(outputLower, "extrasid_fail:") {
+			mismatches = append(mismatches, ReconMismatch{
+				Field: "extrasid_fail", Expected: "success", Actual: "extrasid_fail found in output",
 			})
 		}
 	}

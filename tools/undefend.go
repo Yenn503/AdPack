@@ -42,17 +42,6 @@ func (u unDefendTool) Run(ctx context.Context, req ExecutionRequest) (*Execution
 	return cmdResultToExecResult(r), nil
 }
 
-func (u unDefendTool) DeployViaSMB(ctx context.Context, target NetExecTarget, localPath, remoteDir string) (*ExecutionResult, error) {
-	if !u.Available() {
-		return nil, &ToolError{Tool: "UnDefend", Op: "deploy", Err: fmt.Errorf("UnDefend.exe not found locally")}
-	}
-	cr, err := NetExec.PutFile(ctx, target, localPath, remoteDir)
-	if err != nil {
-		return cmdResultToExecResult(cr), &ToolError{Tool: "UnDefend", Op: "deploy", Err: err, ExitCode: cr.ExitCode}
-	}
-	return cmdResultToExecResult(cr), nil
-}
-
 func (u unDefendTool) ExecRemote(ctx context.Context, target NetExecTarget, remotePath string, kill bool) (*ExecutionResult, error) {
 	cmd := remotePath
 	if kill {

@@ -1,11 +1,19 @@
 package config
 
+type CrackerConfig struct {
+	HashcatPath string   `yaml:"hashcat_path"`
+	Wordlist    string   `yaml:"wordlist"`
+	Rules       []string `yaml:"rules"`
+	Timeout     int      `yaml:"timeout_seconds"`
+}
+
 type Config struct {
-	DBPath    string      `yaml:"db_path"`
-	NmapArgs  []string    `yaml:"nmap_args"`
-	NxcPath   string      `yaml:"nxc_path"`
-	BHPython  string      `yaml:"bh_python"`
-	ViperOpts ViperConfig `yaml:"viper"`
+	DBPath    string        `yaml:"db_path"`
+	NmapArgs  []string      `yaml:"nmap_args"`
+	NxcPath   string        `yaml:"nxc_path"`
+	BHPython  string        `yaml:"bh_python"`
+	Cracking  CrackerConfig `yaml:"cracking"`
+	ViperOpts ViperConfig   `yaml:"viper"`
 }
 
 type ViperConfig struct {
@@ -23,6 +31,12 @@ func Default() Config {
 		NmapArgs: []string{"-T4", "-sn"},
 		NxcPath:  "netexec",
 		BHPython: "bloodhound-python",
+		Cracking: CrackerConfig{
+			HashcatPath: "/usr/bin/hashcat",
+			Wordlist:    "/usr/share/wordlists/rockyou.txt",
+			Rules:       []string{"/usr/share/hashcat/rules/best64.rule"},
+			Timeout:     600,
+		},
 		ViperOpts: ViperConfig{
 			Enabled: false,
 			Host:    "localhost",

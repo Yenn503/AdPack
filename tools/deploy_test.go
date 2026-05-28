@@ -60,18 +60,6 @@ func TestRandomizedName_NoExtension(t *testing.T) {
 	}
 }
 
-func TestPayloadDeployment_DefaultsApplied(t *testing.T) {
-	// We can't run a full DeployAndExec without netexec + a remote host, but we
-	// can verify the helper functions used inside it. The hashFile + randomizedName
-	// tests above already cover the deterministic primitives.
-	dep := PayloadDeployment{}
-	if dep.RemoteDir != "" {
-		t.Error("PayloadDeployment should not auto-set RemoteDir at struct-literal time")
-	}
-	// (DeployAndExec applies the default — that's tested by the live integration
-	//  flow, not in unit tests, since it would require a real DC.)
-}
-
 func sha256Hex(b []byte) string {
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])

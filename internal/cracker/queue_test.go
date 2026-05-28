@@ -45,7 +45,7 @@ func TestCrackWorkerHashcatMode(t *testing.T) {
 		ht   HashType
 		want string
 	}{
-		{HashKRB5TGS, "18200"},
+		{HashKRB5TGS, "13100"},
 		{HashKRB5ASREP, "18200"},
 		{HashNTLM, "1000"},
 		{"unknown", ""},

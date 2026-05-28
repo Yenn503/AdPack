@@ -2,6 +2,7 @@
 adpack
 adpack.exe
 adpack_linux
+adpack_v030dev
 *.exe
 *.dll
 *.so

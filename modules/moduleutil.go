@@ -22,3 +22,21 @@ var CapabilityRegistry *core.CapabilityRegistry
 // EnqueueHash is injected from cmd/ to feed captured hashes into the cracker pipeline.
 // Default noop so headless tests don't panic.
 var EnqueueHash func(hashType, hash, username, domain string)
+
+// findDC returns the first DC host from state matching the given domain.
+// If domain is empty or no DC matches, returns any DC. Falls back to zero-value.
+func findDC(state *core.ADState, domain string) core.Host {
+	var fallback core.Host
+	for _, h := range state.Hosts {
+		if !h.IsDC {
+			continue
+		}
+		if fallback.IP == "" {
+			fallback = h
+		}
+		if domain != "" && h.Domain == domain {
+			return h
+		}
+	}
+	return fallback
+}

@@ -27,13 +27,6 @@ var evidenceKinds = map[string]struct{}{
 	"unknown_method":   {},
 }
 
-func ValidEvidenceKind(kind string) error {
-	if _, ok := evidenceKinds[kind]; !ok {
-		return fmt.Errorf("unknown evidence kind %q", kind)
-	}
-	return nil
-}
-
 func newEvidence(kind string, target HostRef, action Action, payload any) ExecutionEvidence {
 	if _, ok := evidenceKinds[kind]; !ok {
 		panic(fmt.Sprintf("programming error: unknown evidence kind %q (must be registered in evidenceKinds)", kind))

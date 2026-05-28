@@ -3,6 +3,7 @@ package planner
 import (
 	"container/heap"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -136,18 +137,7 @@ func (p *Planner) preconditionsMet(edge core.PrivilegeEdge) bool {
 	for _, pc := range edge.Preconditions {
 		switch pc.Kind {
 		case core.PrecondPortOpen:
-			ports, ok := p.state.Exec.OpenPorts[pc.Target]
-			if !ok {
-				return false
-			}
-			found := false
-			for _, port := range ports {
-				if port == pc.Port {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !p.portOpen(pc.Target, pc.Port) {
 				return false
 			}
 		case core.PrecondProtocolReachable:
@@ -165,6 +155,26 @@ func (p *Planner) preconditionsMet(edge core.PrivilegeEdge) bool {
 		}
 	}
 	return true
+}
+
+func (p *Planner) portOpen(target string, port int) bool {
+	for _, openPort := range p.state.Exec.OpenPorts[target] {
+		if openPort == port {
+			return true
+		}
+	}
+	portString := strconv.Itoa(port)
+	for _, host := range p.state.Hosts {
+		if host.IP != target && !strings.EqualFold(host.Hostname, target) {
+			continue
+		}
+		for _, token := range strings.Split(host.PortsOpen, ",") {
+			if strings.TrimSpace(token) == portString {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // it to a scalar cost using the active policy's projection function. The
@@ -208,7 +218,7 @@ func (p *Planner) edgeCost(e core.PrivilegeEdge, capSet map[string]bool, ctx Pat
 }
 
 // highValueTargets returns the set of principal keys that are high-value
-// targets (DA users, DC computers, admin groups, AdminSDHolder).
+// targets (DA users, DC computers, admin groups, AdminSDHolder, SYSTEM@host).
 func (p *Planner) highValueTargets() (map[string]bool, map[string]bool) {
 	highValue := make(map[string]bool)
 	for _, u := range p.state.Users {
@@ -259,6 +269,15 @@ func (p *Planner) PlanPaths(startPrincipal string) []ScoredPath {
 
 	isHighValue := func(principal string) bool {
 		if highValue[principal] {
+			return true
+		}
+		// Check bare principal string for SYSTEM@ (no domain prefix)
+		if strings.HasPrefix(principal, "SYSTEM@") {
+			return true
+		}
+		// Check after any Domain\ prefix (planner prepends Domain\ to target keys)
+		_, after, hasSep := strings.Cut(principal, "\\")
+		if hasSep && strings.HasPrefix(after, "SYSTEM@") {
 			return true
 		}
 		_, name, ok := strings.Cut(principal, "\\")

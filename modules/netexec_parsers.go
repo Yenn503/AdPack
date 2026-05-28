@@ -680,9 +680,9 @@ var edgeWeight = map[string]rightProfile{
 	"DCSync":                   {3, 0.95, 1.0, []string{"impacket-secretsdump"}},
 	"AllowedToAuthenticate":    {5, 0.8, 0.6, []string{"nxc"}},
 	"UserAccountRestrictions":  {8, 0.3, 0.3, nil},
-	"MSSQL_EXECUTE_AS_LOGIN":   {5, 0.9, 0.4, []string{"nxc", "mssql"}},
-	"MSSQL_SYSADMIN":           {2, 1.0, 0.5, []string{"nxc", "mssql"}},
-	"MSSQL_XP_CMDSHELL":        {2, 1.0, 0.6, []string{"nxc", "mssql"}},
+	"MSSQL_EXECUTE_AS_LOGIN":   {5, 0.9, 0.4, []string{"nxc"}},
+	"MSSQL_SYSADMIN":           {2, 1.0, 0.5, []string{"nxc"}},
+	"MSSQL_XP_CMDSHELL":        {2, 1.0, 0.6, []string{"nxc"}},
 	"ADCS_ESC1":                {3, 0.9, 0.3, []string{"certipy"}},
 	"ADCS_ESC2":                {4, 0.8, 0.4, []string{"certipy"}},
 	"ADCS_ESC3":                {5, 0.7, 0.5, []string{"certipy"}},
@@ -769,11 +769,40 @@ func aceToEdge(ace struct {
 	}
 }
 
-// impersonateUserRe matches "username can impersonate target" patterns.
-var impersonateUserRe = regexp.MustCompile(`(?i)(\S+)\s+can\s+impersonate\s+(\S+)`)
+// impersonateUserRe matches "username can impersonate target" patterns,
+// including the colon format "can impersonate: target" used by nxc mssql.
+var impersonateUserRe = regexp.MustCompile(`(?i)(\S+)\s+can\s+impersonate:?\s+(\S+)`)
 
-// sysadminRe matches "[+] name: sysadmin" or "name is a sysadmin" patterns.
-var sysadminRe = regexp.MustCompile(`(?i)(\S+)\s*:\s*sysadmin|(\S+)\s+is\s+(?:a\s+)?sysadmin`)
+// impersonateDBUserRe matches "username can impersonate as user target" or
+// "can impersonate the user" patterns for EXECUTE AS USER permissions.
+var impersonateDBUserRe = regexp.MustCompile(`(?i)(\S+)\s+can\s+impersonate\s+(?:as\s+)?(?:the\s+)?user:?\s+(\S+)`)
+
+// sysadminRe matches "[+] name: sysadmin", "name is a sysadmin", "name is already a sysadmin",
+// or "name (sysadmin)" patterns.
+var sysadminRe = regexp.MustCompile(`(?i)(\S+)\s*:\s*sysadmin|(\S+)\s+is\s+(?:already\s+)?(?:a\s+)?sysadmin|(\S+)\s*\(sysadmin\)`)
+
+// normalizeDomainUser strips any NetBIOS domain prefix (e.g. "NORTH\user")
+// and replaces it with the FQDN domain (e.g. "north.sevenkingdoms.local\user").
+// This is used for credential-comparison contexts.
+func normalizeDomainUser(principal, domain string) string {
+	if idx := strings.Index(principal, "\\"); idx >= 0 {
+		principal = principal[idx+1:]
+	}
+	if domain != "" {
+		return domain + "\\" + principal
+	}
+	return principal
+}
+
+// stripDomainPrefix removes any NetBIOS domain prefix (e.g. "NORTH\user" → "user")
+// without adding a FQDN. This is used for edge SourcePrincipal/TargetPrincipal
+// fields that will later be combined with the edge's Domain field by the planner.
+func stripDomainPrefix(principal string) string {
+	if idx := strings.Index(principal, "\\"); idx >= 0 {
+		return principal[idx+1:]
+	}
+	return principal
+}
 
 // parseMSSQLImpersonations parses nxc mssql -M mssql_priv output into
 // privilege edges. Two edge types are produced:
@@ -791,80 +820,102 @@ func parseMSSQLImpersonations(output, domain, host string) []core.PrivilegeEdge 
 			continue
 		}
 
-		// Check for "can impersonate" pattern
+		// Track the impersonating user from this line (used as source for
+		// follow-on edges when the impersonation target has sysadmin).
+		// Stored as FQDN-qualified for seen-key consistency.
+		var impUser string
+
+		// Check for "can impersonate" pattern (login-level)
 		if m := impersonateUserRe.FindStringSubmatch(line); len(m) > 0 {
 			src := m[1]
 			tgt := m[2]
 			if src == "" || tgt == "" {
 				continue
 			}
-			sp := src
-			if !strings.Contains(sp, "\\") && domain != "" {
-				sp = domain + "\\" + sp
+			srcBare := stripDomainPrefix(src)
+			tgtBare := stripDomainPrefix(tgt)
+			sp := normalizeDomainUser(src, domain)
+			tp := normalizeDomainUser(tgt, domain)
+			srcKey := sp + "|" + tp + "|MSSQL_EXECUTE_AS_LOGIN"
+			if !seen[srcKey] {
+				seen[srcKey] = true
+				edges = append(edges, core.PrivilegeEdge{
+					SourcePrincipal: srcBare,
+					TargetPrincipal: tgtBare,
+					AccessRight:     "MSSQL_EXECUTE_AS_LOGIN",
+					EdgeType:        "mssql_impersonation",
+					Domain:          domain,
+					Source:          "mssql_priv",
+					Confidence:      0.9,
+					Weight:          5,
+					Exploitability:  0.9,
+					Noise:           0.4,
+					Requires:        []string{"nxc"},
+				})
 			}
-			tp := tgt
-			if !strings.Contains(tp, "\\") && domain != "" {
-				tp = domain + "\\" + tp
-			}
-			key := sp + "|" + tp + "|MSSQL_EXECUTE_AS_LOGIN"
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			edges = append(edges, core.PrivilegeEdge{
-				SourcePrincipal: sp,
-				TargetPrincipal: tp,
-				AccessRight:     "MSSQL_EXECUTE_AS_LOGIN",
-				EdgeType:        "mssql_impersonation",
-				Domain:          domain,
-				Source:          "mssql_priv",
-				Confidence:      0.9,
-				Weight:          5,
-				Exploitability:  0.9,
-				Noise:           0.4,
-				Requires:        []string{"nxc", "mssql"},
-			})
-			continue
+			impUser = sp
 		}
 
-		// Check for sysadmin status
+		// Check for user-level impersonation (EXECUTE AS USER)
+		if m := impersonateDBUserRe.FindStringSubmatch(line); len(m) > 0 {
+			src := m[1]
+			tgt := m[2]
+			if src == "" || tgt == "" {
+				continue
+			}
+			srcBare := stripDomainPrefix(src)
+			tgtBare := stripDomainPrefix(tgt)
+			sp := normalizeDomainUser(src, domain)
+			tp := normalizeDomainUser(tgt, domain)
+			srcKey := sp + "|" + tp + "|MSSQL_EXECUTE_AS_USER"
+			if !seen[srcKey] {
+				seen[srcKey] = true
+				edges = append(edges, core.PrivilegeEdge{
+					SourcePrincipal: srcBare,
+					TargetPrincipal: tgtBare,
+					AccessRight:     "MSSQL_EXECUTE_AS_USER",
+					EdgeType:        "mssql_impersonation",
+					Domain:          domain,
+					Source:          "mssql_priv",
+					Confidence:      0.85,
+					Weight:          6,
+					Exploitability:  0.8,
+					Noise:           0.4,
+					Requires:        []string{"nxc"},
+				})
+			}
+			if impUser == "" {
+				impUser = sp
+			}
+		}
+
+		// Check for sysadmin status. When a sysadmin login appears on a line
+		// that also has an impersonation match, the xp_cmdshell edge is
+		// attributed to the impersonating user (they can leverage the
+		// sysadmin rights through EXECUTE AS).
 		if m := sysadminRe.FindStringSubmatch(line); len(m) > 0 {
 			login := m[1]
 			if login == "" {
 				login = m[2]
 			}
+			if login == "" && len(m) > 3 {
+				login = m[3]
+			}
 			if login == "" {
 				continue
 			}
-			lp := login
-			if !strings.Contains(lp, "\\") && domain != "" {
-				lp = domain + "\\" + lp
+			sysSrc := impUser
+			if sysSrc == "" {
+				sysSrc = normalizeDomainUser(login, domain)
 			}
-			key := lp + "|sa|MSSQL_SYSADMIN"
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			edges = append(edges, core.PrivilegeEdge{
-				SourcePrincipal: lp,
-				TargetPrincipal: domain + "\\sa",
-				AccessRight:     "MSSQL_SYSADMIN",
-				EdgeType:        "mssql_impersonation",
-				Domain:          domain,
-				Source:          "mssql_priv",
-				Confidence:      0.95,
-				Weight:          2,
-				Exploitability:  1.0,
-				Noise:           0.5,
-				Requires:        []string{"nxc", "mssql"},
-			})
+			sysSrcBare := stripDomainPrefix(sysSrc)
 
 			// From sysadmin, xp_cmdshell provides SYSTEM-level execution on the host.
-			xpKey := lp + "|SYSTEM@" + host + "|MSSQL_XP_CMDSHELL"
+			xpKey := sysSrc + "|SYSTEM@" + host + "|MSSQL_XP_CMDSHELL"
 			if !seen[xpKey] {
 				seen[xpKey] = true
 				edges = append(edges, core.PrivilegeEdge{
-					SourcePrincipal: lp,
+					SourcePrincipal: sysSrcBare,
 					TargetPrincipal: "SYSTEM@" + host,
 					AccessRight:     "MSSQL_XP_CMDSHELL",
 					EdgeType:        "mssql_impersonation",
@@ -874,7 +925,7 @@ func parseMSSQLImpersonations(output, domain, host string) []core.PrivilegeEdge 
 					Weight:          2,
 					Exploitability:  1.0,
 					Noise:           0.6,
-					Requires:        []string{"nxc", "mssql"},
+					Requires:        []string{"nxc"},
 					Preconditions: []core.ExecutionPrecondition{
 						{Kind: core.PrecondPortOpen, Target: host, Port: 1433, Description: "MSSQL port reachable"},
 					},
@@ -1150,4 +1201,50 @@ func extractComputerFromDN(dn string) string {
 		}
 	}
 	return ""
+}
+
+func parseMSSQLLinkedServers(output, domain, host string) []core.PrivilegeEdge {
+	var edges []core.PrivilegeEdge
+	seen := make(map[string]bool)
+	lines := strings.Split(output, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.Contains(line, "[*]") || !strings.Contains(line, "-") {
+			continue
+		}
+		idx := strings.LastIndex(line, "-")
+		if idx < 0 {
+			continue
+		}
+		linkedName := strings.TrimSpace(line[idx+1:])
+		if linkedName == "" {
+			continue
+		}
+		key := linkedName + "|MSSQL_LINKED_SERVER|" + host
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		edges = append(edges, core.PrivilegeEdge{
+			SourcePrincipal: linkedName,
+			TargetPrincipal: "SYSTEM@" + host,
+			AccessRight:     "MSSQL_LINKED_SERVER",
+			EdgeType:        "mssql_linked",
+			Domain:          domain,
+			Source:          "mssql_linked",
+			Confidence:      0.8,
+			Weight:          4,
+			Exploitability:  0.85,
+			Noise:           0.5,
+			Requires:        []string{"nxc"},
+			Preconditions: []core.ExecutionPrecondition{
+				{Kind: core.PrecondPortOpen, Target: host, Port: 1433, Description: "MSSQL port reachable"},
+			},
+		})
+	}
+	return edges
 }

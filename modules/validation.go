@@ -60,10 +60,18 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 
 	validatedCount := 0
 	adminCount := 0
+	alreadyValidated := 0
 
 	for i, cred := range state.Creds {
 		if cred.Validated {
+			alreadyValidated++
 			fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Skipping already validated: %s\\%s", cred.Domain, cred.Username)))
+			continue
+		}
+
+		// Skip hash-only creds (Kerberos AS-REP/TGS hashes can't do SMB/LDAP auth)
+		if cred.Type == core.CredHash && cred.Secret == "" {
+			fmt.Println(utils.WarningStyle.Render(fmt.Sprintf("[*] Skipping hash-only credential (needs cracking): %s\\%s", cred.Domain, cred.Username)))
 			continue
 		}
 
@@ -132,9 +140,9 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 		}
 	}
 
-	fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("\n[+] Validation complete: %d/%d valid (%d admin)", validatedCount, len(state.Creds), adminCount)))
+	fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("\n[+] Validation complete: %d/%d valid (%d admin)", validatedCount+alreadyValidated, len(state.Creds), adminCount)))
 
-	result.Success = validatedCount > 0
+	result.Success = (validatedCount + alreadyValidated) > 0
 	return result
 }
 

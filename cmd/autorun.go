@@ -10,6 +10,7 @@ import (
 	"adpack/core"
 	"adpack/modules"
 	"adpack/utils"
+
 	"charm.land/lipgloss/v2"
 	"github.com/spf13/cobra"
 )
@@ -84,10 +85,11 @@ past failed phases instead of stopping.`,
 		}
 
 		phasesRun := 0
+		var credsAtLastRun int
+
 		for {
 			if maxPhases > 0 && phasesRun >= maxPhases {
-				fmt.Printf("\n  %s  Limit reached (%d phases executed)\n",
-					utils.InfoStyle.Render("■"), maxPhases)
+				utils.LimitReached(maxPhases)
 				break
 			}
 
@@ -96,19 +98,19 @@ past failed phases instead of stopping.`,
 			if err != nil {
 				return fmt.Errorf("reload state: %w", err)
 			}
+			if phasesRun == 0 {
+				credsAtLastRun = len(state.Creds)
+			}
 			engine := core.NewEngine(state)
 
 			rec := engine.Evaluate()
 			if rec.Phase == "" {
-				fmt.Printf("\n  %s  %s\n", utils.SuccessStyle.Render("✓"), rec.Rationale)
+				utils.AllComplete()
 				break
 			}
 
 			// Phase header
-			fmt.Printf("  %s  %s\n",
-				lipgloss.NewStyle().Bold(true).Foreground(utils.ColorPrimary).Render(fmt.Sprintf("[%d]", phasesRun+1)),
-				lipgloss.NewStyle().Bold(true).Render(strings.ToUpper(string(rec.Phase))))
-			fmt.Printf("      %s\n\n", lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(rec.Rationale))
+			utils.PhaseHeader(phasesRun+1, string(rec.Phase), rec.Rationale)
 
 			state.Phases[rec.Phase] = core.PhaseInProgress
 			DB.SavePhases(state)
@@ -127,15 +129,13 @@ past failed phases instead of stopping.`,
 						DB.SaveEvidence(ev)
 					}
 					success = true
-					fmt.Printf("      %s  %d host(s) discovered\n", utils.SuccessStyle.Render("✓"), len(result.Hosts))
+					utils.StepOk(fmt.Sprintf("%d host(s) discovered", len(result.Hosts)))
 					for _, h := range result.Hosts {
 						dc := ""
 						if h.IsDC {
 							dc = utils.WarningStyle.Render(" [DC]")
 						}
-						fmt.Printf("         %s  %s%s\n",
-							lipgloss.NewStyle().Foreground(utils.ColorSecondary).Render("·"),
-							h.IP, dc)
+						utils.Finding(h.IP, dc)
 					}
 				}
 
@@ -152,15 +152,14 @@ past failed phases instead of stopping.`,
 						DB.SaveEvidence(ev)
 					}
 					success = true
-					fmt.Printf("      %s  %d user(s) enumerated\n", utils.SuccessStyle.Render("✓"), len(result.Users))
+					utils.StepOk(fmt.Sprintf("%d user(s) enumerated", len(result.Users)))
 					if len(result.Creds) > 0 {
-						fmt.Printf("      %s  %d credential(s) found in descriptions\n",
-							utils.SuccessStyle.Render("✓"), len(result.Creds))
+						utils.StepOk(fmt.Sprintf("%d credential(s) found in descriptions", len(result.Creds)))
 					}
 				}
 
 			case core.PhaseCredentialAcq:
-				fmt.Printf("      %s  Kerberos pre-check...\n", utils.InfoStyle.Render("→"))
+				utils.Step("Kerberos pre-check...")
 				kr := modules.RunKerberos(state, targetHost)
 				for _, u := range kr.Users {
 					DB.SaveUser(u)
@@ -181,18 +180,16 @@ past failed phases instead of stopping.`,
 						DB.SaveCred(c)
 					}
 					success = true
-					fmt.Printf("      %s  %d credential(s) acquired\n", utils.SuccessStyle.Render("✓"), len(result.Creds))
+					utils.StepOk(fmt.Sprintf("%d credential(s) acquired", len(result.Creds)))
 					for _, c := range result.Creds {
 						secret := ""
 						if c.Secret != "" {
-							secret = "  " + lipgloss.NewStyle().Foreground(utils.ColorWarning).Render(c.Secret)
+							secret = utils.ValStyle.Render(c.Secret)
 						}
-						fmt.Printf("         %s  %s\\%s%s\n",
-							lipgloss.NewStyle().Foreground(utils.ColorSecondary).Render("·"),
-							c.Domain, c.Username, secret)
+						utils.Finding(fmt.Sprintf("%s\\%s", c.Domain, c.Username), secret)
 					}
 				} else {
-					fmt.Printf("      %s  Credential acquisition failed\n", utils.ErrorStyle.Render("✗"))
+					utils.StepFail("Credential acquisition failed")
 				}
 
 			case core.PhaseValidation:
@@ -219,7 +216,7 @@ past failed phases instead of stopping.`,
 					DB.SaveSessions(result.Sessions)
 					state.Sessions = result.Sessions
 					success = true
-					fmt.Printf("      %s  %d session(s) harvested\n", utils.SuccessStyle.Render("✓"), len(result.Sessions))
+					utils.StepOk(fmt.Sprintf("%d session(s) harvested", len(result.Sessions)))
 				}
 
 			case core.PhaseGraphAnalysis:
@@ -246,14 +243,16 @@ past failed phases instead of stopping.`,
 						DB.SaveUser(u)
 					}
 					success = true
-					fmt.Printf("      %s  %d computer(s), %d GPO(s), %d ADCS template(s)\n",
-						utils.SuccessStyle.Render("✓"),
-						len(result.Computers), len(result.GPOs), len(result.ADCS))
+					utils.StepOk(fmt.Sprintf("%d computer(s), %d GPO(s), %d ADCS template(s)",
+						len(result.Computers), len(result.GPOs), len(result.ADCS)))
 				}
 
 			case core.PhaseLateral:
 				result := modules.RunLateral(state, targetHost)
 				if result.Success {
+					for _, h := range result.Hosts {
+						DB.SaveHost(h)
+					}
 					for _, ev := range result.Evidence {
 						DB.SaveEvidence(ev)
 					}
@@ -270,7 +269,7 @@ past failed phases instead of stopping.`,
 						fmt.Printf("[!] save state after privesc: %v\n", err)
 					}
 					success = true
-					fmt.Printf("      %s  Privesc checks completed\n", utils.SuccessStyle.Render("✓"))
+					utils.StepOk("Privesc checks completed")
 				}
 
 			case core.PhasePersistence:
@@ -283,7 +282,7 @@ past failed phases instead of stopping.`,
 						fmt.Printf("[!] save state after persistence: %v\n", err)
 					}
 					success = true
-					fmt.Printf("      %s  Persistence mechanisms deployed\n", utils.SuccessStyle.Render("✓"))
+					utils.StepOk("Persistence mechanisms deployed")
 				}
 
 			default:
@@ -295,10 +294,7 @@ past failed phases instead of stopping.`,
 			if success {
 				state.Phases[rec.Phase] = core.PhaseComplete
 				DB.SavePhases(state)
-				fmt.Printf("\n      %s  %s  %s\n",
-					utils.SuccessStyle.Render("✓ complete"),
-					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("·"),
-					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))
+				utils.PhaseComplete(elapsed)
 			} else {
 				status := core.PhaseFailed
 				if !skipFail {
@@ -318,13 +314,30 @@ past failed phases instead of stopping.`,
 					}
 				}
 				DB.SavePhases(state)
-				fmt.Printf("\n      %s  %s\n",
-					utils.ErrorStyle.Render("✗ failed"),
-					lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(elapsed.String()))
+				utils.PhaseFailed(elapsed)
 				if !skipFail {
-					fmt.Printf("\n  %s  Stopping. Use --skip-fail to continue past failures.\n",
-						utils.WarningStyle.Render("!"))
+					utils.StepWarn("Stopping. Use --skip-fail to continue past failures.")
 					break
+				}
+			}
+
+			freshState, loadErr := DB.LoadState()
+			if loadErr != nil {
+				utils.StepWarn(fmt.Sprintf("DB.LoadState error during credential re-run check: %v", loadErr))
+			}
+			if loadErr == nil && len(freshState.Creds) > credsAtLastRun {
+				credsAtLastRun = len(freshState.Creds)
+				resetPhases := false
+				for _, p := range []core.Phase{core.PhaseCredentialAcq, core.PhaseValidation} {
+					if freshState.Phases[p] == core.PhaseComplete {
+						freshState.Phases[p] = core.PhaseUntouched
+						resetPhases = true
+					}
+				}
+				if resetPhases {
+					utils.StepInfo(fmt.Sprintf("New creds appeared (%d total) — re-running credential acquisition", credsAtLastRun))
+					DB.SavePhases(freshState)
+					state.Phases = freshState.Phases
 				}
 			}
 
@@ -340,14 +353,11 @@ past failed phases instead of stopping.`,
 
 		// ── Summary ───────────────────────────────────────────────────────
 		state, _ = DB.LoadState()
-		fmt.Println(lipgloss.NewStyle().Foreground(utils.ColorSecondary).Render("  " + strings.Repeat("─", 52)))
-		fmt.Printf("  %s  %d phases executed  ·  %d hosts  ·  %d users  ·  %d creds (%d validated)\n",
-			utils.InfoStyle.Render("■"),
-			phasesRun,
-			len(state.Hosts),
-			len(state.Users),
-			len(state.Creds),
-			countValidated(state.Creds))
+		utils.Summary(phasesRun, len(state.Hosts), len(state.Users), len(state.Creds), countValidated(state.Creds))
+		fmt.Println()
+
+		modules.PrintLootSummary(state)
+		modules.PrintVulnCoverage(modules.AssessVulnCoverage(state))
 		fmt.Println()
 
 		return nil

@@ -24,12 +24,18 @@ func RunKerberos(state *core.ADState, targetHost string) *core.ToolResult {
 		return result
 	}
 
-	asrep := runASREPRoast(domain, user, pass, targetHost)
+	// Use DC IP for Kerberos operations, fall back to target host
+	dcIP := targetHost
+	if dc := findDC(state, domain); dc.IP != "" {
+		dcIP = dc.IP
+	}
+
+	asrep := runASREPRoast(domain, user, pass, dcIP)
 	result.Creds = append(result.Creds, asrep.Creds...)
 	result.Evidence = append(result.Evidence, asrep.Evidence...)
 	result.Users = append(result.Users, asrep.Users...)
 
-	spn := runKerberoast(domain, user, pass, targetHost)
+	spn := runKerberoast(domain, user, pass, dcIP)
 	result.Creds = append(result.Creds, spn.Creds...)
 	result.Evidence = append(result.Evidence, spn.Evidence...)
 	result.Users = append(result.Users, spn.Users...)
@@ -71,10 +77,7 @@ func runASREPRoast(domain, user, pass, target string) *core.ToolResult {
 			Value:     "AS-REP roastable - no preauth required",
 			Timestamp: time.Now(),
 		})
-		result.Creds = append(result.Creds, core.Credential{
-			Type: "hash", Username: username, Domain: userDomain,
-			Secret: m[0], Source: "asrep_roast",
-		})
+		result.Creds = append(result.Creds, roastHashCredential(username, userDomain, m[0], "asrep_roast"))
 		if EnqueueHash != nil {
 			EnqueueHash("krb5asrep", m[0], username, userDomain)
 		}
@@ -133,10 +136,7 @@ func runKerberoast(domain, user, pass, target string) *core.ToolResult {
 		if len(tgsMatch) >= 3 {
 			hashUsername := tgsMatch[1]
 			hashDomain := strings.ToLower(tgsMatch[2])
-			result.Creds = append(result.Creds, core.Credential{
-				Type: "hash", Username: hashUsername, Domain: hashDomain,
-				Secret: tgsMatch[0], Source: "kerberoast",
-			})
+			result.Creds = append(result.Creds, roastHashCredential(hashUsername, hashDomain, tgsMatch[0], "kerberoast"))
 			if EnqueueHash != nil {
 				EnqueueHash("krb5tgs", tgsMatch[0], hashUsername, hashDomain)
 			}
@@ -165,10 +165,7 @@ func runKerberoast(domain, user, pass, target string) *core.ToolResult {
 			Username: hashUsername, Domain: hashDomain,
 			Source: "kerberoast",
 		})
-		result.Creds = append(result.Creds, core.Credential{
-			Type: "hash", Username: hashUsername, Domain: hashDomain,
-			Secret: m[0], Source: "kerberoast",
-		})
+		result.Creds = append(result.Creds, roastHashCredential(hashUsername, hashDomain, m[0], "kerberoast"))
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
 			Source: "kerberoast", Key: hashUsername + "@" + hashDomain,
@@ -180,4 +177,14 @@ func runKerberoast(domain, user, pass, target string) *core.ToolResult {
 	}
 	fmt.Printf("[+] Kerberoast: %d SPN accounts found\n", len(result.Users))
 	return result
+}
+
+func roastHashCredential(username, domain, hash, source string) core.Credential {
+	return core.Credential{
+		Type:     core.CredHash,
+		Username: username,
+		Domain:   domain,
+		Hash:     hash,
+		Source:   source,
+	}
 }

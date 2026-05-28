@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"adpack/core"
 	"adpack/utils"
 )
 
@@ -138,49 +137,42 @@ func (n nxcTool) Run(ctx context.Context, target NetExecTarget, subcmd string, e
 	if !r.Success {
 		return r, fmt.Errorf("netexec failed: %s", r.Stderr)
 	}
+
+	combined := r.Stdout + "\n" + r.Stderr
+
+	// Validate auth evidence when credentials are provided. nxc exits 0 even
+	// on auth failure (it prints a [-] line and moves on), so exit code alone
+	// is insufficient. This check catches false-positive auth probes that
+	// would otherwise poison planner state and confidence scoring.
+	if target.Username != "" && !NxcAuthSucceeded(combined, target.Username) {
+		r.Success = false
+		return r, fmt.Errorf("auth failed for %s\\%s on %s",
+			target.Domain, target.Username, target.Host)
+	}
+
+	// Validate execution evidence for remote command execution (-x/-X).
+	// nxc exits 0 even when the user lacks admin rights and the command
+	// silently no-ops. This catches false-positive exec results that
+	// would make deploy/lateral/persistence look successful when they
+	// did nothing.
+	// Check both subcmd (direct -x/-X) and extraArgs (used by --exec-method).
+	if subcmd == "-x" || subcmd == "-X" {
+		if !NxcCommandSucceeded(combined) {
+			r.Success = false
+			return r, fmt.Errorf("command execution failed on %s (not admin?)", target.Host)
+		}
+	}
+	for _, a := range extraArgs {
+		if a == "-x" || a == "-X" {
+			if !NxcCommandSucceeded(combined) {
+				r.Success = false
+				return r, fmt.Errorf("command execution failed on %s (not admin?)", target.Host)
+			}
+			break
+		}
+	}
+
 	return r, nil
-}
-
-func (n nxcTool) AuthTest(ctx context.Context, target NetExecTarget) bool {
-	_, err := n.Run(ctx, target, "", nil)
-	return err == nil
-}
-
-func (n nxcTool) EnumUsers(ctx context.Context, target string) ([]core.User, error) {
-	r := utils.RunCommandCtx(ctx, "netexec", []string{"ldap", target, "--users"})
-	if !r.Success {
-		return nil, fmt.Errorf("netexec ldap enum failed: %s", r.Stderr)
-	}
-	var users []core.User
-	for _, line := range strings.Split(r.Stdout, "\n") {
-		if strings.Contains(line, "USER:") {
-			parts := strings.Split(line, "USER:")
-			if len(parts) > 1 {
-				username := strings.TrimSpace(strings.Split(parts[1], " ")[0])
-				if username != "" {
-					users = append(users, core.User{Username: username, Source: "netexec"})
-				}
-			}
-		}
-	}
-	return users, nil
-}
-
-func (n nxcTool) EnumShares(ctx context.Context, target NetExecTarget) ([]string, error) {
-	r, err := n.Run(ctx, target, "--shares", nil)
-	if err != nil {
-		return nil, err
-	}
-	var shares []string
-	for _, line := range strings.Split(r.Stdout, "\n") {
-		if strings.Contains(line, "SHARE:") {
-			parts := strings.Split(line, "SHARE:")
-			if len(parts) > 1 {
-				shares = append(shares, strings.TrimSpace(strings.Split(parts[1], " ")[0]))
-			}
-		}
-	}
-	return shares, nil
 }
 
 func (n nxcTool) PutFile(ctx context.Context, target NetExecTarget, localPath, remoteDir string) (utils.CmdResult, error) {
@@ -253,42 +245,4 @@ func (n nxcTool) RunFailover(ctx context.Context, target NetExecTarget, command 
 		}
 	}
 	return last, lastErr
-}
-
-// RunSystemCheck attempts to obtain SYSTEM context on the target by running
-// `whoami` through smbexec (service → SYSTEM) then atexec (schtask → SYSTEM).
-// Returns (method, true) when SYSTEM is confirmed, ("", false) otherwise.
-//
-// Skips wmiexec because wmiexec runs as the authenticated user, never SYSTEM.
-//
-// Two success paths are accepted:
-//  1. whoami output contains "nt authority\system" (output retrieved cleanly).
-//  2. nxc reports "executed command via" + "could not retrieve output file"
-//     (command ran as SYSTEM but Defender ate the output file). This is still
-//     SYSTEM — smbexec/atexec always run as LocalSystem.
-func (n nxcTool) RunSystemCheck(ctx context.Context, target NetExecTarget, perAttempt time.Duration) (string, utils.CmdResult, bool) {
-	if perAttempt <= 0 {
-		perAttempt = 45 * time.Second
-	}
-	for _, method := range []string{"smbexec", "atexec"} {
-		attemptCtx, cancel := context.WithTimeout(ctx, perAttempt)
-		r, err := n.Run(attemptCtx, target, "--exec-method", []string{method, "-x", "whoami"})
-		cancel()
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", r, false
-			}
-			continue
-		}
-		out := strings.ToLower(r.Stdout + r.Stderr)
-		if strings.Contains(out, "nt authority") && strings.Contains(out, "system") {
-			return method, r, true
-		}
-		// AV eating the output file is still SYSTEM — the task/service ran.
-		if strings.Contains(out, "executed command via") &&
-			strings.Contains(out, "could not retrieve output file") {
-			return method, r, true
-		}
-	}
-	return "", utils.CmdResult{}, false
 }

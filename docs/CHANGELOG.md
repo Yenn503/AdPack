@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.3.0 — Kill Chain Hardening, AV Evasion, Output Beautification
+
+### Kill Chain Fixes
+
+- **Validation phase no longer blocks privesc**: Hash-only credentials (AS-REP/Kerberoast) are skipped during validation since Kerberos hashes cannot authenticate via SMB/LDAP. Already-validated credentials now count toward phase success. Previously a single uncracked hash would fail the entire validation phase and stop the autorun before privesc could execute.
+- **NTLM hash parsing fixed**: `ParseNTLMOutput` now uses a regex (`USER:RID:LM:NTHASH:::`) that correctly extracts usernames from nxc output regardless of the SMB prefix format. No more `SMB  192.168.57.22  445  CASTELBLACK  Administrator` leaking into username fields.
+- **Credential acquisition pipeline**: `executeMimikatzPipeline` now falls back to `nanodump` when `go-mimikatz` is unavailable, instead of failing immediately.
+
+### AV Evasion
+
+- **Automatic AV kill**: `runUnDefendKill` deploys and executes UnDefend.exe `--kill` (aggressive mode) after SYSTEM access is confirmed. No profile flag gating — runs automatically.
+- **Post-SYSTEM flow**: SYSTEM check → UnDefend --kill → deep credential dump. AV detection via `nxc enum_av` removed (requires admin, unreliable). UnDefend runs blind — safe if Defender isn't present.
+- **UnDefend.exe symlink**: Points to adpack root copy for consistent availability.
+
+### Deep Credential Dump Pipeline
+
+- **`runDeepCredDump`**: Cascading credential extraction after AV disabled:
+  - Tier 1: `go-mimikatz` (richest output: plaintext passwords + NTLM hashes)
+  - Tier 2: `nanodump` + `pypykatz` (LSASS dump, reliable fallback)
+  - Graceful degradation with styled output at each tier
+- **Removed**: Broken real `mimikatz.exe` deployment (Kali wrapper script, parsing mismatches, Defender alerts).
+
+### Output Beautification
+
+- **All privesc output now uses styled helpers**: Every `fmt.Println("[*]...")` and `fmt.Printf("[!]...")` replaced with `utils.Step`, `utils.StepOk`, `utils.StepWarn`, `utils.StepInfo`, `utils.EdgeDisplay`, `utils.Finding`.
+- Consistent Lipgloss styling across: GPP check, ADCS enumeration, RBCD, ACL enumeration, MSSQL impersonation, linked servers, delegation, BloodHound, path planning, SYSTEM check, AV kill, deep cred dump, child-to-parent escalation.
+
+### Repository Hygiene
+
+- **`adpack_v030dev` binary untracked**: Added to `.gitignore`, removed from git tracking.
+- **`UnDefend.exe`**: Already covered by `*.exe` gitignore pattern.
+
+### Known Limitations
+
+- `go-mimikatz` requires Windows to build (uses `go generate` with Windows PE packer). Falls back to nanodump+pypykatz automatically.
+- ESC1/ESC4/ESC7/ESC8 exploitation detected but not yet auto-exploited.
+- Hash cracking (hashcat) integrated via `internal/cracker/worker.go` — NTLM/krb5tgs hashes auto-enqueued, cracked creds materialized into DB. GPU cracking via `--hashcat-path` flag.
+
 ## v0.2.0 — Provider Layer, Identity Normalisation, Documentation Overhaul
 
 ### Architecture
