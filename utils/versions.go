@@ -36,5 +36,9 @@ var WindowsBinaries = []struct{ Name, Desc string }{
 	{Name: "nanodump.exe", Desc: "LSASS memory dumper"},
 	{Name: "go-mimikatz.exe", Desc: "Credential extraction (optional, falls back to nanodump)"},
 	{Name: "PrintSpoofer64.exe", Desc: "SeImpersonate privilege escalation"},
-	{Name: "UnDefend.exe", Desc: "Defender neutralisation (optional)"},
+	{Name: "MiniPlasma.exe", Desc: "Cloud Filter EoP (CVE-2020-17103, SYSTEM via cldflt.sys)"},
+	{Name: "PPLShade.exe", Desc: "BYOVD PPL bypass (unprotect LSASS, kill EDR)"},
+	{Name: "LECOMAx64.sys", Desc: "Signed driver for PPLShade"},
+	{Name: "PhantomKiller.exe", Desc: "BYOVD process killer (terminate EDR via signed Lenovo driver)"},
+	{Name: "PhantomKiller.sys", Desc: "Signed Lenovo driver for PhantomKiller"},
 }

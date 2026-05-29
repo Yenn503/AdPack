@@ -268,8 +268,8 @@ const (
 
 var AllPhases = []Phase{
 	PhaseDiscovery, PhaseEnumeration, PhaseCredentialAcq,
-	PhaseSessionHarvest, PhaseGraphAnalysis, PhaseLateral,
-	PhaseValidation, PhasePrivEsc, PhasePersistence,
+	PhaseSessionHarvest, PhaseGraphAnalysis, PhaseValidation,
+	PhasePrivEsc, PhaseLateral, PhasePersistence,
 }
 
 func (p Phase) Dependencies() []Phase {

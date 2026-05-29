@@ -101,7 +101,7 @@ func RunSessionHarvest(ctx context.Context, provider core.DirectoryProvider, sta
 			}
 		} else {
 			stats.Unresolved++
-			fmt.Printf("         host identity unresolved (non-machine or empty): %s\n",
+			fmt.Printf("         user session (non-machine): %s\n",
 				sessions[i].Username)
 		}
 

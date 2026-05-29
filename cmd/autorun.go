@@ -63,7 +63,26 @@ past failed phases instead of stopping.`,
 				utils.InfoStyle.Render("→"), providerLogPath)
 		}
 
-		// Seed initial credentials from flags
+		// Evasion profile: CLI flag > config profile > default
+		if evasionProfile == "" {
+			evasionProfile = "undefend"
+			if Cfg != nil && Cfg.Profile != "" {
+				evasionProfile = Cfg.Profile
+			}
+		}
+
+		// Seed initial credentials: CLI flags > config seeds > config domain
+		if seedDomain == "" && Cfg != nil {
+			seedDomain = Cfg.Domain
+		}
+		if seedUser == "" && seedPass == "" && Cfg != nil && len(Cfg.Seeds) > 0 {
+			s := Cfg.Seeds[0]
+			seedUser = s.User
+			seedPass = s.Password
+			if seedDomain == "" {
+				seedDomain = s.Domain
+			}
+		}
 		if seedDomain != "" && seedUser != "" && seedPass != "" {
 			dbCreds, _ := DB.LoadCreds()
 			alreadySeeded := false
@@ -86,6 +105,7 @@ past failed phases instead of stopping.`,
 
 		phasesRun := 0
 		var credsAtLastRun int
+		credAcqReruns := 0
 
 		for {
 			if maxPhases > 0 && phasesRun >= maxPhases {
@@ -98,6 +118,8 @@ past failed phases instead of stopping.`,
 			if err != nil {
 				return fmt.Errorf("reload state: %w", err)
 			}
+			// Clean up bogus artifact users/creds on every reload
+			state = modules.FilterBogusState(state)
 			if phasesRun == 0 {
 				credsAtLastRun = len(state.Creds)
 			}
@@ -120,7 +142,7 @@ past failed phases instead of stopping.`,
 
 			switch rec.Phase {
 			case core.PhaseDiscovery:
-				result := modules.RunDiscovery(state, targetHost)
+				result := modules.RunDiscovery(state, targetHost, Cfg.Scope)
 				if result.Success {
 					for _, h := range result.Hosts {
 						DB.SaveHost(h)
@@ -159,29 +181,38 @@ past failed phases instead of stopping.`,
 				}
 
 			case core.PhaseCredentialAcq:
-				utils.Step("Kerberos pre-check...")
-				kr := modules.RunKerberos(state, targetHost)
-				for _, u := range kr.Users {
-					DB.SaveUser(u)
-				}
-				for _, c := range kr.Creds {
-					DB.SaveCred(c)
-				}
-				for _, ev := range kr.Evidence {
-					DB.SaveEvidence(ev)
+				var kr *core.ToolResult
+				if credAcqReruns == 0 {
+					utils.Step("Kerberos pre-check...")
+					kr = modules.RunKerberos(state, targetHost)
+					for _, u := range kr.Users {
+						DB.SaveUser(u)
+					}
+					for _, c := range kr.Creds {
+						DB.SaveCred(c)
+					}
+					for _, ev := range kr.Evidence {
+						DB.SaveEvidence(ev)
+					}
+				} else {
+					kr = &core.ToolResult{}
 				}
 
+				// Spray: runs every time (non-privileged, finds weak/default creds)
 				result := modules.RunCredentialAcq(state, evasionProfile, targetHost)
 				for _, ev := range result.Evidence {
 					DB.SaveEvidence(ev)
 				}
-				if result.Success {
-					for _, c := range result.Creds {
-						DB.SaveCred(c)
-					}
+				for _, c := range result.Creds {
+					DB.SaveCred(c)
+				}
+				if result.Success || len(kr.Creds) > 0 {
 					success = true
-					utils.StepOk(fmt.Sprintf("%d credential(s) acquired", len(result.Creds)))
-					for _, c := range result.Creds {
+					total := len(result.Creds) + len(kr.Creds)
+					if total > 0 {
+						utils.StepOk(fmt.Sprintf("%d credential(s) acquired", total))
+					}
+					for _, c := range append(kr.Creds, result.Creds...) {
 						secret := ""
 						if c.Secret != "" {
 							secret = utils.ValStyle.Render(c.Secret)
@@ -325,20 +356,17 @@ past failed phases instead of stopping.`,
 			if loadErr != nil {
 				utils.StepWarn(fmt.Sprintf("DB.LoadState error during credential re-run check: %v", loadErr))
 			}
-			if loadErr == nil && len(freshState.Creds) > credsAtLastRun {
+			if loadErr == nil && len(freshState.Creds) > credsAtLastRun && credAcqReruns < 2 {
 				credsAtLastRun = len(freshState.Creds)
-				resetPhases := false
+				credAcqReruns++
 				for _, p := range []core.Phase{core.PhaseCredentialAcq, core.PhaseValidation} {
-					if freshState.Phases[p] == core.PhaseComplete {
+					if freshState.Phases[p] != core.PhaseInProgress {
 						freshState.Phases[p] = core.PhaseUntouched
-						resetPhases = true
 					}
 				}
-				if resetPhases {
-					utils.StepInfo(fmt.Sprintf("New creds appeared (%d total) — re-running credential acquisition", credsAtLastRun))
-					DB.SavePhases(freshState)
-					state.Phases = freshState.Phases
-				}
+				utils.StepInfo(fmt.Sprintf("New creds appeared (%d total) — re-running credential acquisition (re-run %d/3)", credsAtLastRun, credAcqReruns))
+				DB.SavePhases(freshState)
+				state.Phases = freshState.Phases
 			}
 
 			fmt.Println()
@@ -366,8 +394,8 @@ past failed phases instead of stopping.`,
 
 func init() {
 	rootCmd.AddCommand(autoRunCmd)
-	autoRunCmd.Flags().StringVarP(&evasionProfile, "evasion-profile", "e", "standard",
-		"Evasion profile for credential acquisition")
+	autoRunCmd.Flags().StringVarP(&evasionProfile, "evasion-profile", "e", "",
+		"Evasion profile (standard|bypass|undefend|pplshade|phantomkiller|custom)")
 	autoRunCmd.Flags().StringVarP(&targetHost, "target", "t", "",
 		"Target host IP or hostname")
 	autoRunCmd.Flags().IntVarP(&maxPhases, "max", "m", 0,

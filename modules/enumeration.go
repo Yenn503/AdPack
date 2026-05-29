@@ -138,6 +138,11 @@ func parseNetExecUsers(output, domain string) ([]core.User, []core.Credential) {
 			continue
 		}
 
+		// Skip artifact/header lines that aren't real SAM account names
+		if isBogusUsername(first) {
+			continue
+		}
+
 		username := first
 		description := ""
 		if len(userFields) > 3 {

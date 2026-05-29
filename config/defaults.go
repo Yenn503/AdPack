@@ -9,6 +9,13 @@ type CrackerConfig struct {
 	Timeout     int      `yaml:"timeout_seconds"`
 }
 
+type SeedCred struct {
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	Hash     string `yaml:"hash"`
+	Domain   string `yaml:"domain"`
+}
+
 type Config struct {
 	DBPath       string            `yaml:"db_path"`
 	NmapArgs     []string          `yaml:"nmap_args"`
@@ -19,6 +26,9 @@ type Config struct {
 	Timing       core.TimingConfig `yaml:"timing"`
 	ViperOpts    ViperConfig       `yaml:"viper"`
 	Scope        []string          `yaml:"scope"`
+	Domain       string            `yaml:"domain"`
+	Profile      string            `yaml:"profile"`
+	Seeds        []SeedCred        `yaml:"seeds"`
 }
 
 type ViperConfig struct {

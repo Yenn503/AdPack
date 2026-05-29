@@ -9,9 +9,12 @@ type EvasionProfile struct {
 }
 
 var EvasionProfiles = struct {
-	Standard EvasionProfile
-	Bypass   EvasionProfile
-	Custom   EvasionProfile
+	Standard      EvasionProfile
+	Bypass        EvasionProfile
+	UnDefend      EvasionProfile
+	PPLShade      EvasionProfile
+	PhantomKiller EvasionProfile
+	Custom        EvasionProfile
 }{
 	Standard: EvasionProfile{
 		Name:           "standard",
@@ -24,7 +27,28 @@ var EvasionProfiles = struct {
 		Name:           "bypass",
 		DeliveryMethod: "go_binary",
 		PayloadSource:  "go-mimikatz",
-		Description:    "Standard profile with pre-flight Defender neutralisation",
+		Description:    "Standard profile with pre-flight Defender neutralisation via native commands",
+		PreCondition:   "undefend",
+	},
+	UnDefend: EvasionProfile{
+		Name:           "undefend",
+		DeliveryMethod: "exe",
+		PayloadSource:  "nanodump",
+		Description:    "Defender kill via native reg add/sc stop/taskkill, then dump LSASS with nanodump",
+		PreCondition:   "undefend",
+	},
+	PPLShade: EvasionProfile{
+		Name:           "pplshade",
+		DeliveryMethod: "exe",
+		PayloadSource:  "nanodump",
+		Description:    "Upload PPLShade.exe + LECOMAx64.sys driver, strip LSASS PPL, dump with nanodump",
+		PreCondition:   "undefend",
+	},
+	PhantomKiller: EvasionProfile{
+		Name:           "phantomkiller",
+		DeliveryMethod: "exe",
+		PayloadSource:  "nanodump",
+		Description:    "Upload PhantomKiller.sys + PhantomKiller.exe, load signed Lenovo driver, kill EDR, dump with nanodump",
 		PreCondition:   "undefend",
 	},
 	Custom: EvasionProfile{
@@ -39,6 +63,12 @@ func LookupProfile(name string) (EvasionProfile, bool) {
 		return EvasionProfiles.Standard, true
 	case "bypass":
 		return EvasionProfiles.Bypass, true
+	case "undefend":
+		return EvasionProfiles.UnDefend, true
+	case "pplshade":
+		return EvasionProfiles.PPLShade, true
+	case "phantomkiller":
+		return EvasionProfiles.PhantomKiller, true
 	case "custom":
 		return EvasionProfiles.Custom, true
 	}
@@ -46,7 +76,7 @@ func LookupProfile(name string) (EvasionProfile, bool) {
 }
 
 func ListProfiles() []string {
-	return []string{"standard", "bypass", "custom"}
+	return []string{"standard", "bypass", "undefend", "pplshade", "phantomkiller", "custom"}
 }
 
 func BaseProfileFor(name string) string {
@@ -55,14 +85,18 @@ func BaseProfileFor(name string) string {
 		return "standard"
 	case "bypass":
 		return "bypass"
+	case "undefend":
+		return "undefend"
+	case "pplshade":
+		return "pplshade"
+	case "phantomkiller":
+		return "phantomkiller"
 	case "custom":
 		return "custom"
 	}
 	return "standard"
 }
 
-// IsBypassProfile reports whether the named profile triggers a Defender/EDR
-// neutralisation pre-flight in modules that gate on it (privesc, credential_acq).
 func IsBypassProfile(name string) bool {
 	return BaseProfileFor(name) == "bypass"
 }

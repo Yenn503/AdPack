@@ -65,11 +65,21 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 	for i, cred := range state.Creds {
 		if cred.Validated {
 			alreadyValidated++
-			fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Skipping already validated: %s\\%s", cred.Domain, cred.Username)))
+			checked := false
+			if cred.Hash != "" {
+				if checkAdmin(cred, hosts) {
+					adminCount++
+					checked = true
+					fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Already validated (admin): %s\\%s", cred.Domain, cred.Username)))
+				}
+			}
+			if !checked {
+				fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Skipping already validated: %s\\%s", cred.Domain, cred.Username)))
+			}
 			continue
 		}
 
-		// Skip hash-only creds (Kerberos AS-REP/TGS hashes can't do SMB/LDAP auth)
+		// Skip unvalidated hash-only creds (Kerberos AS-REP/TGS hashes can't do SMB/LDAP auth)
 		if cred.Type == core.CredHash && cred.Secret == "" {
 			fmt.Println(utils.WarningStyle.Render(fmt.Sprintf("[*] Skipping hash-only credential (needs cracking): %s\\%s", cred.Domain, cred.Username)))
 			continue
@@ -312,6 +322,25 @@ func formatValidationOutput(vr ValidationResult) string {
 	lines = append(lines, fmt.Sprintf("Hosts: %s", strings.Join(vr.Hosts, ", ")))
 
 	return strings.Join(lines, " | ")
+}
+
+func checkAdmin(cred core.Credential, hosts []core.Host) bool {
+	ctx := context.Background()
+	for _, host := range hosts {
+		target := tools.NetExecTarget{
+			Protocol: "smb", Host: host.IP,
+			Domain: cred.Domain, Username: cred.Username,
+			Password: cred.Secret, Hash: cred.Hash,
+		}
+		r, err := tools.NetExec.Run(ctx, target, "", nil)
+		if err == nil && r.Success {
+			combined := r.Stdout + r.Stderr
+			if strings.Contains(combined, "Pwn3d!") || strings.Contains(combined, "(Pwn3d!)") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func contains(slice []string, item string) bool {

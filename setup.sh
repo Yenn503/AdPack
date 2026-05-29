@@ -149,14 +149,9 @@ pipx_install_verify() {
 install_netexec() { pipx_install_verify "netexec" "netexec"; }
 install_pypykatz() { pipx_install_verify "pypykatz" "pypykatz"; }
 
-install_donut() {
-    if command -v donut &> /dev/null; then success "Donut already installed"; return 0; fi
-    info "Installing Donut..."
-    cd /tmp
-    retry "Clone Donut" git clone https://github.com/TheWover/donut.git || { warn "Donut clone failed"; return 1; }
-    cd donut && make &>> "$LOG_FILE" && sudo cp donut /usr/local/bin/ && success "Donut installed"
-    cd /tmp && rm -rf donut
-}
+install_donut() { return 0; }
+install_gomimikatz() { return 0; }
+install_scarecrow() { return 0; }
 
 install_nanodump() {
     local exe_dir="$ORIG_CWD/exe"; mkdir -p "$exe_dir"
@@ -172,36 +167,22 @@ install_nanodump() {
     cd /tmp && rm -rf nanodump
 }
 
-install_gomimikatz() {
-    local exe_dir="$ORIG_CWD/exe"; mkdir -p "$exe_dir"
-    info "Checking go-mimikatz..."
-    # go-mimikatz requires Windows to build (go generate + PE packer). Skip on Linux.
-    if [[ -f "$exe_dir/go-mimikatz.exe" ]]; then success "go-mimikatz.exe already in exe/"; return 0; fi
-    warn "go-mimikatz requires Windows build (go generate with PE packer)."
-    warn "Build on Windows: cd go-mimikatz && go generate && go build -o go-mimikatz.exe ."
-    warn "Then copy go-mimikatz.exe to $exe_dir/"
-    warn "adpack falls back to nanodump+pypykatz automatically."
-}
-
-install_scarecrow() {
-    if command -v ScareCrow &> /dev/null; then success "ScareCrow already installed"; return 0; fi
-    info "Building ScareCrow..."
-    cd /tmp
-    retry "Clone ScareCrow" git clone https://github.com/optiv/ScareCrow.git || { warn "ScareCrow clone failed"; return 1; }
-    cd ScareCrow && go build -o ScareCrow main.go &>> "$LOG_FILE" && sudo cp ScareCrow /usr/local/bin/ && success "ScareCrow installed"
-    cd /tmp && rm -rf ScareCrow
-}
-
 install_miniplasma() {
     local exe_dir="$ORIG_CWD/exe"; mkdir -p "$exe_dir"
     if [[ -f "$exe_dir/MiniPlasma.exe" ]]; then success "MiniPlasma already in exe/"; return 0; fi
     info "Downloading MiniPlasma..."
     cd /tmp
-    wget -q "https://github.com/Nightmare-Eclipse/MiniPlasma/releases/download/main-release/PoC_AbortHydration_ArbitraryRegKey_EoP.exe" -O MiniPlasma.exe &>> "$LOG_FILE"
-    if [[ -f "MiniPlasma.exe" ]] && [[ -s "MiniPlasma.exe" ]]; then
-        cp MiniPlasma.exe "$exe_dir/" && success "MiniPlasma installed ($(ls -lh "$exe_dir/MiniPlasma.exe" | awk '{print $5}'))"
+    if wget -q --spider "https://github.com/Nightmare-Eclipse/MiniPlasma/releases/download/main-release/PoC_AbortHydration_ArbitraryRegKey_EoP.exe" 2>/dev/null; then
+        wget -q "https://github.com/Nightmare-Eclipse/MiniPlasma/releases/download/main-release/PoC_AbortHydration_ArbitraryRegKey_EoP.exe" -O MiniPlasma.exe &>> "$LOG_FILE"
+        if [[ -f "MiniPlasma.exe" ]] && [[ -s "MiniPlasma.exe" ]]; then
+            cp MiniPlasma.exe "$exe_dir/" && success "MiniPlasma installed ($(ls -lh "$exe_dir/MiniPlasma.exe" | awk '{print $5}'))"
+        else
+            warn "MiniPlasma download failed"
+        fi
     else
-        warn "MiniPlasma download failed — build manually if needed"
+        warn "MiniPlasma GitHub repo unavailable."
+        warn "Build manually from source: https://github.com/Nightmare-Eclipse/MiniPlasma"
+        warn "Place MiniPlasma.exe in: $exe_dir/"
     fi
     rm -f /tmp/MiniPlasma.exe
 }
@@ -218,15 +199,38 @@ install_printspoofer() {
     rm -f /tmp/PrintSpoofer64.exe
 }
 
-install_undefend() {
+install_pplshade() {
     local exe_dir="$ORIG_CWD/exe"; mkdir -p "$exe_dir"
-    if [[ -f "$exe_dir/UnDefend.exe" ]]; then success "UnDefend already in exe/"; return 0; fi
-    # UnDefend is private — check if it exists in repo root
-    if [[ -f "$ORIG_CWD/UnDefend.exe" ]]; then
-        cp "$ORIG_CWD/UnDefend.exe" "$exe_dir/" && success "UnDefend copied from repo root"
+    if [[ -f "$exe_dir/PPLShade.exe" ]]; then success "PPLShade already in exe/"; return 0; fi
+    info "Downloading PPLShade (BYOVD PPL bypass)..."
+    cd /tmp
+    wget -q "https://github.com/redteamfortress/PPLShade/releases/download/v1.0.0/Release.zip" -O PPLShade.zip &>> "$LOG_FILE"
+    if [[ -f "PPLShade.zip" ]] && [[ -s "PPLShade.zip" ]]; then
+        unzip -o PPLShade.zip &>> "$LOG_FILE"
+        cp PPLShade.exe "$exe_dir/" 2>/dev/null || warn "PPLShade.exe not in zip (check structure)"
+        cp LECOMAx64.sys "$exe_dir/" 2>/dev/null || warn "LECOMAx64.sys not in zip"
+        success "PPLShade installed"
     else
-        warn "UnDefend.exe not found — place your private build in exe/UnDefend.exe"
+        warn "PPLShade download failed — build manually from https://github.com/redteamfortress/PPLShade"
     fi
+    rm -rf /tmp/PPLShade.zip /tmp/PPLShade /tmp/Release 2>/dev/null
+}
+
+install_phantomkiller() {
+    local exe_dir="$ORIG_CWD/exe"; mkdir -p "$exe_dir"
+    if [[ -f "$exe_dir/PhantomKiller.exe" ]]; then success "PhantomKiller already in exe/"; return 0; fi
+    info "Downloading PhantomKiller (BYOVD process killer)..."
+    cd /tmp
+    wget -q "https://github.com/redteamfortress/PhantomKiller/releases/download/v1.0.0/PhantomKiller.zip" -O PhantomKiller.zip &>> "$LOG_FILE"
+    if [[ -f "PhantomKiller.zip" ]] && [[ -s "PhantomKiller.zip" ]]; then
+        unzip -o PhantomKiller.zip &>> "$LOG_FILE"
+        cp PhantomKiller.exe "$exe_dir/" 2>/dev/null || warn "PhantomKiller.exe not in zip"
+        cp PhantomKiller.sys "$exe_dir/" 2>/dev/null || warn "PhantomKiller.sys not in zip"
+        success "PhantomKiller installed"
+    else
+        warn "PhantomKiller download failed — build manually from https://github.com/redteamfortress/PhantomKiller"
+    fi
+    rm -rf /tmp/PhantomKiller.zip /tmp/PhantomKiller 2>/dev/null
 }
 
 build_adpack() {
@@ -246,12 +250,12 @@ create_config() {
     cat > "$ADPACK_DIR/config.yaml" << EOF
 # adpack configuration
 db_path: "$HOME/.adpack/state.db"
+domain: ""
+profile: "undefend"
 
 # Tool paths
 nxc_path: "netexec"
 bh_python: "bloodhound-python"
-certipy_path: "certipy"
-impacket_dir: "/usr/share/doc/python3-impacket/examples"
 
 # Cracking
 cracking:
@@ -260,19 +264,15 @@ cracking:
   rules: []
   timeout: 300
 
-# Proxy (optional — for SOCKS/HTTP proxy to target network)
-proxy_address: ""
+# Scope (optional — restrict to these CIDR ranges)
+# scope:
+#   - "10.0.0.0/8"
 
-# Viper (optional — graph database for BloodHound data)
-viper:
-  enabled: false
-  host: "localhost"
-  port: 7687
-
-# Evasion defaults
-evasion:
-  default_profile: "standard"
-  auto_av_kill: true
+# Timing controls
+timing:
+  delay_ms: 0
+  jitter: 0.0
+  max_concurrent: 10
 EOF
     success "Configuration created at $ADPACK_DIR/config.yaml"
 }
@@ -294,11 +294,12 @@ verify_installations() {
     local all_good=true
     check_cmd() { if command -v "$1" &> /dev/null; then success "$1: $(command -v "$1")"; else error "$1: NOT FOUND"; all_good=false; fi; }
     check_file() { if [[ -f "$1" ]]; then success "$(basename "$1"): $1"; else warn "$(basename "$1"): NOT FOUND (optional)"; fi; }
-    check_cmd "go"; check_cmd "netexec"; check_cmd "adpack"; check_cmd "donut"; check_cmd "pypykatz"
+    check_cmd "go"; check_cmd "netexec"; check_cmd "adpack"; check_cmd "pypykatz"
     local exe_dir="$ORIG_CWD/exe"
-    check_file "$exe_dir/nanodump.exe"; check_file "$exe_dir/go-mimikatz.exe"
+    check_file "$exe_dir/nanodump.exe"
     check_file "$exe_dir/MiniPlasma.exe"; check_file "$exe_dir/PrintSpoofer64.exe"
-    check_file "$exe_dir/UnDefend.exe"
+    check_file "$exe_dir/PPLShade.exe"; check_file "$exe_dir/LECOMAx64.sys"
+    check_file "$exe_dir/PhantomKiller.exe"; check_file "$exe_dir/PhantomKiller.sys"
     echo ""
     if $all_good; then success "All core tools installed!"; else error "Some core tools missing — check $LOG_FILE"; return 1; fi
 }
@@ -320,6 +321,11 @@ print_summary() {
     echo -e "  2. Verify: ${YELLOW}adpack status${NC}"
     echo -e "  3. Config: ${YELLOW}cat ~/.adpack/config.yaml${NC}"
     echo ""
+    echo -e "${BLUE}Evasion profiles (select with -e flag):${NC}"
+    echo -e "    ${YELLOW}undefend${NC}       — Native AV kill (reg add + sc stop + taskkill)"
+    echo -e "    ${YELLOW}pplshade${NC}       — PPL bypass via BYOVD (PPLShade + LECOMAx64.sys)"
+    echo -e "    ${YELLOW}phantomkiller${NC}  — EDR kill via BYOVD (PhantomKiller + PhantomKiller.sys)"
+    echo ""
     echo -e "${BLUE}Log:${NC} $LOG_FILE"
     echo ""
 }
@@ -329,9 +335,8 @@ main() {
     log "adpack setup started"
     check_os; check_root; create_dirs; install_system_deps
     install_go; install_pipx
-    install_netexec; install_donut; install_nanodump
-    install_gomimikatz; install_pypykatz; install_scarecrow
-    install_miniplasma; install_printspoofer; install_undefend
+    install_netexec; install_nanodump; install_pypykatz
+    install_miniplasma; install_printspoofer; install_pplshade; install_phantomkiller
     build_adpack; create_config; update_path
     echo ""; verify_installations; test_adpack; print_summary
     log "adpack setup completed"

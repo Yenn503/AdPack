@@ -116,8 +116,6 @@ var sessionExportCmd = &cobra.Command{
 	},
 }
 
-var sessionImportPath string
-
 var sessionImportCmd = &cobra.Command{
 	Use:   "import <name> <file>",
 	Short: "Import a session from a portable JSON envelope",

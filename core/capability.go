@@ -166,7 +166,7 @@ func AccessRightToCapability(edge PrivilegeEdge) Capability {
 		return "ADCS_ESC4"
 	case "ADCS_ESC7":
 		return "ADCS_ESC7"
-	case "ADDMEMBER", "ADDSELF", "MEMBEROF":
+	case "ADDMEMBER", "ADDSELF":
 		return "ADD_MEMBER"
 	case "FORCECHANGEPASSWORD":
 		return "FORCE_CHANGE_PASSWORD"

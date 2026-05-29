@@ -1,6 +1,6 @@
 # AdPack Usage Guide
 
-Complete command reference for adpack v0.4.0.
+Complete command reference for adpack v0.5.0.
 
 ## Quick Start
 
@@ -17,9 +17,9 @@ adpack run lateral -t 10.0.0.6         # Lateral movement
 ## Automated Attack Chain
 
 ```bash
-adpack autorun --target 192.168.57.22 \
-  --domain north.sevenkingdoms.local \
-  --user samwell.tarly --password Heartsbane \
+adpack autorun --target 10.0.0.5 \
+  --domain corp.local \
+  --user jsmith --password 'Password1' \
   --execute --skip-fail
 ```
 

@@ -24,7 +24,7 @@ import (
 //   - DSRM password-reuse logon enable            → reg add via failover exec
 //   - AdminSDHolder GenericAll backdoor           → impacket-dacledit (preferred)
 //     or bloodyAD (fallback)
-//   - Skeleton Key (informational)                → flagged when go-mimikatz remote
+//   - Skeleton Key (informational)
 //     exec is viable; not auto-deployed
 //     because of high detection signal
 func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
@@ -37,7 +37,10 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 		return result
 	}
 
-	domain, user, pass, hash := getCredential(state)
+	domain, user, pass, hash := getDomainCredential(state, host.Domain)
+	if domain == "" || user == "" {
+		domain, user, pass, hash = getCredential(state)
+	}
 	if domain == "" || user == "" {
 		fmt.Println("[!] No credentials for persistence")
 		result.Success = false
@@ -504,7 +507,7 @@ func flagSkeletonKeyOpportunity(host core.Host, result *core.ToolResult) {
 	if !tools.GoMimikatz.Available() {
 		return
 	}
-	fmt.Println("[*] Skeleton Key opportunity: go-mimikatz available, target is DC")
+	fmt.Println("[*] Skeleton Key opportunity: target is DC")
 	fmt.Println("    (not auto-deployed — high detection signal; run manually if scoped)")
 	result.Evidence = append(result.Evidence, core.EvidenceEntry{
 		Type: core.EvCredAcquired, Phase: core.PhasePersistence,

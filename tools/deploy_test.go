@@ -51,11 +51,11 @@ func TestRandomizedName(t *testing.T) {
 }
 
 func TestRandomizedName_NoExtension(t *testing.T) {
-	name := randomizedName("BootRepair")
+	name := randomizedName("PhantomKiller")
 	if strings.Contains(name, ".") {
 		t.Errorf("unexpected extension introduced: %s", name)
 	}
-	if !strings.HasPrefix(name, "BootRepair_") {
+	if !strings.HasPrefix(name, "PhantomKiller_") {
 		t.Errorf("expected stem prefix in %s", name)
 	}
 }

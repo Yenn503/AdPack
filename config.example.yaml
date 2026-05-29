@@ -45,6 +45,21 @@ cracking:
 #   - "10.0.0.0/8"
 #   - "192.168.1.0/24"
 
+# Target domain (used by adpack init / autorun)
+# Example: "corp.local"
+domain: ""
+
+# Default evasion profile (undefend|pplshade|phantomkiller)
+profile: "undefend"
+
+# Seed credentials for bootstrapping the attack chain.
+# These are used as the initial authentication material.
+# seeds:
+#   - domain: "corp.local"
+#     user: "jsmith"
+#     password: "Password1"
+#     hash: ""
+
 # Timing controls for operational security
 # These add random delays between operations to avoid detection patterns.
 timing:

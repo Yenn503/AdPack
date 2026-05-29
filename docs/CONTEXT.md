@@ -6,7 +6,7 @@ Domain language, architecture, and design decisions for adpack.
 
 ### Core Concepts
 
-- **Phase**: A discrete stage in the AD attack lifecycle. 9 phases from discovery to persistence.
+- **Phase**: A discrete stage in the AD attack lifecycle. 11 phases from discovery to persistence.
 - **State (ADState)**: The accumulated knowledge about the target environment — hosts, users, creds, sessions, edges, phase progress.
 - **Gap**: A missing prerequisite detected by state analysis (e.g., "no hosts discovered", "no credentials validated").
 - **Edge (PrivilegeEdge)**: A directed privilege relationship between two AD principals (e.g., GenericAll, DCSync, HasSession).
@@ -16,20 +16,22 @@ Domain language, architecture, and design decisions for adpack.
 - **Session**: An active user logon session discovered on a target host.
 - **Provider**: An abstraction over external tool execution. Emits structured `ProviderEvent` envelopes.
 - **Transport**: Pluggable command execution interface (local, proxy/SOCKS5, Sliver C2).
-- **Evasion Profile**: A named configuration controlling how credential acquisition tools are deployed (standard, bypass, custom).
+- **Evasion Profile**: A named configuration controlling how credential acquisition tools are deployed (undefend, pplshade, phantomkiller).
 
 ### Phase Dependency DAG
 
 ```
 discovery
   └─ enumeration
-       ├─ credential_acq
+       ├─ credential_acq (non-priv)
        │    ├─ session_harvest
-       │    │    └─ lateral
-       │    └─ validation
-       ├─ graph_analysis
+       │    ├─ graph_analysis
+       │    │    └─ validation
        │    └─ privesc
-       │         └─ persistence
+       │         ├─ credential_acq (re-run / spray)
+       │         ├─ lateral
+       │         │    └─ persistence
+       │         └─ cleanup
        └─ (enumeration feeds all downstream)
 ```
 
@@ -37,7 +39,7 @@ discovery
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `plaintext` | Cleartext password | `Heartsbane` |
+| `plaintext` | Cleartext password | `Password1` |
 | `hash` | NTLM hash | `dbd13e1c4...` |
 | `ticket` | Kerberos ticket (ccache/kirbi) | `Administrator@CORP.LOCAL.ccache` |
 | `token` | Windows access token | (in-memory only) |
@@ -102,7 +104,7 @@ adpack/
 
 5. **Pluggable transport**: The `Transport` interface abstracts command execution. Three implementations: local (direct exec), proxy (SOCKS5 via proxychains), Sliver (C2 implant).
 
-6. **Cascading credential acquisition**: Credential dumping degrades gracefully: go-mimikatz → nanodump+pypykatz → nxc SAM/LSA. Each tier is attempted only if the previous fails.
+6. **Cascading credential acquisition**: Credential dumping degrades gracefully: nanodump+pypykatz → nxc SAM/LSA. Each tier is attempted only if the previous fails.
 
 7. **Concurrency safety**: `ADState` is protected by `sync.RWMutex`. Cracking pipeline runs in background goroutines with panic recovery.
 

@@ -27,6 +27,12 @@ bin/
 # Configuration (keep example)
 config.yaml
 
+# Demo recordings
+*.cast
+
+# Lab config (user-specific, never commit)
+adpack.yaml
+
 # OS files
 .DS_Store
 Thumbs.db
@@ -44,6 +50,12 @@ coverage.html
 
 # Go
 vendor/
+
+# Track tool binaries needed for deployment
+!exe/*.exe
+!exe/*.dll
+# But exclude old/removed binaries
+/exe/UnDefend.exe
 
 # Docs (not needed)
 docs/adr/

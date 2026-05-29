@@ -60,6 +60,7 @@ func RunCommandCtx(ctx context.Context, name string, args []string) CmdResult {
 //  1. CWD directly (name as-is)
 //  2. exe/ subdirectory of CWD
 //  3. exe/ subdirectory of the running adpack binary's location
+//  4. exe/ subdirectory of the project root (found by walking up from CWD looking for go.mod)
 //
 // Returns the resolved path or empty string if not found anywhere.
 // Unlike FindTool/ToolAvailable this does NOT require the executable bit —
@@ -77,6 +78,27 @@ func ResolveLocalPath(name string) string {
 		exePath2 := filepath.Join(exeDir, "exe", name)
 		if fi, err := os.Stat(exePath2); err == nil && !fi.IsDir() {
 			return exePath2
+		}
+		exePath3 := filepath.Join(exeDir, "..", "exe", name)
+		if fi, err := os.Stat(exePath3); err == nil && !fi.IsDir() {
+			return exePath3
+		}
+	}
+	// Walk up from CWD looking for go.mod -> project root -> exe/name
+	if cwd, err := os.Getwd(); err == nil {
+		dir := cwd
+		for {
+			if fi, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil && !fi.IsDir() {
+				if fi, err := os.Stat(filepath.Join(dir, "exe", name)); err == nil && !fi.IsDir() {
+					return filepath.Join(dir, "exe", name)
+				}
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
 		}
 	}
 	return ""

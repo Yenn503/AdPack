@@ -51,7 +51,7 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 		return result
 	}
 
-	domain, user, pass, hash := getCredential(state)
+	domain, user, pass, hash := getDomainCredential(state, host.Domain)
 	if domain == "" || user == "" {
 		fmt.Println("[!] No valid credentials for lateral movement")
 		result.Success = false

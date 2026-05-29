@@ -61,7 +61,7 @@ var (
 )
 
 var (
-	version = "v0.4.0"
+	version = "v0.5.0"
 	rootCtx context.Context
 	cancel  context.CancelFunc
 )
@@ -92,7 +92,7 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 	Example: `  adpack status                    Show current state and gaps
   adpack next                     Show the recommended next phase
   adpack run credential_acq       Execute credential acquisition (default profile)
-  adpack run credential_acq -e undefend -t 10.0.0.5
+  adpack run credential_acq -e undefend --target 10.0.0.5
   adpack phases                   List all phases with status and dependencies
   adpack profiles                 List available evasion profiles
   adpack interactive              Launch the TUI dashboard
@@ -166,11 +166,15 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 			}()
 			crackMat = cracker.NewCredentialMaterializer(crackQueue, func(cred cracker.CrackedCredential) {
 				fmt.Printf("[+] CRACKED: %s\\%s -> %s\n", cred.Domain, cred.Username, cred.Secret)
+				// Use CredHash type so the UPSERT matches the original hash credential row
+				// (Conflicts on type+username+domain+target: CredHash matches AS-REP/Kerberoast/NTLM hashes).
+				// The trust-preserving UPSERT keeps Validated=true and overwrites Secret with the plaintext.
 				DB.SaveCred(core.Credential{
-					Type:      core.CredPlaintext,
+					Type:      core.CredHash,
 					Username:  cred.Username,
 					Domain:    cred.Domain,
 					Secret:    cred.Secret,
+					Hash:      cred.Hash,
 					Source:    "cracker",
 					Validated: true,
 				})

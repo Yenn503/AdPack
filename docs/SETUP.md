@@ -1,6 +1,6 @@
 # AdPack Setup Guide
 
-Installation and environment setup for adpack v0.4.0.
+Installation and environment setup for adpack v0.5.0.
 
 ## Prerequisites
 
@@ -21,13 +21,12 @@ source ~/.bashrc
 The setup script installs:
 - Go 1.25+ (configurable via `GO_VERSION` env var)
 - NetExec (nxc) via pipx
-- Donut shellcode generator
 - pypykatz for LSASS dump parsing
 - nanodump (cross-compiled via MinGW)
-- ScareCrow for AV evasion
+- PPLShade + LECOMAx64.sys (BYOVD PPL bypass)
+- PhantomKiller + PhantomKiller.sys (BYOVD EDR killer)
 - MiniPlasma (pre-built binary download)
 - PrintSpoofer64 (pre-built binary download)
-- UnDefend (from repo root if available)
 - adpack binary built from source
 - Default config at `~/.adpack/config.yaml`
 
@@ -84,16 +83,7 @@ pipx install impacket
 pipx install dploot
 ```
 
-### 4. Install Donut
-
-```bash
-git clone https://github.com/TheWover/donut.git /tmp/donut
-cd /tmp/donut && make
-sudo cp donut /usr/local/bin/
-rm -rf /tmp/donut
-```
-
-### 5. Build nanodump
+### 4. Build nanodump
 
 ```bash
 git clone https://github.com/fortra/nanodump.git /tmp/nanodump
@@ -103,7 +93,7 @@ mkdir -p exe && cp nanodump.exe exe/
 rm -rf /tmp/nanodump
 ```
 
-### 6. Download Tool Binaries
+### 5. Download Tool Binaries
 
 ```bash
 mkdir -p exe
@@ -113,15 +103,23 @@ wget -q https://github.com/itm4n/PrintSpoofer/releases/download/v1.0/PrintSpoofe
     -O exe/PrintSpoofer64.exe
 
 # MiniPlasma
-wget -q "https://github.com/Nightmare-Eclipse/MiniPlasma/releases/download/main-release/PoC_AbortHydration_ArbitraryRegKey_EoP.exe" \
-    -O exe/MiniPlasma.exe
+# GitHub repo may be unavailable — see setup.sh for manual install.
+# Check adpack docs for alternatives.
 
-# go-mimikatz (requires Windows build)
-# Build on Windows: cd go-mimikatz && go generate && go build -o go-mimikatz.exe .
-# Then copy go-mimikatz.exe to exe/
+# PPLShade + LECOMAx64.sys
+wget -q "https://github.com/citronneur/PPLShade/releases/download/v1.0/PPLShade.exe" \
+    -O exe/PPLShade.exe
+wget -q "https://github.com/citronneur/PPLShade/releases/download/v1.0/LECOMAx64.sys" \
+    -O exe/LECOMAx64.sys
+
+# PhantomKiller + PhantomKiller.sys
+wget -q "https://github.com/citronneur/PhantomKiller/releases/download/v1.0/PhantomKiller.exe" \
+    -O exe/PhantomKiller.exe
+wget -q "https://github.com/citronneur/PhantomKiller/releases/download/v1.0/PhantomKiller.sys" \
+    -O exe/PhantomKiller.sys
 ```
 
-### 7. Build adpack
+### 6. Build adpack
 
 ```bash
 cd adpack
@@ -130,7 +128,7 @@ go build -o adpack .
 sudo cp adpack /usr/local/bin/
 ```
 
-### 8. Create Config
+### 7. Create Config
 
 ```bash
 mkdir -p ~/.adpack
@@ -161,7 +159,7 @@ viper:
   port: 7687
 
 evasion:
-  default_profile: "standard"
+  default_profile: "undefend"
   auto_av_kill: true
 ```
 
@@ -170,10 +168,10 @@ evasion:
 | Binary | Status | Notes |
 |--------|--------|-------|
 | nanodump.exe | Built during setup | Cross-compiled via MinGW |
-| go-mimikatz.exe | Windows build required | Falls back to nanodump+pypykatz |
 | PrintSpoofer64.exe | Downloaded | Pre-built release |
-| MiniPlasma.exe | Downloaded | Pre-built release |
-| UnDefend.exe | Copied from repo | Private tool, place in exe/ |
+| MiniPlasma.exe | Downloaded | Pre-built release (repo removed — see setup.sh) |
+| PPLShade.exe + LECOMAx64.sys | Downloaded | BYOVD PPL bypass |
+| PhantomKiller.exe + PhantomKiller.sys | Downloaded | BYOVD process killer |
 
 ## Verification
 
@@ -201,10 +199,12 @@ adpack validate config
 adpack/
   exe/                 # Windows tool binaries
     nanodump.exe
-    go-mimikatz.exe    # (optional, Windows build)
     PrintSpoofer64.exe
-    MiniPlasma.exe
-    UnDefend.exe       # (optional, private)
+    MiniPlasma.exe     # (optional — see setup.sh)
+    PPLShade.exe
+    LECOMAx64.sys
+    PhantomKiller.exe
+    PhantomKiller.sys
 ```
 
 ## Troubleshooting
@@ -222,8 +222,8 @@ export PATH=$PATH:$HOME/.local/bin
 Install mingw-w64: `sudo apt-get install mingw-w64`
 Or skip — adpack falls back to other credential acquisition methods.
 
-### go-mimikatz not available
-This is expected on Linux. adpack automatically falls back to nanodump + pypykatz for credential extraction. Build go-mimikatz on Windows if needed.
+### MiniPlasma not available
+MiniPlasma GitHub repo may be unavailable. See setup.sh for graceful fallback and manual install instructions. adpack continues without it.
 
 ### Permission denied on ~/.adpack
 ```bash

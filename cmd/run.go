@@ -39,6 +39,13 @@ var runCmd = &cobra.Command{
 			return fmt.Errorf("unknown phase: %s\nValid phases: %s", phase, strings.Join(phaseNames(), ", "))
 		}
 
+		if evasionProfile == "" {
+			evasionProfile = "undefend"
+			if Cfg != nil && Cfg.Profile != "" {
+				evasionProfile = Cfg.Profile
+			}
+		}
+
 		state, err := DB.LoadState()
 		if err != nil {
 			return fmt.Errorf("load state: %w", err)
@@ -127,7 +134,7 @@ var runCmd = &cobra.Command{
 
 		switch phase {
 		case core.PhaseDiscovery:
-			result := modules.RunDiscovery(state, targetHost)
+			result := modules.RunDiscovery(state, targetHost, Cfg.Scope)
 			success = result.Success
 			if result.Success {
 				for _, h := range result.Hosts {
@@ -402,8 +409,8 @@ func phaseNames() []string {
 
 func init() {
 	rootCmd.AddCommand(runCmd)
-	runCmd.Flags().StringVarP(&evasionProfile, "evasion-profile", "e", "standard",
-		"Evasion profile for credential acquisition")
+	runCmd.Flags().StringVarP(&evasionProfile, "evasion-profile", "e", "",
+		"Evasion profile (standard|bypass|undefend|pplshade|phantomkiller|custom)")
 	runCmd.Flags().StringVarP(&targetHost, "target", "t", "",
 		"Target host IP or hostname")
 	runCmd.Flags().StringVar(&providerLogPath, "provider-log", "", "Write provider acquisition events as JSONL to this path")

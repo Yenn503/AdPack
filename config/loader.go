@@ -12,6 +12,17 @@ import (
 func Load(path string) (*Config, error) {
 	cfg := Default()
 	if path == "" {
+		// Prefer adpack.yaml in current directory (auto-discover)
+		if cwd, err := os.Getwd(); err == nil {
+			cwdPath := filepath.Join(cwd, "adpack.yaml")
+			if data, err := os.ReadFile(cwdPath); err == nil {
+				if err := yaml.Unmarshal(data, &cfg); err != nil {
+					return nil, fmt.Errorf("parse %s: %w", cwdPath, err)
+				}
+				return &cfg, nil
+			}
+		}
+		// Fall back to ~/.adpack/config.yaml
 		home, _ := os.UserHomeDir()
 		path = filepath.Join(home, ".adpack", "config.yaml")
 	}

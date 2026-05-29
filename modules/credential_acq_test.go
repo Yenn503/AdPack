@@ -4,56 +4,6 @@ import (
 	"testing"
 )
 
-func TestParseMimikatzOutput(t *testing.T) {
-	output := `
-  .#####.   mimikatz 2.2.0 (x64) #19041 Aug 10 2021 17:19:53
- .## ^ ##.  "A La Vie, A L'Amour" - (oe.eo)
- ## / \ ##  *** Blog: https://blog.gentilkiwi.com/mimikatz
- ## \ / ##  *** Twitter: @gentilkiwi (Benjamin DELPY)
- '## v ##'  *** with 22 extensions
-  '#####'   [22:20:30]
-	
-Authentication Id : 0 ; 997 (00000000:000003e5)
-Session           : Service from 0
-User Name         : LOCAL SERVICE
-Domain            : NT AUTHORITY
-Logon Server      : (null)
-Logon Time        : 5/18/2026 10:19:10 PM
-SID               : S-1-5-19
-	msv :	
-	 tspkg :	
-	 wdigest :	
-	 * Username : LOCAL SERVICE
-	 * Domain   : NT AUTHORITY
-	 * Password : (null)
-	 kerberos :	
-	 * Username : (null)
-	 * Domain   : (null)
-	 * Password : (null)
-	
-Authentication Id : 0 ; 12345 (00000000:00003039)
-Session           : Interactive from 1
-User Name         : Administrator
-Domain            : vulnad.local
-Logon Server      : DC1
-Logon Time        : 5/18/2026 10:20:00 PM
-SID               : S-1-5-21-1234567890-1234567890-1234567890-500
-	msv :	
-	 tspkg :	
-	 wdigest :	
-	 * Username : Administrator
-	 * Domain   : vulnad.local
-	 * Password : P@ssw0rd123!
-`
-	creds := parseMimikatzOutput(output)
-	if len(creds) != 1 {
-		t.Fatalf("expected 1 credential, got %d", len(creds))
-	}
-	if creds[0].Username != "Administrator" || creds[0].Domain != "vulnad.local" || creds[0].Secret != "P@ssw0rd123!" {
-		t.Errorf("unexpected parsed credential: %+v", creds[0])
-	}
-}
-
 func TestParseNanodumpOutput(t *testing.T) {
 	output := `
 [+] nanodump - version 1.0.0

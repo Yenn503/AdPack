@@ -32,7 +32,7 @@ type PhantomKillerConfig struct {
 func DefaultPhantomKillerConfig() PhantomKillerConfig {
 	return PhantomKillerConfig{
 		Binary: "PhantomKiller.exe",
-		Driver: "BootRepair.sys",
+		Driver: "PhantomKiller.sys",
 	}
 }
 

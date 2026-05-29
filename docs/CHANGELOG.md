@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.5.0 — Phase Ordering Fix, Code Cleanup, Demo GIF
+
+- **Phase ordering corrected**: `credential_acq` now does non-privileged spray only; `privesc` owns SYSTEM → AV kill → LSASS/SAM dump
+- **Dead code removed**: ~500 lines deleted from `credential_acq.go` — removed go-mimikatz, UnDefend, DCSync pipelines
+- **`getCredential` rewritten**: Uses `pickCred` scoring (validated + has secret + domain match) instead of last-added
+- **Shell scripts hardened**: `os.CreateTemp` + `0600` perms instead of hardcoded `/tmp` paths
+- **Persistence fix**: Domain-scoped credential lookup via `getDomainCredential`
+- **Demo GIF**: `adpack-demo.gif` (2.4M, 80 frames) showing full 11-phase autorun
+- **All docs version-bumped to v0.5.0**, planning docs removed
+
+### AV Evasion Rework
+- **UnDefend.exe removed**: Replaced with native `reg add` (6 registry keys) + `sc stop WinDefend` + `taskkill /f /im MsMpEng.exe`. No external binary needed.
+- **`runAVKill`**: New function in `modules/privesc.go` running native AV kill commands instead of deploying UnDefend.exe.
+- **`executeAVKillPipeline`**: Renamed from `executeUnDefendPipeline` in `modules/credential_acq.go`. Uses native commands.
+- **Profile name `undefend` retained**: The profile label is unchanged but now maps to native AV kill — backwards compatible.
+
+### New Evasion Profiles
+- **`pplshade`**: BYOVD PPL bypass via PPLShade.exe + LECOMAx64.sys. Unprotects LSASS before dump.
+- **`phantomkiller`**: BYOVD EDR process killer via PhantomKiller.exe + BootRepair.sys. Kills MsMpEng and other EDR processes.
+
+### Config Simplification
+- **`adpack init`**: New command (`cmd/init.go`) that interactively or non-interactively generates `adpack.yaml` in CWD.
+- **Config auto-discovery**: `config/loader.go` now checks CWD for `adpack.yaml` before falling back to `~/.adpack/config.yaml`.
+- **Seed credentials in config**: New `Seeds` and `Domain`/`Profile` fields in `config/defaults.go`.
+- **`config.example.yaml`** updated with new fields and documentation.
+- **CLI help text updated**: Removed `churchofmalware.org` URL from `-e` flag descriptions.
+
+### Repository Hygiene
+- **`setup.sh`**: Removed `install_undefend`, added `install_pplshade` and `install_phantomkiller` downloading from GitHub releases.
+- **`tools/undefend.go`**: Removed (dead code, no longer imported).
+- **`BootRepair.sys` → `PhantomKiller.sys`**: PhantomKiller release ships `PhantomKiller.sys`, not `BootRepair.sys`. Renamed across all Go files, setup.sh, and docs.
+- **MiniPlasma download**: GitHub repo unavailable — `setup.sh` handles gracefully with clear warning and manual install instructions.
+- **`SETUP.md`**, **`CHANGELOG.md`** updated to reflect tool changes.
+
 ## v0.4.0 — Full Kill Chain Coverage, C2 Transport, Visual Overhaul
 
 ### New Attack Techniques
@@ -95,9 +129,8 @@
 
 ### AV Evasion
 
-- **Automatic AV kill**: `runUnDefendKill` deploys and executes UnDefend.exe `--kill` (aggressive mode) after SYSTEM access is confirmed. No profile flag gating — runs automatically.
-- **Post-SYSTEM flow**: SYSTEM check → UnDefend --kill → deep credential dump. AV detection via `nxc enum_av` removed (requires admin, unreliable). UnDefend runs blind — safe if Defender isn't present.
-- **UnDefend.exe symlink**: Points to adpack root copy for consistent availability.
+- **Automatic AV kill**: `runAVKill` runs native `reg add` (6 registry keys) + `sc stop WinDefend` + `taskkill /f /im MsMpEng.exe` after SYSTEM access is confirmed. Replaces external UnDefend.exe binary with no-dependency native commands. No profile flag gating — runs automatically.
+- **Post-SYSTEM flow**: SYSTEM check → AV kill → deep credential dump. AV detection via `nxc enum_av` removed (requires admin, unreliable). AV kill runs blind — safe if Defender isn't present.
 
 ### Deep Credential Dump Pipeline
 
@@ -115,7 +148,7 @@
 ### Repository Hygiene
 
 - **`adpack_v030dev` binary untracked**: Added to `.gitignore`, removed from git tracking.
-- **`UnDefend.exe`**: Already covered by `*.exe` gitignore pattern.
+- **`UnDefend.exe` removed**: Replaced with native AV kill commands. Dead tool wrappers (undefend.go) kept as compatibility layer.
 
 ### Known Limitations
 

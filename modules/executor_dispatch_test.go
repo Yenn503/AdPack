@@ -93,12 +93,12 @@ func TestBuildCommand_ToolShapes(t *testing.T) {
 		{
 			name: "impacket kerberoast",
 			cap:  core.Capability("KERBEROAST"),
-			want: []string{"impacket-GetUserSPNs", "north.sevenkingdoms.local/samwell.tarly:Heartsbane", "-request", "-dc-ip", "192.168.57.11"},
+			want: []string{"impacket-GetUserSPNs", "north.sevenkingdoms.local/samwell.tarly:Heartsbane@192.168.57.11", "-request", "-dc-ip", "192.168.57.11"},
 		},
 		{
 			name: "impacket asrep roast single user",
 			cap:  core.Capability("ASREP_ROAST"),
-			want: []string{"impacket-GetNPUsers", "north.sevenkingdoms.local/samwell.tarly:Heartsbane", "-request", "-dc-ip", "192.168.57.11"},
+			want: []string{"impacket-GetNPUsers", "north.sevenkingdoms.local/samwell.tarly:Heartsbane@192.168.57.11", "-request", "-dc-ip", "192.168.57.11"},
 		},
 		{
 			name: "nxc ldap spray",

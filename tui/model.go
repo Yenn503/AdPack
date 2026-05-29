@@ -581,7 +581,7 @@ func executePhase(phase core.Phase, state *core.ADState, db *storage.DB) (bool, 
 
 	switch phase {
 	case core.PhaseDiscovery:
-		result := modules.RunDiscovery(state, "")
+		result := modules.RunDiscovery(state, "", nil)
 		success = result.Success
 		if result.Success {
 			for _, h := range result.Hosts {

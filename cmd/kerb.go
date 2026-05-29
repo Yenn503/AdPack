@@ -10,7 +10,6 @@ import (
 
 var (
 	kerbUser        string
-	kerbDomain      string
 	kerbPass        string
 	kerbHash        string
 	kerbAESKey      string

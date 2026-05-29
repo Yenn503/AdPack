@@ -112,7 +112,8 @@ func runBloodhound(ctx context.Context, cfg CollectConfig) (string, error) {
 		args = append(args, "-p", cfg.Password)
 	}
 	if cfg.Hash != "" {
-		args = append(args, "--hashes", cfg.Hash)
+		// bloodhound-python expects LM:NT format, prefix null LM hash
+		args = append(args, "--hashes", "aad3b435b51404eeaad3b435b51404ee:"+cfg.Hash)
 	}
 	if cfg.DCHost != "" {
 		args = append(args, "-dc", cfg.DCHost)

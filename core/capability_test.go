@@ -139,7 +139,7 @@ func TestAccessRightToCapability_Dispatch(t *testing.T) {
 		{PrivilegeEdge{AccessRight: "ForceChangePassword"}, "FORCE_CHANGE_PASSWORD"},
 		{PrivilegeEdge{AccessRight: "WriteDacl"}, "WRITE_DACL"},
 		{PrivilegeEdge{AccessRight: "WriteOwner"}, "WRITE_DACL"},
-		{PrivilegeEdge{AccessRight: "MemberOf"}, "ADD_MEMBER"},
+		{PrivilegeEdge{AccessRight: "MemberOf"}, "GenericAll"},
 		{PrivilegeEdge{EdgeType: "dcsync"}, "DCSync"},
 		{PrivilegeEdge{EdgeType: "rbcd"}, "RBCD"},
 		{PrivilegeEdge{EdgeType: "shadowcred"}, "SHADOW_CRED"},

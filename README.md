@@ -12,7 +12,7 @@
     <img src="https://img.shields.io/badge/Go-1.25+-black?style=for-the-badge&logo=go&logoColor=white" alt="Go">
   </a>
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20WSL-white?style=for-the-badge&logo=linux&logoColor=black" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-0.4.0-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/Version-0.5.0-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
 </p>
 
 <p align="center">
@@ -31,7 +31,7 @@
 
 ## Overview
 
-Adpack runs AD attacks through 9 phases. It tracks hosts, users, creds, and sessions in SQLite, detects gaps, suggests next steps, and goes from recon to domain admin.
+Adpack runs AD attacks through 11 phases. It tracks hosts, users, creds, and sessions in SQLite, detects gaps, suggests next steps, and goes from recon to domain admin.
 
 ### Quick Start
 
@@ -40,75 +40,17 @@ git clone https://github.com/Yenn503/AdPack.git
 cd adpack && ./setup.sh && source ~/.bashrc
 
 # Automated attack chain — seed creds, execute privesc paths
-adpack autorun --target 192.168.57.22 \
-  --domain north.sevenkingdoms.local \
-  --user samwell.tarly --password Heartsbane \
+adpack autorun --target 10.0.0.5 \
+  --domain corp.local \
+  --user jsmith --password 'Password1' \
   --execute --skip-fail
 ```
 
 ### Example Output
 
-```
-  ────────────────────────────────────────────────────
-  AUTO-RUN  ·  Automated Attack Chain
-  Target:  192.168.57.22
-  ────────────────────────────────────────────────────
+![adpack autorun demo](adpack-demo.gif)
 
-  →  Seeded creds: north.sevenkingdoms.local\samwell.tarly
-
-  ── [1] DISCOVERY ───────────────────────────────────
-[+] Host added from target flag: 192.168.57.22
-[+] Discovered host: KINGSLANDING (192.168.57.10) [DC]
-[+] Discovered host: WINTERFELL (192.168.57.11) [DC]
-  ✓  3 host(s) discovered
-
-  ── [2] ENUMERATION ─────────────────────────────────
-[*] Enumerating users on 192.168.57.11 ...
-[+] Enumerated 16 users
-[+] Found 1 credential(s) in user descriptions
-  ✓  16 user(s) enumerated
-
-  ── [3] CREDENTIAL_ACQ ──────────────────────────────
-[*] AS-REP: 1 roastable users found
-[*] Kerberoast: 9 SPN accounts found
-
-  ── [6] GRAPH_ANALYSIS ──────────────────────────────
-[+] 2 computers, 3 GPOs, 33 ADCS templates
-
-  ── [7] LATERAL ─────────────────────────────────────
-  ✓  SMB-WMI succeeded   ✓  SMB-PSExec succeeded
-  ✓  WinRM succeeded     ✓  MSSQL-xpcmd succeeded
-
-  ── [9] PRIVESC ─────────────────────────────────────
-  ✓  Responder started (LLMNR/NBT-NS/WPAD poisoning)
-  ✓  NTLM relay started → ldap://192.168.57.22
-  ✓  BloodHound merged: 21 users, 51 groups, 4 computers
-  ✓  SYSTEM confirmed on CASTELBLACK (MSSQL XMP_CMDSHELL)
-  ✓  UnDefend --kill executed (Defender disabled)
-  ✓  3 credentials from SAM dump
-
-  ── [12] PERSISTENCE ────────────────────────────────
-[+] Scheduled task persistence created (onlogon, SYSTEM)
-
-  ✓  All phases complete or blocked. Review state.
-  ■  12 phases  ·  3 hosts  ·  21 users  ·  5 creds (4 validated)
-
-  CREDENTIALS  (5 total, 4 validated)
-    ·  north.sevenkingdoms.local\samwell.tarly  Heartsbane  ✓
-    ·  north.sevenkingdoms.local\Administrator  dbd13e1c4...  ✓
-    ·  north.sevenkingdoms.local\vagrant       e02bc5033...  ✓
-
-  HOSTS  (3 total)
-    ·  192.168.57.22  CASTELBLACK [COMPROMISED]
-    ·  192.168.57.10  KINGSLANDING [DC]
-    ·  192.168.57.11  WINTERFELL [DC]
-
-  PRIVILEGE EDGES  (473 total)
-    ·  GenericAll x133 ·  GenericWrite x81 ·  WriteDacl x83
-    ·  ADCS_ESC1 x1 ·  ADCS_ESC13 x2 ·  UNCONSTRAINED_DELEGATION x1
-    ·  MSSQL_XP_CMDSHELL x1 ·  MSSQL_LINKED_SERVER x1
-    ·  MemberOf x37 ·  AdminTo x10 ·  AddKeyCredentialLink x12
-```
+*Full 11-phase autorun against GOAD v2 lab (recorded via asciinema). ~2.5M, 80 frames.*
 
 ### Manual Workflow
 
@@ -137,22 +79,21 @@ See [USAGE.md](docs/USAGE.md) for the full command reference.
 - TUI dashboard via `adpack interactive`
 
 ### Credential Operations
-- Cascading credential dump: go-mimikatz → nanodump+pypykatz → nxc SAM/LSA (graceful degradation)
-- Automatic AV kill: UnDefend --kill deploys post-SYSTEM
+- Cascading credential dump: nanodump+pypykatz → nxc SAM/LSA (graceful degradation)
+- Automatic AV kill: native reg add + sc stop + taskkill (post-SYSTEM)
 - Kerberoasting and AS-REP roasting with automatic hash capture
 - Hash cracking pipeline via hashcat (NTLM, krb5tgs, krb5asrep)
 - Multi-protocol validation across SMB, LDAP, WinRM, RDP
 - Detects admin rights and lateral movement viability
 
 ### Evasion
-- 3 evasion profiles: `standard` (Donut + go-mimikatz), `bypass` (UnDefend pre-flight), `custom`
-- Automatic AV kill after SYSTEM access via UnDefend
-- In-memory execution via Donut shellcode injection
-- Internal credential acquisition pipeline supports PPLShade, EDR-Freeze, PhantomKiller as fallback stages
+- 3 evasion profiles: `undefend` (native AV kill), `pplshade` (PPL bypass), `phantomkiller` (EDR process kill)
+- Automatic AV kill after SYSTEM access via native reg add + sc stop + taskkill
+- Internal credential acquisition pipeline supports PPLShade, MiniPlasma, PhantomKiller as fallback stages
 - See the [evasion profiles table](#evasion-profiles) below
 
 ### Transport Interface
-Commands execute through a pluggable `Transport` interface supporting SMB, WinRM, and WMI exec methods with automatic failover. The default `local` transport uses the operator's own network position. **Sliver C2 transport** is available for executing commands through Sliver implants (`internal/transport/sliver/`). Custom transports can be swapped in for any C2 framework.
+Commands execute through the nxc/impacket CLI tools for SMB, WinRM, WMI, and MSSQL exec methods with automatic failover. The default `local` transport uses the operator's own network position. **Sliver C2 transport** is available for executing commands through Sliver implants (`internal/transport/sliver/`). Custom transports can be swapped in for any C2 framework.
 
 ### Cracking Pipeline
 Extracted hashes (NTLM, Kerberoast, AS-REP) are automatically enqueued into a background hashcat worker pool. Cracked credentials materialise into the state database and trigger re-evaluation of privesc paths.
@@ -161,7 +102,7 @@ Extracted hashes (NTLM, Kerberoast, AS-REP) are automatically enqueued into a ba
 
 ## Attack Phases
 
-9 phases from recon to persistence:
+11 phases from recon to persistence:
 
 <div align="center">
 
@@ -171,7 +112,7 @@ Extracted hashes (NTLM, Kerberoast, AS-REP) are automatically enqueued into a ba
 <td align="center">→</td>
 <td align="center"><strong>02. Enumeration</strong><br><sub>Collect users, computers, groups via LDAP</sub></td>
 <td align="center">→</td>
-<td align="center"><strong>03. Credential Acquisition</strong><br><sub>Extract creds using selected evasion profile</sub></td>
+<td align="center"><strong>03. Credential Acquisition</strong><br><sub>Extract creds via nanodump, SAM, kerberoast</sub></td>
 </tr>
 <tr>
 <td colspan="5" align="center">↓</td>
@@ -181,17 +122,27 @@ Extracted hashes (NTLM, Kerberoast, AS-REP) are automatically enqueued into a ba
 <td align="center">→</td>
 <td align="center"><strong>05. Graph Analysis</strong><br><sub>Map attack paths with BloodHound</sub></td>
 <td align="center">→</td>
-<td align="center"><strong>06. Lateral Movement</strong><br><sub>Move between systems using validated creds</sub></td>
+<td align="center"><strong>06. Validation</strong><br><sub>Test creds across SMB, LDAP, WinRM</sub></td>
 </tr>
 <tr>
 <td colspan="5" align="center">↓</td>
 </tr>
 <tr>
-<td align="center"><strong>07. Validation</strong><br><sub>Test creds across SMB, LDAP, WinRM, RDP</sub></td>
+<td align="center"><strong>07. Privesc</strong><br><sub>MSSQL→SYSTEM, AV kill, LSASS/SAM dump</sub></td>
 <td align="center">→</td>
-<td align="center"><strong>08. Privilege Escalation</strong><br><sub>Exploit ACLs, ADCS, RBCD, GPP misconfigs</sub></td>
+<td align="center"><strong>08. Credential Re-Acquisition</strong><br><sub>Spray new creds post-SYSTEM</sub></td>
 <td align="center">→</td>
-<td align="center"><strong>09. Persistence</strong><br><sub>Golden Ticket, DSRM, long-term access</sub></td>
+<td align="center"><strong>09. Lateral Movement</strong><br><sub>Move between systems with validated creds</sub></td>
+</tr>
+<tr>
+<td colspan="3" align="center"></td>
+<td align="center">→</td>
+<td align="center"><strong>10. Persistence</strong><br><sub>Scheduled tasks, backdoor access</sub></td>
+</tr>
+<tr>
+<td colspan="3" align="center"></td>
+<td align="center">→</td>
+<td align="center"><strong>11. Cleanup</strong><br><sub>Stop relay servers, restore state</sub></td>
 </tr>
 </table>
 
@@ -201,34 +152,28 @@ Extracted hashes (NTLM, Kerberoast, AS-REP) are automatically enqueued into a ba
 
 ## Evasion Profiles
 
-3 profiles covering the delivery strategies that matter on real engagements:
+3 profiles for credential acquisition on real engagements:
 
 | Profile | Technique | Use Case |
 |---------|-----------|----------|
-| `standard` | Donut + go-mimikatz (remote exec) | Enterprise with Defender — AMSI/ETW patching, remote execution |
-| `bypass` | Standard profile + UnDefend pre-flight | Full chain with automatic Defender neutralisation before dump |
-| `custom` | User-defined pipeline | Custom configurations |
+| `undefend` | Native AV kill (reg + sc + taskkill) + nanodump | Full chain with automatic Defender neutralisation |
+| `pplshade` | BYOVD PPL bypass (PPLShade) → LSASS unprotected | When LSASS is PPL-protected |
+| `phantomkiller` | BYOVD EDR process killer (PhantomKiller) | Kill MsMpEng and other EDR processes |
 
 ### Tool Provenance
 
 | Tool | Source |
 |------|--------|
-| go-mimikatz | Go binary, requires Windows build |
-| nanodump | Cross-compiled Go, downloaded during setup |
-| UnDefend | Cross-compiled via MinGW during setup |
+| nanodump | Go binary, downloaded during setup |
+| PPLShade | GitHub release (BYOVD) |
+| PhantomKiller | GitHub release (BYOVD) |
+| MiniPlasma | GitHub release — may require manual download |
 
 ### Pre-conditions
 
-- **UnDefend** — Kills Defender via service dependency exploit before dumping LSASS. Triggered by the `bypass` profile automatically.
-
-**Example:**
-
-```bash
-adpack run credential_acq -e standard -t 10.0.0.5          # Standard LSASS dump
-adpack run credential_acq -e bypass -t 10.0.0.5            # Kill Defender + dump
-adpack validate                                             # Validate creds
-adpack run lateral -t 10.0.0.6                             # Lateral movement
-```
+- **undefend** — Kills Defender via `reg add` (6 keys) + `sc stop WinDefend` + `taskkill /f /im MsMpEng.exe` after SYSTEM access. No external binary needed.
+- **pplshade** — Requires `PPLShade.exe` + `LECOMAx64.sys` on target. Downloaded during setup.
+- **phantomkiller** — Requires `PhantomKiller.exe` + `PhantomKiller.sys` on target. Downloaded during setup.
 
 ---
 
@@ -244,24 +189,27 @@ Tested on DreadGOAD-Light (3 VMware VMs, 2 forests) and VulnAD (Docker).
 
 ## Configuration
 
-Create `~/.adpack/config.yaml` (or use setup.sh generated config):
+Create `adpack.yaml` in your project directory (or `~/.adpack/config.yaml`):
 
 ```yaml
+domain: "corp.local"
+profile: "undefend"
+
 db_path: ""
 nmap_args: ["-T4", "-sn"]
 nxc_path: "netexec"
 bh_python: "bloodhound-python"
+
+seeds:
+  - domain: "corp.local"
+    user: "jsmith"
+    password: "Password1"
 
 cracking:
   hashcat_path: "/usr/bin/hashcat"
   wordlist: "/usr/share/wordlists/rockyou.txt"
   rules: ["/usr/share/hashcat/rules/best64.rule"]
   timeout_seconds: 600
-
-viper:
-  enabled: false
-  host: "localhost"
-  port: 7687
 
 # Target scope: CIDR ranges allowed for attacks (optional safety net)
 # scope:
@@ -286,7 +234,7 @@ cd adpack
 source ~/.bashrc
 ```
 
-Installs Go 1.25+, NetExec, Donut, pypykatz, nanodump, adpack binary, default config. Clones and builds evasion tool binaries where possible. ~5-10 minutes.
+Installs Go 1.25+, NetExec, pypykatz, nanodump, PPLShade, PhantomKiller, adpack binary, default config. Clones and builds evasion tool binaries where possible. ~5-10 minutes.
 
 ### Manual Installation
 
@@ -294,7 +242,7 @@ See [docs/SETUP.md](docs/SETUP.md).
 
 ---
 
-## All Commands (v0.4.0)
+## All Commands (v0.5.0)
 
 | Command | Description |
 |---------|-------------|

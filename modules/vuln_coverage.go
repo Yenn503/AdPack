@@ -53,7 +53,7 @@ func AssessVulnCoverage(state *core.ADState) []VulnEntry {
 			hasASREP = true
 		case "kerberoast":
 			hasKerberoast = true
-		case "description":
+		case "ldap_description", "description":
 			hasDescCreds = true
 		case "password_spray":
 			hasSpray = true
@@ -69,6 +69,15 @@ func AssessVulnCoverage(state *core.ADState) []VulnEntry {
 		}
 		if u.SPNs != "" {
 			hasKerberoast = true
+		}
+		if !hasDescCreds && u.Description != "" {
+			descLower := strings.ToLower(u.Description)
+			for _, phrase := range []string{"password", "passwd", "pass:", "pwd:", "cred:", "credentials:"} {
+				if strings.Contains(descLower, phrase) {
+					hasDescCreds = true
+					break
+				}
+			}
 		}
 	}
 
@@ -323,12 +332,16 @@ func PrintLootSummary(state *core.ADState) {
 
 	if len(state.Creds) > 0 {
 		for _, c := range state.Creds {
+			// Skip built-in noise accounts that aren't actionable AD principals
+			if strings.EqualFold(c.Username, "WDAGUtilityAccount") {
+				continue
+			}
 			validIcon := utils.SuccessStyle.Render("✓")
 			if !c.Validated {
 				validIcon = lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("?")
 			}
 			secret := c.Secret
-			if c.Hash != "" {
+			if secret == "" && c.Hash != "" {
 				if len(c.Hash) >= 32 {
 					secret = c.Hash[:32] + "..."
 				} else {
