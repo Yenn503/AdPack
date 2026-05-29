@@ -251,7 +251,7 @@ create_config() {
 # adpack configuration
 db_path: "$HOME/.adpack/state.db"
 domain: ""
-profile: "undefend"
+profile: "native"
 
 # Tool paths
 nxc_path: "netexec"
@@ -322,7 +322,7 @@ print_summary() {
     echo -e "  3. Config: ${YELLOW}cat ~/.adpack/config.yaml${NC}"
     echo ""
     echo -e "${BLUE}Evasion profiles (select with -e flag):${NC}"
-    echo -e "    ${YELLOW}undefend${NC}       — Native AV kill (reg add + sc stop + taskkill)"
+    echo -e "    ${YELLOW}native${NC}          — Native AV kill (reg add + sc stop + taskkill)"
     echo -e "    ${YELLOW}pplshade${NC}       — PPL bypass via BYOVD (PPLShade + LECOMAx64.sys)"
     echo -e "    ${YELLOW}phantomkiller${NC}  — EDR kill via BYOVD (PhantomKiller + PhantomKiller.sys)"
     echo ""

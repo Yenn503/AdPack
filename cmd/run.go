@@ -40,7 +40,7 @@ var runCmd = &cobra.Command{
 		}
 
 		if evasionProfile == "" {
-			evasionProfile = "undefend"
+			evasionProfile = "native"
 			if Cfg != nil && Cfg.Profile != "" {
 				evasionProfile = Cfg.Profile
 			}
@@ -410,7 +410,7 @@ func phaseNames() []string {
 func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().StringVarP(&evasionProfile, "evasion-profile", "e", "",
-		"Evasion profile (standard|bypass|undefend|pplshade|phantomkiller|custom)")
+		"Evasion profile (native|pplshade|phantomkiller)")
 	runCmd.Flags().StringVarP(&targetHost, "target", "t", "",
 		"Target host IP or hostname")
 	runCmd.Flags().StringVar(&providerLogPath, "provider-log", "", "Write provider acquisition events as JSONL to this path")

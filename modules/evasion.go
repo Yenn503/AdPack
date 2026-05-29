@@ -28,28 +28,28 @@ var EvasionProfiles = struct {
 		DeliveryMethod: "go_binary",
 		PayloadSource:  "go-mimikatz",
 		Description:    "Standard profile with pre-flight Defender neutralisation via native commands",
-		PreCondition:   "undefend",
+		PreCondition:   "native",
 	},
 	UnDefend: EvasionProfile{
-		Name:           "undefend",
+		Name:           "native",
 		DeliveryMethod: "exe",
 		PayloadSource:  "nanodump",
 		Description:    "Defender kill via native reg add/sc stop/taskkill, then dump LSASS with nanodump",
-		PreCondition:   "undefend",
+		PreCondition:   "native",
 	},
 	PPLShade: EvasionProfile{
 		Name:           "pplshade",
 		DeliveryMethod: "exe",
 		PayloadSource:  "nanodump",
 		Description:    "Upload PPLShade.exe + LECOMAx64.sys driver, strip LSASS PPL, dump with nanodump",
-		PreCondition:   "undefend",
+		PreCondition:   "native",
 	},
 	PhantomKiller: EvasionProfile{
 		Name:           "phantomkiller",
 		DeliveryMethod: "exe",
 		PayloadSource:  "nanodump",
 		Description:    "Upload PhantomKiller.sys + PhantomKiller.exe, load signed Lenovo driver, kill EDR, dump with nanodump",
-		PreCondition:   "undefend",
+		PreCondition:   "native",
 	},
 	Custom: EvasionProfile{
 		Name:        "custom",
@@ -63,7 +63,7 @@ func LookupProfile(name string) (EvasionProfile, bool) {
 		return EvasionProfiles.Standard, true
 	case "bypass":
 		return EvasionProfiles.Bypass, true
-	case "undefend":
+	case "native":
 		return EvasionProfiles.UnDefend, true
 	case "pplshade":
 		return EvasionProfiles.PPLShade, true
@@ -76,7 +76,7 @@ func LookupProfile(name string) (EvasionProfile, bool) {
 }
 
 func ListProfiles() []string {
-	return []string{"standard", "bypass", "undefend", "pplshade", "phantomkiller", "custom"}
+	return []string{"standard", "bypass", "native", "pplshade", "phantomkiller", "custom"}
 }
 
 func BaseProfileFor(name string) string {
@@ -85,8 +85,8 @@ func BaseProfileFor(name string) string {
 		return "standard"
 	case "bypass":
 		return "bypass"
-	case "undefend":
-		return "undefend"
+	case "native":
+		return "native"
 	case "pplshade":
 		return "pplshade"
 	case "phantomkiller":

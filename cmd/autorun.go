@@ -65,7 +65,7 @@ past failed phases instead of stopping.`,
 
 		// Evasion profile: CLI flag > config profile > default
 		if evasionProfile == "" {
-			evasionProfile = "undefend"
+			evasionProfile = "native"
 			if Cfg != nil && Cfg.Profile != "" {
 				evasionProfile = Cfg.Profile
 			}
@@ -395,7 +395,7 @@ past failed phases instead of stopping.`,
 func init() {
 	rootCmd.AddCommand(autoRunCmd)
 	autoRunCmd.Flags().StringVarP(&evasionProfile, "evasion-profile", "e", "",
-		"Evasion profile (standard|bypass|undefend|pplshade|phantomkiller|custom)")
+		"Evasion profile (native|pplshade|phantomkiller)")
 	autoRunCmd.Flags().StringVarP(&targetHost, "target", "t", "",
 		"Target host IP or hostname")
 	autoRunCmd.Flags().IntVarP(&maxPhases, "max", "m", 0,

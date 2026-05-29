@@ -12,10 +12,10 @@ import (
 )
 
 var acquisitionPipelines = map[string]PipelineDef{
-	"undefend": {
-		Name:        "undefend",
+	"native": {
+		Name:        "native",
 		Delivery:    "exe",
-		PayloadType: "undefend",
+		PayloadType: "native",
 		RemoteExec:  true,
 		ParseFn:     parseNanodumpOutput,
 		Description: "Upload nanodump.exe via SMB, fork dump LSASS, parse with pypykatz",

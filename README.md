@@ -87,7 +87,7 @@ See [USAGE.md](docs/USAGE.md) for the full command reference.
 - Detects admin rights and lateral movement viability
 
 ### Evasion
-- 3 evasion profiles: `undefend` (native AV kill), `pplshade` (PPL bypass), `phantomkiller` (EDR process kill)
+- 3 evasion profiles: `native` (native AV kill), `pplshade` (PPL bypass), `phantomkiller` (EDR process kill)
 - Automatic AV kill after SYSTEM access via native reg add + sc stop + taskkill
 - Internal credential acquisition pipeline supports PPLShade, MiniPlasma, PhantomKiller as fallback stages
 - See the [evasion profiles table](#evasion-profiles) below
@@ -156,7 +156,7 @@ Extracted hashes (NTLM, Kerberoast, AS-REP) are automatically enqueued into a ba
 
 | Profile | Technique | Use Case |
 |---------|-----------|----------|
-| `undefend` | Native AV kill (reg + sc + taskkill) + nanodump | Full chain with automatic Defender neutralisation |
+| `native` | Native AV kill (reg + sc + taskkill) + nanodump | Full chain with automatic Defender neutralisation |
 | `pplshade` | BYOVD PPL bypass (PPLShade) → LSASS unprotected | When LSASS is PPL-protected |
 | `phantomkiller` | BYOVD EDR process killer (PhantomKiller) | Kill MsMpEng and other EDR processes |
 
@@ -171,7 +171,7 @@ Extracted hashes (NTLM, Kerberoast, AS-REP) are automatically enqueued into a ba
 
 ### Pre-conditions
 
-- **undefend** — Kills Defender via `reg add` (6 keys) + `sc stop WinDefend` + `taskkill /f /im MsMpEng.exe` after SYSTEM access. No external binary needed.
+- **native** — Kills Defender via `reg add` (6 keys) + `sc stop WinDefend` + `taskkill /f /im MsMpEng.exe` after SYSTEM access. No external binary needed.
 - **pplshade** — Requires `PPLShade.exe` + `LECOMAx64.sys` on target. Downloaded during setup.
 - **phantomkiller** — Requires `PhantomKiller.exe` + `PhantomKiller.sys` on target. Downloaded during setup.
 
@@ -193,7 +193,7 @@ Create `adpack.yaml` in your project directory (or `~/.adpack/config.yaml`):
 
 ```yaml
 domain: "corp.local"
-profile: "undefend"
+profile: "native"
 
 db_path: ""
 nmap_args: ["-T4", "-sn"]

@@ -16,7 +16,7 @@ Domain language, architecture, and design decisions for adpack.
 - **Session**: An active user logon session discovered on a target host.
 - **Provider**: An abstraction over external tool execution. Emits structured `ProviderEvent` envelopes.
 - **Transport**: Pluggable command execution interface (local, proxy/SOCKS5, Sliver C2).
-- **Evasion Profile**: A named configuration controlling how credential acquisition tools are deployed (undefend, pplshade, phantomkiller).
+- **Evasion Profile**: A named configuration controlling how credential acquisition tools are deployed (native, pplshade, phantomkiller).
 
 ### Phase Dependency DAG
 

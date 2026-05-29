@@ -159,7 +159,7 @@ viper:
   port: 7687
 
 evasion:
-  default_profile: "undefend"
+  default_profile: "native"
   auto_av_kill: true
 ```
 

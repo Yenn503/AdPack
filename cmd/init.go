@@ -78,7 +78,7 @@ func promptMissing() error {
 		fmt.Scanln(&initCfg.Domain)
 	}
 	if initCfg.Profile == "" {
-		initCfg.Profile = "undefend"
+		initCfg.Profile = "native"
 	}
 	if len(initCfg.Scope) == 0 {
 		fmt.Print("Target subnet (e.g. 10.0.0.0/24) [optional]: ")
@@ -106,5 +106,5 @@ func init() {
 	initCmd.Flags().StringVar(&initCfg.SeedUser, "seed-user", "", "Seed credential username")
 	initCmd.Flags().StringVar(&initCfg.SeedPass, "seed-pass", "", "Seed credential password")
 	initCmd.Flags().StringVar(&initCfg.SeedHash, "seed-hash", "", "Seed credential NTLM hash")
-	initCmd.Flags().StringVarP(&initCfg.Profile, "profile", "p", "undefend", "Evasion profile")
+	initCmd.Flags().StringVarP(&initCfg.Profile, "profile", "p", "native", "Evasion profile")
 }

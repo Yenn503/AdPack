@@ -92,7 +92,7 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 	Example: `  adpack status                    Show current state and gaps
   adpack next                     Show the recommended next phase
   adpack run credential_acq       Execute credential acquisition (default profile)
-  adpack run credential_acq -e undefend --target 10.0.0.5
+  adpack run credential_acq -e native --target 10.0.0.5
   adpack phases                   List all phases with status and dependencies
   adpack profiles                 List available evasion profiles
   adpack interactive              Launch the TUI dashboard

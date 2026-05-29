@@ -49,8 +49,8 @@ cracking:
 # Example: "corp.local"
 domain: ""
 
-# Default evasion profile (undefend|pplshade|phantomkiller)
-profile: "undefend"
+# Default evasion profile (native|pplshade|phantomkiller)
+profile: "native"
 
 # Seed credentials for bootstrapping the attack chain.
 # These are used as the initial authentication material.
