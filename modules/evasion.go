@@ -34,7 +34,7 @@ var EvasionProfiles = struct {
 		Name:           "native",
 		DeliveryMethod: "exe",
 		PayloadSource:  "nanodump",
-		Description:    "Defender kill via native reg add/sc stop/taskkill, then dump LSASS with nanodump",
+		Description:    "Defender kill + AMSI/ETW bypass via native reg add/sc stop/taskkill, then dump LSASS with nanodump",
 		PreCondition:   "native",
 	},
 	PPLShade: EvasionProfile{

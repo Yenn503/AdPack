@@ -7,7 +7,7 @@
 - **`getCredential` rewritten**: Uses `pickCred` scoring (validated + has secret + domain match) instead of last-added
 - **Shell scripts hardened**: `os.CreateTemp` + `0600` perms instead of hardcoded `/tmp` paths
 - **Persistence fix**: Domain-scoped credential lookup via `getDomainCredential`
-- **Demo GIF**: `adpack-demo.gif` (2.4M, 80 frames) showing full 11-phase autorun
+- **Demo GIF**: `adpack-demo.gif` (2.4M, 80 frames) showing full autorun
 - **All docs version-bumped to v0.5.0**, planning docs removed
 
 ### AV Evasion Rework

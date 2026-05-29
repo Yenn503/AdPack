@@ -96,8 +96,8 @@ func TestNextPhase_Discovery(t *testing.T) {
 	if next == nil {
 		t.Fatal("NextPhase returned nil")
 	}
-	if *next != PhaseDiscovery {
-		t.Errorf("Expected PhaseDiscovery, got %s", *next)
+	if *next != PhaseInitialAccess {
+		t.Errorf("Expected PhaseInitialAccess for empty state, got %s", *next)
 	}
 }
 
@@ -153,6 +153,11 @@ func TestNextPhase_AllComplete(t *testing.T) {
 			PhaseLateral:        PhaseComplete,
 			PhasePrivEsc:        PhaseComplete,
 			PhasePersistence:    PhaseComplete,
+			PhaseCloudEnum:      PhaseSkipped,
+			PhaseCloudCredAcq:   PhaseSkipped,
+			PhaseCloudPrivesc:   PhaseSkipped,
+			PhaseCloudPillage:   PhaseSkipped,
+			PhaseInitialAccess:  PhaseComplete,
 		},
 	}
 
@@ -172,6 +177,11 @@ func TestPhaseDependencies(t *testing.T) {
 		{PhaseEnumeration, []Phase{PhaseDiscovery}},
 		{PhaseCredentialAcq, []Phase{PhaseEnumeration}},
 		{PhaseValidation, []Phase{PhaseCredentialAcq}},
+		{PhaseInitialAccess, []Phase{}},
+		{PhaseCloudEnum, []Phase{PhaseInitialAccess}},
+		{PhaseCloudCredAcq, []Phase{PhaseCloudEnum}},
+		{PhaseCloudPrivesc, []Phase{PhaseCloudEnum}},
+		{PhaseCloudPillage, []Phase{PhaseCloudCredAcq, PhaseCloudPrivesc}},
 	}
 
 	for _, tt := range tests {

@@ -252,6 +252,34 @@ type BloodhoundMeta struct {
 	OutboundTrust bool   `json:"outbound_trust" db:"outbound_trust"`
 }
 
+// Token represents an OAuth/Entra ID access token obtained via phishing,
+// device code auth, or token manipulation.
+type Token struct {
+	ID           int       `json:"id" db:"id"`
+	Type         string    `json:"type" db:"type"`         // "access", "refresh", "device_code"
+	Resource     string    `json:"resource" db:"resource"` // "MSGraph", "Outlook", "AzureManagement"
+	ClientID     string    `json:"client_id" db:"client_id"`
+	Tenant       string    `json:"tenant" db:"tenant"`
+	Username     string    `json:"username" db:"username"`
+	Secret       string    `json:"secret,omitempty" db:"secret"` // the token value
+	RefreshToken string    `json:"refresh_token,omitempty" db:"refresh_token"`
+	Scope        string    `json:"scope,omitempty" db:"scope"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty" db:"expires_at"`
+	Source       string    `json:"source" db:"source"` // "device_code", "oauth_consent", "refresh", "teams_phish"
+	Validated    bool      `json:"validated" db:"validated"`
+}
+
+// CloudResource represents a discovered resource in Entra ID / Azure.
+type CloudResource struct {
+	ID           int    `json:"id" db:"id"`
+	Type         string `json:"type" db:"type"` // "user", "group", "app", "service_principal", "device", "conditional_access_policy"
+	Name         string `json:"name" db:"name"`
+	ObjectID     string `json:"object_id" db:"object_id"`
+	Tenant       string `json:"tenant" db:"tenant"`
+	Properties   string `json:"properties,omitempty" db:"properties"` // JSON blob of extra attributes
+	DiscoveredBy string `json:"discovered_by" db:"discovered_by"`     // tool name
+}
+
 type Phase string
 
 const (
@@ -264,16 +292,42 @@ const (
 	PhaseValidation     Phase = "validation"
 	PhasePrivEsc        Phase = "privesc"
 	PhasePersistence    Phase = "persistence"
+	PhaseInitialAccess  Phase = "initial_access"
+	PhaseCloudEnum      Phase = "cloud_enum"
+	PhaseCloudCredAcq   Phase = "cloud_cred_acq"
+	PhaseCloudPrivesc   Phase = "cloud_privesc"
+	PhaseCloudPillage   Phase = "cloud_pillage"
 )
 
 var AllPhases = []Phase{
 	PhaseDiscovery, PhaseEnumeration, PhaseCredentialAcq,
 	PhaseSessionHarvest, PhaseGraphAnalysis, PhaseValidation,
 	PhasePrivEsc, PhaseLateral, PhasePersistence,
+	PhaseCloudEnum, PhaseCloudCredAcq, PhaseCloudPrivesc, PhaseCloudPillage,
+	PhaseInitialAccess, // last — NextPhase() has explicit empty-state check for this
+}
+
+var PhaseMitre = map[Phase]string{
+	PhaseDiscovery:      "T1087, T1049, T1016, T1482",
+	PhaseEnumeration:    "T1069, T1087, T1482",
+	PhaseCredentialAcq:  "T1003, T1558, T1110",
+	PhaseSessionHarvest: "T1033",
+	PhaseGraphAnalysis:  "T1087, T1069",
+	PhaseValidation:     "T1078",
+	PhasePrivEsc:        "T1068, T1134, T1546",
+	PhaseLateral:        "T1021, T1570",
+	PhasePersistence:    "T1098, T1136, T1505",
+	PhaseInitialAccess:  "T1566, T1528, T1550",
+	PhaseCloudEnum:      "T1525, T1087, T1615",
+	PhaseCloudCredAcq:   "T1110, T1528",
+	PhaseCloudPrivesc:   "T1078, T1484, T1525",
+	PhaseCloudPillage:   "T1530, T1213, T1114, T1210",
 }
 
 func (p Phase) Dependencies() []Phase {
 	switch p {
+	case PhaseInitialAccess:
+		return nil
 	case PhaseDiscovery:
 		return nil
 	case PhaseEnumeration:
@@ -292,6 +346,14 @@ func (p Phase) Dependencies() []Phase {
 		return []Phase{PhaseEnumeration, PhaseGraphAnalysis}
 	case PhasePersistence:
 		return []Phase{PhaseCredentialAcq, PhasePrivEsc}
+	case PhaseCloudEnum:
+		return []Phase{PhaseInitialAccess}
+	case PhaseCloudCredAcq:
+		return []Phase{PhaseCloudEnum}
+	case PhaseCloudPrivesc:
+		return []Phase{PhaseCloudEnum}
+	case PhaseCloudPillage:
+		return []Phase{PhaseCloudCredAcq, PhaseCloudPrivesc}
 	}
 	return nil
 }
@@ -336,6 +398,8 @@ type ADState struct {
 	SkipReasons     map[Phase]SkipReason      `json:"skip_reasons,omitempty"`
 	Scope           []string                  `json:"scope,omitempty"`
 	PhaseExecutions map[Phase]*PhaseExecution `json:"phase_executions,omitempty"`
+	Tokens          []Token                   `json:"tokens,omitempty"`
+	CloudResources  []CloudResource           `json:"cloud_resources,omitempty"`
 }
 
 type Gap struct {
@@ -348,6 +412,9 @@ func (s *ADState) DetectGaps() []Gap {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var g []Gap
+	if len(s.Hosts) == 0 && len(s.Tokens) == 0 {
+		g = append(g, Gap{PhaseInitialAccess, "high", "No initial access established — run `adpack initial` for Teams phishing or device code auth"})
+	}
 	if len(s.Hosts) == 0 {
 		g = append(g, Gap{PhaseDiscovery, "high", "No hosts discovered"})
 	}
@@ -381,13 +448,31 @@ func (s *ADState) DetectGaps() []Gap {
 	if len(s.Users) > 0 && len(s.Edges) == 0 {
 		g = append(g, Gap{PhasePrivEsc, "high", "No ACL privilege edges enumerated. Run daclread to discover escalation paths."})
 	}
+	if len(s.Tokens) > 0 && len(s.CloudResources) == 0 {
+		g = append(g, Gap{PhaseCloudEnum, "medium", "Cloud tokens obtained but no cloud resources enumerated"})
+	}
 	return g
+}
+
+func (s *ADState) hasAnyCreds() bool {
+	return len(s.Creds) > 0
 }
 
 func (s *ADState) NextPhase() *Phase {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Fast-track logic: if we have DA creds validated, jump to persistence or lateral movement
+
+	// If state is empty (no hosts, no creds, no tokens), suggest initial access first
+	if len(s.Hosts) == 0 && !s.hasAnyCreds() && len(s.Tokens) == 0 {
+		if s.Phases[PhaseInitialAccess] != PhaseComplete &&
+			s.Phases[PhaseInitialAccess] != PhaseSkipped &&
+			s.Phases[PhaseInitialAccess] != PhaseFailed {
+			p := PhaseInitialAccess
+			return &p
+		}
+	}
+
+	// Fast-track: if we have DA creds validated, jump to persistence or lateral movement
 	hasDA := false
 	for _, c := range s.Creds {
 		if c.Validated {
@@ -407,6 +492,29 @@ func (s *ADState) NextPhase() *Phase {
 		}
 		if s.Phases[PhasePersistence] != PhaseComplete && s.Phases[PhasePersistence] != PhaseFailed && s.Phases[PhasePersistence] != PhaseSkipped {
 			p := PhasePersistence
+			return &p
+		}
+	}
+
+	// Fast-track cloud pillage if we have tokens, perms, and prerequisite phases done
+	hasCloudPerms := false
+	for _, t := range s.Tokens {
+		if t.Validated && t.Type == "access" {
+			hasCloudPerms = true
+			break
+		}
+	}
+	pillageDeps := PhaseCloudPillage.Dependencies()
+	pillageDepsMet := true
+	for _, dep := range pillageDeps {
+		if s.Phases[dep] != PhaseComplete && s.Phases[dep] != PhaseSkipped {
+			pillageDepsMet = false
+			break
+		}
+	}
+	if hasCloudPerms && len(s.CloudResources) > 0 && pillageDepsMet {
+		if s.Phases[PhaseCloudPillage] != PhaseComplete && s.Phases[PhaseCloudPillage] != PhaseSkipped {
+			p := PhaseCloudPillage
 			return &p
 		}
 	}

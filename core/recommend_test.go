@@ -27,8 +27,8 @@ func TestEvaluate_NoHosts(t *testing.T) {
 
 	rec := engine.Evaluate()
 
-	if rec.Phase != PhaseDiscovery {
-		t.Errorf("Expected PhaseDiscovery, got %s", rec.Phase)
+	if rec.Phase != PhaseInitialAccess {
+		t.Errorf("Expected PhaseInitialAccess for empty state, got %s", rec.Phase)
 	}
 	if len(rec.Gaps) == 0 {
 		t.Error("Expected gaps to be detected")
@@ -83,6 +83,11 @@ func TestEvaluate_AllComplete(t *testing.T) {
 			PhaseLateral:        PhaseComplete,
 			PhasePrivEsc:        PhaseComplete,
 			PhasePersistence:    PhaseComplete,
+			PhaseCloudEnum:      PhaseSkipped,
+			PhaseCloudCredAcq:   PhaseSkipped,
+			PhaseCloudPrivesc:   PhaseSkipped,
+			PhaseCloudPillage:   PhaseSkipped,
+			PhaseInitialAccess:  PhaseComplete,
 		},
 		Hosts: []Host{{IP: "10.0.0.1"}},
 		Users: []User{{Username: "admin"}},

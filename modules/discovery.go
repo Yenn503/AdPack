@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os/exec"
 	"strings"
@@ -10,7 +11,6 @@ import (
 
 	"adpack/core"
 	"adpack/tools"
-	"adpack/utils"
 )
 
 func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.ToolResult {
@@ -18,7 +18,7 @@ func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.
 	ctx := context.Background()
 
 	if targetHost == "" && len(state.Hosts) > 0 {
-		fmt.Println(utils.InfoStyle.Render("[*] Hosts already discovered, skipping discovery"))
+		slog.Debug("Hosts already discovered, skipping discovery")
 		return result
 	}
 
@@ -31,11 +31,11 @@ func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.
 			Source: "manual", Key: targetHost, Value: "target specified",
 			Confidence: 1.0, Timestamp: time.Now(),
 		})
-		fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("[+] Host added from target flag: %s", targetHost)))
+		slog.Info("Host added from target flag", "host", targetHost)
 	}
 
 	// Phase 2: Subnet scan to discover additional hosts
-	fmt.Println("[*] Scanning subnet(s) for additional hosts...")
+	slog.Debug("Scanning subnet(s) for additional hosts...")
 	subnets := cidrs
 	if len(subnets) == 0 {
 		if s := deriveSubnet(targetHost); s != "" {
@@ -71,7 +71,7 @@ func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.
 				Source: "nmap_sweep", Key: ip, Value: h.Hostname,
 				Confidence: 0.7, Timestamp: time.Now(),
 			})
-			fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("[+] Discovered host: %s (%s)", h.Hostname, ip)))
+			slog.Info("Discovered host", "hostname", h.Hostname, "ip", ip)
 		}
 	}
 

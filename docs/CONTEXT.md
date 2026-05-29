@@ -6,7 +6,7 @@ Domain language, architecture, and design decisions for adpack.
 
 ### Core Concepts
 
-- **Phase**: A discrete stage in the AD attack lifecycle. 11 phases from discovery to persistence.
+- **Phase**: A discrete stage in the AD attack lifecycle. 14 phases from initial access to cloud pillage.
 - **State (ADState)**: The accumulated knowledge about the target environment — hosts, users, creds, sessions, edges, phase progress.
 - **Gap**: A missing prerequisite detected by state analysis (e.g., "no hosts discovered", "no credentials validated").
 - **Edge (PrivilegeEdge)**: A directed privilege relationship between two AD principals (e.g., GenericAll, DCSync, HasSession).
@@ -21,18 +21,21 @@ Domain language, architecture, and design decisions for adpack.
 ### Phase Dependency DAG
 
 ```
-discovery
-  └─ enumeration
-       ├─ credential_acq (non-priv)
-       │    ├─ session_harvest
-       │    ├─ graph_analysis
-       │    │    └─ validation
-       │    └─ privesc
-       │         ├─ credential_acq (re-run / spray)
-       │         ├─ lateral
-       │         │    └─ persistence
-       │         └─ cleanup
-       └─ (enumeration feeds all downstream)
+initial_access
+  └─ discovery
+       └─ enumeration
+            ├─ credential_acq (non-priv)
+            │    ├─ session_harvest
+            │    ├─ graph_analysis
+            │    │    └─ validation
+            │    └─ privesc
+            │         ├─ credential_acq (re-run / spray)
+            │         ├─ lateral
+            │         │    └─ persistence
+            └─ (enumeration feeds all downstream)
+
+Cloud (parallel fork from initial_access):
+initial_access → cloud_enum → cloud_cred_acq → cloud_privesc → cloud_pillage
 ```
 
 ### Credential Types
@@ -87,7 +90,7 @@ adpack/
   modules/        # Attack modules: discovery, enumeration, privesc, etc.
   planner/        # Attack path planning and recommendation
   storage/        # SQLite persistence layer
-  tools/          # External tool wrappers (ldapsearch, etc.)
+  tools/          # External tool wrappers (NetExec, nanodump, TeamsPhisher, etc.)
   tui/            # Terminal UI (Bubble Tea)
   utils/          # Shared utilities: theme, command execution, logging
 ```

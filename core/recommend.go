@@ -71,6 +71,16 @@ func PhaseStrategies(p Phase) []string {
 		return []string{"acl_analyze", "gpp_check", "adcs_abuse", "rbcd_check"}
 	case PhasePersistence:
 		return []string{"krbtgt_reset", "dsrm", "admin_sdholder", "silver_ticket"}
+	case PhaseInitialAccess:
+		return []string{"teams_phish", "device_code_auth", "oauth_consent_phish"}
+	case PhaseCloudEnum:
+		return []string{"graphrunner_recon", "aadinternals_enum", "roadrecon_dump"}
+	case PhaseCloudCredAcq:
+		return []string{"o365spray", "tokentactics_refresh"}
+	case PhaseCloudPrivesc:
+		return []string{"azure_role_analysis", "aadconnect_check", "adfs_cert_check"}
+	case PhaseCloudPillage:
+		return []string{"graphrunner_mail_search", "graphrunner_spo_search", "graphrunner_teams_search"}
 	}
 	return nil
 }

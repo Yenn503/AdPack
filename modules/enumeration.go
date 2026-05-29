@@ -3,12 +3,12 @@ package modules
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"adpack/core"
 	"adpack/tools"
-	"adpack/utils"
 )
 
 func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
@@ -16,7 +16,7 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 
 	host, found := selectTarget(state, targetHost)
 	if !found {
-		fmt.Println(utils.ErrorStyle.Render("[!] No target available for enumeration. Run discovery first."))
+		slog.Warn("No target available for enumeration. Run discovery first.")
 		result.Success = false
 		return result
 	}
@@ -24,8 +24,8 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 	// Use state creds if available
 	dbDomain, dbUser, dbPass, _ := getCredential(state)
 	if dbUser == "" || dbPass == "" {
-		fmt.Println(utils.ErrorStyle.Render("[!] No credentials available for enumeration."))
-		fmt.Println(utils.InfoStyle.Render("    Seed credentials with: adpack run discovery --domain <domain> --user <user> --password <pass>"))
+		slog.Warn("No credentials available for enumeration.")
+		slog.Info("Seed credentials with: adpack run discovery --domain <domain> --user <user> --password <pass>")
 		result.Success = false
 		return result
 	}
@@ -48,7 +48,7 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 		Password: pass,
 	}
 
-	fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Enumerating users on %s (%s)...", host.IP, domain)))
+	slog.Debug("Enumerating users on host", "ip", host.IP, "domain", domain)
 
 	ctx := context.Background()
 	r, err := tools.NetExec.Run(ctx, target, "--users", nil)
@@ -71,8 +71,7 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 
 		// Log description-based creds found
 		for _, c := range descCreds {
-			fmt.Println(utils.WarningStyle.Render(fmt.Sprintf(
-				"  [!] Credential in description: %s\\%s : %s", c.Domain, c.Username, c.Secret)))
+			slog.Warn("Credential in description", "domain", c.Domain, "username", c.Username, "secret", c.Secret)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type:       core.EvCredAcquired,
 				Phase:      core.PhaseEnumeration,
@@ -84,9 +83,9 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 			})
 		}
 
-		fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("[+] Enumerated %d users", len(users))))
+		slog.Info("Enumerated users", "count", len(users))
 		if len(descCreds) > 0 {
-			fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("[+] Found %d credential(s) in user descriptions", len(descCreds))))
+			slog.Info("Found credential(s) in user descriptions", "count", len(descCreds))
 		}
 	} else {
 		errMsg := ""
@@ -95,7 +94,7 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 		} else {
 			errMsg = r.Stderr
 		}
-		fmt.Println(utils.ErrorStyle.Render(fmt.Sprintf("[!] Enumeration failed: %s", errMsg)))
+		slog.Warn("Enumeration failed", "error", errMsg)
 		result.Success = false
 	}
 

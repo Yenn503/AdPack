@@ -3,12 +3,12 @@ package modules
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"adpack/core"
 	"adpack/tools"
-	"adpack/utils"
 )
 
 // ValidationResult tracks validation across multiple protocols
@@ -34,14 +34,14 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 
 	if len(state.Creds) == 0 {
-		fmt.Println(utils.WarningStyle.Render("[!] No credentials to validate"))
+		slog.Warn("No credentials to validate")
 		result.Success = false
 		return result
 	}
 
 	hosts := state.Hosts
 	if len(hosts) == 0 {
-		fmt.Println(utils.ErrorStyle.Render("[!] No hosts available for validation"))
+		slog.Warn("No hosts available for validation")
 		result.Success = false
 		return result
 	}
@@ -56,7 +56,7 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 		}
 	}
 
-	fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Validating %d credentials against %d hosts...", len(state.Creds), len(hosts))))
+	slog.Debug("Validating credentials against hosts", "cred_count", len(state.Creds), "host_count", len(hosts))
 
 	validatedCount := 0
 	adminCount := 0
@@ -70,22 +70,22 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 				if checkAdmin(cred, hosts) {
 					adminCount++
 					checked = true
-					fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Already validated (admin): %s\\%s", cred.Domain, cred.Username)))
+					slog.Debug("Already validated (admin)", "domain", cred.Domain, "username", cred.Username)
 				}
 			}
 			if !checked {
-				fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("[*] Skipping already validated: %s\\%s", cred.Domain, cred.Username)))
+				slog.Debug("Skipping already validated", "domain", cred.Domain, "username", cred.Username)
 			}
 			continue
 		}
 
 		// Skip unvalidated hash-only creds (Kerberos AS-REP/TGS hashes can't do SMB/LDAP auth)
 		if cred.Type == core.CredHash && cred.Secret == "" {
-			fmt.Println(utils.WarningStyle.Render(fmt.Sprintf("[*] Skipping hash-only credential (needs cracking): %s\\%s", cred.Domain, cred.Username)))
+			slog.Debug("Skipping hash-only credential (needs cracking)", "domain", cred.Domain, "username", cred.Username)
 			continue
 		}
 
-		fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("\n[*] [%d/%d] Validating %s\\%s", i+1, len(state.Creds), cred.Domain, cred.Username)))
+		slog.Debug("Validating credential", "index", i+1, "total", len(state.Creds), "domain", cred.Domain, "username", cred.Username)
 
 		valResult := validateCredential(cred, hosts)
 
@@ -122,8 +122,8 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 				adminStatus = " [ADMIN]"
 			}
 
-			fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("  [+] Valid on: %s%s", strings.Join(protocols, ", "), adminStatus)))
-			fmt.Println(utils.InfoStyle.Render(fmt.Sprintf("  [+] Accessible hosts: %d", len(valResult.Hosts))))
+			slog.Info("Valid on protocols", "protocols", strings.Join(protocols, ", "), "admin", adminStatus != "")
+			slog.Info("Accessible hosts count", "count", len(valResult.Hosts))
 
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type:       core.EvCredValidated,
@@ -136,7 +136,7 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 				Timestamp:  time.Now(),
 			})
 		} else {
-			fmt.Println(utils.ErrorStyle.Render("  [-] Invalid or inaccessible"))
+			slog.Warn("Invalid or inaccessible")
 
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type:       core.EvCredValidated,
@@ -150,7 +150,7 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 		}
 	}
 
-	fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("\n[+] Validation complete: %d/%d valid (%d admin)", validatedCount+alreadyValidated, len(state.Creds), adminCount)))
+	slog.Info("Validation complete", "valid", validatedCount+alreadyValidated, "total", len(state.Creds), "admin", adminCount)
 
 	result.Success = (validatedCount + alreadyValidated) > 0
 	return result

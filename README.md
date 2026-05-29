@@ -12,7 +12,7 @@
     <img src="https://img.shields.io/badge/Go-1.25+-black?style=for-the-badge&logo=go&logoColor=white" alt="Go">
   </a>
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20WSL-white?style=for-the-badge&logo=linux&logoColor=black" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-0.5.0-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
+    <img src="https://img.shields.io/badge/Version-0.5.0-black?style=for-the-badge&logo=semver&logoColor=white" alt="Version">
 </p>
 
 <p align="center">
@@ -31,7 +31,7 @@
 
 ## Overview
 
-Adpack runs AD attacks across 11 phases — discovery through persistence. It tracks hosts, users, creds, and sessions in SQLite, shows what's missing, and chains phases together automatically.
+Adpack runs AD attacks across 14 phases — initial access through cloud pillage. It tracks hosts, users, creds, tokens, and sessions in SQLite, shows what's missing, and chains phases together automatically.
 
 ### Quick Start
 
@@ -100,16 +100,17 @@ Extracted hashes queue into background hashcat workers. Cracked creds land in th
 
 ## Attack Phases
 
-11 phases from recon to persistence:
+14 phases from initial access to cloud pillage:
 
 ```
-01. Discovery          →  02. Enumeration       →  03. Credential Acquisition
-         ↓                                              
-04. Session Harvesting →  05. Graph Analysis    →  06. Validation
-         ↓                                              
-07. Privesc            →  08. Cred Re-Acquisition →  09. Lateral Movement
-                                  ↓                     
-                           10. Persistence       →  11. Cleanup
+00. Initial Access → 01. Discovery → 02. Enumeration → 03. Credential Acquisition
+         ↓
+04. Session Harvesting → 05. Graph Analysis → 06. Validation
+         ↓
+07. Privesc → 08. Cred Re-Acquisition → 09. Lateral → 10. Persistence
+
+Cloud fork (parallel):
+11. Cloud Enum → 12. Cloud Cred Acq → 13. Cloud Privesc → 14. Cloud Pillage
 ```
 
 ---
@@ -231,7 +232,10 @@ See [docs/SETUP.md](docs/SETUP.md).
 | `adpack bloodhound collect` | BloodHound collection |
 | `adpack ingest` | Import tool output |
 | `adpack query` | Cypher queries |
+| `adpack initial teams/device-code/consent-phish` | Initial access (Teams/OAuth) |
+| `adpack cloud enum/cred-acq/privesc/pillage` | Cloud/Entra ID attacks |
 | `adpack phases/profiles/loot/reset` | Utility commands |
+| `adpack query [--preset <name>] [--list-presets]` | Cypher queries with preset library |
 
 ## Documentation
 

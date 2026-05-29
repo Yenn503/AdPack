@@ -14,6 +14,71 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type presetDef struct {
+	Name        string
+	Description string
+	Cypher      string
+}
+
+var queryPresets = []presetDef{
+	{
+		"da-sessions", "Users with sessions on Domain Controllers (DA session hunting)",
+		"MATCH (u:User)-[:HasSession]->(c:Computer) WHERE c.Domain ENDS WITH '.LOCAL' AND c.Name ENDS WITH '$' RETURN u.Name AS User, c.Name AS Computer",
+	},
+	{
+		"shortest-da", "Shortest paths to Domain Admin from owned principals",
+		"MATCH (n {owned:true}), (m:Group {name:'DOMAIN ADMINS@' + n.Domain}) CALL apoc.algo.dijkstra(n, m, 'MemberOf|AdminTo|HasSession|ForceChangePassword|AddMember|GenericAll|GenericWrite|Owns|WriteDacl|WriteOwner|CanRDP|ExecuteDCOM|AllowedToDelegate|TrustedBy|HasSIDHistory|Contains', 'weight') YIELD path RETURN path",
+	},
+	{
+		"kerberoastable", "Users with Kerberoastable SPNs",
+		"MATCH (u:User {hasspn:true}) RETURN u.Name AS User, u.DisplayName AS Display, u.Domain AS Domain",
+	},
+	{
+		"asrep-roastable", "Users without Kerberos pre-authentication",
+		"MATCH (u:User {dontreqpreauth:true}) RETURN u.Name AS User, u.Domain AS Domain",
+	},
+	{
+		"dcsync-rights", "Principals with DCSync rights (DS-Replication-Get-Changes)",
+		"MATCH (n)-[:AllExtendedRights|GenericAll]->(dc:Computer) WHERE dc.Domain ENDS WITH '.LOCAL' AND dc.Name ENDS WITH '$' RETURN n.Name AS Principal, dc.Name AS Target ORDER BY n.Name",
+	},
+	{
+		"admin-count", "Users with AdminCount=1 (privileged group members)",
+		"MATCH (u:User {admincount:true}) RETURN u.Name AS User, u.Domain AS Domain ORDER BY u.Name",
+	},
+	{
+		"constrained-delegation", "Computers with constrained delegation configured",
+		"MATCH (c:Computer) WHERE c.allowedtodelegate IS NOT NULL RETURN c.Name AS Computer, c.AllowedToDelegate AS DelegatedTo ORDER BY c.Name",
+	},
+	{
+		"unconstrained-delegation", "Computers with unconstrained delegation",
+		"MATCH (c:Computer {unconstraineddelegation:true}) RETURN c.Name AS Computer, c.OperatingSystem AS OS ORDER BY c.Name",
+	},
+	{
+		"rbcd", "Computers with Resource-Based Constrained Delegation (RBCD)",
+		"MATCH (c:Computer)-[:AllowedToActOnBehalfOfOtherIdentity]->(t:Computer) RETURN c.Name AS Source, t.Name AS Target ORDER BY c.Name",
+	},
+	{
+		"gpo-abuse", "GPO abuse paths — principals with write access to GPOs",
+		"MATCH p=(n)-[:GenericAll|GenericWrite|WriteDacl|WriteOwner]->(g:GPO) RETURN n.Name AS Principal, g.Name AS GPO, g.Domain AS Domain ORDER BY n.Name",
+	},
+	{
+		"outbound-trusts", "Outbound trust relationships to other domains",
+		"MATCH (d:Domain)-[:TrustedBy]->(t:Domain) RETURN d.Name AS Source, t.Name AS Target, t.TrustType AS TrustType",
+	},
+	{
+		"owned-principals", "All currently owned principals in the graph",
+		"MATCH (n {owned:true}) RETURN labels(n)[0] AS Type, n.Name AS Name, n.Domain AS Domain ORDER BY Type, Name",
+	},
+	{
+		"adcs-esc1", "Certificate templates vulnerable to ESC1 (enrollee supplies SAN)",
+		"MATCH (ct:CertTemplate)-[:Enroll]->(g:Group) WHERE ct.RequiresManagerApproval = false AND ct.SchemaVersion >= 1 AND ct.EnrolleeSuppliesSubject = true RETURN ct.Name AS Template, g.Name AS EnrollGroup ORDER BY ct.Name",
+	},
+	{
+		"highvalue-targets", "All high-value targets marked by BloodHound",
+		"MATCH (n) WHERE n.highvalue = true RETURN labels(n)[0] AS Type, n.Name AS Name ORDER BY Type, n.Name",
+	},
+}
+
 // Connection settings. Flags override env vars; env vars override defaults.
 // BloodHound Community Edition ships with neo4j/bloodhoundcommunityedition
 // as default; the AD‑Pentesting‑Notes lab uses neo4j/bloodhound.
@@ -24,6 +89,8 @@ var (
 	queryDB       string
 	queryTimeout  time.Duration
 	queryJSON     bool
+	presetName    string
+	listPresets   bool
 )
 
 const (
@@ -43,15 +110,39 @@ Connection settings resolve in this order:
   2. Environment (NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
   3. Defaults (bolt://localhost:7687, neo4j/bloodhound)
 
-Example:
+Examples:
   adpack query "MATCH (u:User {name:'KRBTGT@SEVENKINGDOMS.LOCAL'}) RETURN u"
+  adpack query --preset da-sessions
+  adpack query --list-presets
   adpack query --json "MATCH (n) RETURN count(n) AS total"`,
-	Args: cobra.MinimumNArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runQuery,
 }
 
 func runQuery(_ *cobra.Command, args []string) error {
-	query := strings.Join(args, " ")
+	if listPresets {
+		for _, p := range queryPresets {
+			fmt.Printf("  %-25s  %s\n", p.Name, p.Description)
+		}
+		return nil
+	}
+
+	query := ""
+	if presetName != "" {
+		for _, p := range queryPresets {
+			if p.Name == presetName {
+				query = p.Cypher
+				break
+			}
+		}
+		if query == "" {
+			return fmt.Errorf("unknown preset %q — use --list-presets to see available presets", presetName)
+		}
+	} else if len(args) > 0 {
+		query = args[0]
+	} else {
+		return fmt.Errorf("either a raw Cypher query, --preset, or --list-presets is required")
+	}
 
 	uri := resolveConn(neo4jURI, "NEO4J_URI", defaultNeo4jURI)
 	user := resolveConn(neo4jUser, "NEO4J_USER", defaultNeo4jUser)
@@ -290,5 +381,7 @@ func init() {
 	queryCmd.Flags().StringVar(&queryDB, "database", "", "Neo4j database name (default: server default)")
 	queryCmd.Flags().DurationVar(&queryTimeout, "timeout", 60*time.Second, "Query timeout")
 	queryCmd.Flags().BoolVar(&queryJSON, "json", false, "Emit JSON instead of a rendered table")
+	queryCmd.Flags().StringVar(&presetName, "preset", "", "Run a preset Cypher query (see --list-presets)")
+	queryCmd.Flags().BoolVar(&listPresets, "list-presets", false, "List available preset queries")
 	rootCmd.AddCommand(queryCmd)
 }

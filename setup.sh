@@ -148,6 +148,50 @@ pipx_install_verify() {
 
 install_netexec() { pipx_install_verify "netexec" "netexec"; }
 install_pypykatz() { pipx_install_verify "pypykatz" "pypykatz"; }
+install_impacket() { pipx_install_verify "impacket" "impacket-GetNPUsers"; }
+install_bloodhound() { pipx_install_verify "bloodhound" "bloodhound-python"; }
+install_certipy() { pipx_install_verify "certipy-ad" "certipy"; }
+install_dploot() { pipx_install_verify "dploot" "dploot"; }
+install_coercer() { pipx_install_verify "coercer" "Coercer"; }
+install_roadrecon() { pipx_install_verify "roadrecon" "roadrecon"; }
+install_o365spray() { pipx_install_verify "o365spray" "o365spray"; }
+install_azurehound() { pipx_install_verify "azurehound" "azurehound"; }
+
+install_teamsphisher() {
+    local url="https://raw.githubusercontent.com/Octoberfest7/TeamsPhisher/main/TeamsPhisher.py"
+    if [ -f "$ORIG_CWD/exe/TeamsPhisher.py" ]; then
+        success "TeamsPhisher.py already downloaded"
+    else
+        info "Downloading TeamsPhisher.py..."
+        curl -sL "$url" -o "$ORIG_CWD/exe/TeamsPhisher.py" 2>/dev/null
+        chmod +x "$ORIG_CWD/exe/TeamsPhisher.py"
+        success "TeamsPhisher.py downloaded to exe/"
+    fi
+}
+
+install_tokentactics() {
+    info "Installing TokenTactics PowerShell module..."
+    pwsh -NoP -NonI -C "Install-Module TokenTactics -Force -Scope CurrentUser" &>> "$LOG_FILE" && \
+        success "TokenTactics installed" || \
+        warn "TokenTactics installation failed (optional — needed for device code auth)"
+}
+
+install_graphrunner() {
+    info "Installing GraphRunner PowerShell module..."
+    local url="https://raw.githubusercontent.com/dafthack/GraphRunner/main/GraphRunner.ps1"
+    local psdir="$HOME/.local/share/powershell/Modules/GraphRunner"
+    mkdir -p "$psdir"
+    curl -sL "$url" -o "$psdir/GraphRunner.ps1" 2>/dev/null && \
+        success "GraphRunner installed" || \
+        warn "GraphRunner installation failed (optional — needed for cloud pillage)"
+}
+
+install_aadinternals() {
+    info "Installing AADInternals PowerShell module..."
+    pwsh -NoP -NonI -C "Install-Module AADInternals -Force -Scope CurrentUser" &>> "$LOG_FILE" && \
+        success "AADInternals installed" || \
+        warn "AADInternals installation failed (optional — needed for advanced Entra ID attacks)"
+}
 
 install_donut() { return 0; }
 install_gomimikatz() { return 0; }
@@ -295,11 +339,22 @@ verify_installations() {
     check_cmd() { if command -v "$1" &> /dev/null; then success "$1: $(command -v "$1")"; else error "$1: NOT FOUND"; all_good=false; fi; }
     check_file() { if [[ -f "$1" ]]; then success "$(basename "$1"): $1"; else warn "$(basename "$1"): NOT FOUND (optional)"; fi; }
     check_cmd "go"; check_cmd "netexec"; check_cmd "adpack"; check_cmd "pypykatz"
+    check_cmd "impacket-GetNPUsers" 2>/dev/null || error "impacket: NOT FOUND"
+    check_cmd "bloodhound-python" 2>/dev/null || warn "bloodhound-python: NOT FOUND (needed for BloodHound collection)"
+    check_cmd "certipy" 2>/dev/null || warn "certipy: NOT FOUND (needed for ADCS attacks)"
+    check_cmd "dploot" 2>/dev/null || warn "dploot: NOT FOUND (needed for DPAPI operations)"
+    check_cmd "Coercer" 2>/dev/null || warn "Coercer: NOT FOUND (needed for coercion scanning)"
+    check_cmd "roadrecon" 2>/dev/null || warn "roadrecon: NOT FOUND (optional — needed for cloud modules)"
+    check_cmd "o365spray" 2>/dev/null || warn "o365spray: NOT FOUND (optional — needed for cloud modules)"
+    check_cmd "azurehound" 2>/dev/null || warn "azurehound: NOT FOUND (optional — needed for cloud modules)"
     local exe_dir="$ORIG_CWD/exe"
     check_file "$exe_dir/nanodump.exe"
     check_file "$exe_dir/MiniPlasma.exe"; check_file "$exe_dir/PrintSpoofer64.exe"
     check_file "$exe_dir/PPLShade.exe"; check_file "$exe_dir/LECOMAx64.sys"
     check_file "$exe_dir/PhantomKiller.exe"; check_file "$exe_dir/PhantomKiller.sys"
+    check_file "$exe_dir/TeamsPhisher.py"
+    pwsh -NoP -NonI -C "Get-Module -ListAvailable TokenTactics,GraphRunner,AADInternals" &>> "$LOG_FILE" 2>/dev/null || \
+        warn "One or more PowerShell modules missing (optional — install with install_tokentactics, install_graphrunner, install_aadinternals)"
     echo ""
     if $all_good; then success "All core tools installed!"; else error "Some core tools missing — check $LOG_FILE"; return 1; fi
 }
@@ -322,9 +377,20 @@ print_summary() {
     echo -e "  3. Config: ${YELLOW}cat ~/.adpack/config.yaml${NC}"
     echo ""
     echo -e "${BLUE}Evasion profiles (select with -e flag):${NC}"
-    echo -e "    ${YELLOW}native${NC}          — Native AV kill (reg add + sc stop + taskkill)"
+    echo -e "    ${YELLOW}native${NC}          — Native AV kill + AMSI/ETW bypass (reg add + sc stop + taskkill)"
     echo -e "    ${YELLOW}pplshade${NC}       — PPL bypass via BYOVD (PPLShade + LECOMAx64.sys)"
     echo -e "    ${YELLOW}phantomkiller${NC}  — EDR kill via BYOVD (PhantomKiller + PhantomKiller.sys)"
+    echo ""
+    echo -e "${BLUE}Initial access:${NC}"
+    echo -e "    ${YELLOW}adpack initial teams${NC}        — Teams phishing"
+    echo -e "    ${YELLOW}adpack initial device-code${NC}  — Device code auth"
+    echo -e "    ${YELLOW}adpack initial consent-phish${NC} — OAuth consent phishing"
+    echo ""
+    echo -e "${BLUE}Cloud modules:${NC}"
+    echo -e "    ${YELLOW}adpack cloud enum${NC}        — Enumerate Entra ID"
+    echo -e "    ${YELLOW}adpack cloud cred-acq${NC}    — Password spray O365"
+    echo -e "    ${YELLOW}adpack cloud privesc${NC}     — Privesc analysis"
+    echo -e "    ${YELLOW}adpack cloud pillage${NC}     — Search mail/SPO/Teams"
     echo ""
     echo -e "${BLUE}Log:${NC} $LOG_FILE"
     echo ""
@@ -336,7 +402,12 @@ main() {
     check_os; check_root; create_dirs; install_system_deps
     install_go; install_pipx
     install_netexec; install_nanodump; install_pypykatz
+    install_impacket; install_bloodhound; install_certipy; install_dploot; install_coercer
     install_miniplasma; install_printspoofer; install_pplshade; install_phantomkiller
+    # Optional cloud tools (for Entra ID/Azure AD modules)
+    install_roadrecon || true; install_o365spray || true; install_azurehound || true
+    # Initial access and cloud post-exploitation tools
+    install_teamsphisher || true; install_tokentactics || true; install_graphrunner || true; install_aadinternals || true
     build_adpack; create_config; update_path
     echo ""; verify_installations; test_adpack; print_summary
     log "adpack setup completed"

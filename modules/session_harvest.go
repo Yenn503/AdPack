@@ -3,7 +3,7 @@ package modules
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,10 +13,10 @@ import (
 func RunSessionHarvest(ctx context.Context, provider core.DirectoryProvider, state *core.ADState) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 
-	fmt.Println("[*] Harvesting sessions...")
+	slog.Debug("Harvesting sessions...")
 	sessions, err := provider.EnumerateSessions(ctx)
 	if err != nil {
-		fmt.Printf("[!] Session harvest failed: %v\n", err)
+		slog.Warn("Session harvest failed", "error", err)
 		result.Success = false
 		return result
 	}
@@ -80,8 +80,7 @@ func RunSessionHarvest(ctx context.Context, provider core.DirectoryProvider, sta
 		if ref, ok := core.ResolveSessionRef(sessions[i].Username, sessionDomain); ok {
 			stats.Resolved++
 			stats.MachineAccounts++
-			fmt.Printf("         host identity resolved: %s → %s@%s\n",
-				sessions[i].Username, ref.Name, ref.Domain)
+			slog.Info("host identity resolved", "username", sessions[i].Username, "name", ref.Name, "domain", ref.Domain)
 
 			// Track duplicate and mismatch: each iteration of the same
 			// HostRef in one run is a compression opportunity; each
@@ -89,20 +88,17 @@ func RunSessionHarvest(ctx context.Context, provider core.DirectoryProvider, sta
 			refKey := ref.Name + "@" + ref.Domain
 			if firstHost, dup := seenRefs[refKey]; dup {
 				stats.DuplicateHostRefs++
-				fmt.Printf("         duplicate hostref %s: first seen on %s, now on %s\n",
-					refKey, firstHost, sessions[i].Host)
+				slog.Warn("duplicate hostref", "ref", refKey, "first_host", firstHost, "current_host", sessions[i].Host)
 			} else {
 				seenRefs[refKey] = sessions[i].Host
 			}
 			if ref.Domain != sessionDomain {
 				stats.DomainMismatches++
-				fmt.Printf("         domain mismatch: resolved %s, session domain %s\n",
-					ref.Domain, sessionDomain)
+				slog.Warn("domain mismatch", "resolved", ref.Domain, "session_domain", sessionDomain)
 			}
 		} else {
 			stats.Unresolved++
-			fmt.Printf("         user session (non-machine): %s\n",
-				sessions[i].Username)
+			slog.Debug("user session (non-machine)", "username", sessions[i].Username)
 		}
 
 		confidence := 0.6
@@ -129,7 +125,7 @@ func RunSessionHarvest(ctx context.Context, provider core.DirectoryProvider, sta
 	}
 
 	snapshot, _ := json.Marshal(stats)
-	fmt.Printf("[+] Identity drift snapshot: %s\n", snapshot)
-	fmt.Printf("[+] Harvested %d sessions\n", len(result.Sessions))
+	slog.Info("Identity drift snapshot", "snapshot", string(snapshot))
+	slog.Info("Harvested sessions", "count", len(result.Sessions))
 	return result
 }

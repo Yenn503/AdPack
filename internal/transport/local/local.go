@@ -12,20 +12,34 @@ import (
 	"adpack/tools"
 )
 
+type Option func(*LocalTransport)
+
+func WithTiming(t core.TimingConfig) Option {
+	return func(lt *LocalTransport) {
+		lt.timing = t
+	}
+}
+
 type LocalTransport struct {
 	domain string
 	user   string
 	pass   string
 	hash   string
+	timing core.TimingConfig
 }
 
-func New(target core.HostRef, domain, user, pass, hash string) *LocalTransport {
-	return &LocalTransport{
+func New(target core.HostRef, domain, user, pass, hash string, opts ...Option) *LocalTransport {
+	lt := &LocalTransport{
 		domain: domain,
 		user:   user,
 		pass:   pass,
 		hash:   hash,
+		timing: core.DefaultTiming(),
 	}
+	for _, opt := range opts {
+		opt(lt)
+	}
+	return lt
 }
 
 func (t *LocalTransport) nxcTarget(protocol string, target core.HostRef) tools.NetExecTarget {
@@ -40,6 +54,9 @@ func (t *LocalTransport) nxcTarget(protocol string, target core.HostRef) tools.N
 }
 
 func (t *LocalTransport) Exec(ctx context.Context, target core.HostRef, command string, timeout time.Duration) core.ExecResult {
+	if t.timing.DelayMs > 0 {
+		time.Sleep(t.timing.Delay())
+	}
 	if timeout <= 0 {
 		timeout = 45 * time.Second
 	}
@@ -57,6 +74,9 @@ func (t *LocalTransport) Exec(ctx context.Context, target core.HostRef, command 
 }
 
 func (t *LocalTransport) Upload(ctx context.Context, target core.HostRef, data []byte, remoteDir, remoteName string) (string, error) {
+	if t.timing.DelayMs > 0 {
+		time.Sleep(t.timing.Delay())
+	}
 	tmpDir, err := os.MkdirTemp("", "adpack-upload-*")
 	if err != nil {
 		return "", fmt.Errorf("create temp dir: %w", err)
@@ -84,6 +104,9 @@ func (t *LocalTransport) Upload(ctx context.Context, target core.HostRef, data [
 }
 
 func (t *LocalTransport) Download(ctx context.Context, target core.HostRef, remotePath string) ([]byte, error) {
+	if t.timing.DelayMs > 0 {
+		time.Sleep(t.timing.Delay())
+	}
 	tmpDir, err := os.MkdirTemp("", "adpack-download-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)

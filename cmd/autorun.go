@@ -30,8 +30,8 @@ var autoRunCmd = &cobra.Command{
 	Long: `Evaluates current state, determines the next recommended phase, executes it,
 saves results, and repeats until the chain is complete or a phase fails.
 
-Use --max to limit the number of phases executed. Use --skip-fail to continue
-past failed phases instead of stopping.`,
+Use --max to limit the number of phases executed. By default, autorun continues
+past failed phases. Use --skip-fail=false to stop on failures.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var state *core.ADState
 		var err error
@@ -347,7 +347,7 @@ past failed phases instead of stopping.`,
 				DB.SavePhases(state)
 				utils.PhaseFailed(elapsed)
 				if !skipFail {
-					utils.StepWarn("Stopping. Use --skip-fail to continue past failures.")
+					utils.StepWarn("Stopping on phase failure (--skip-fail=false).")
 					break
 				}
 			}
@@ -400,8 +400,8 @@ func init() {
 		"Target host IP or hostname")
 	autoRunCmd.Flags().IntVarP(&maxPhases, "max", "m", 0,
 		"Maximum number of phases to run (0 = unlimited)")
-	autoRunCmd.Flags().BoolVar(&skipFail, "skip-fail", false,
-		"Continue to next phase when a phase fails instead of stopping")
+	autoRunCmd.Flags().BoolVar(&skipFail, "skip-fail", true,
+		"Continue to next phase when a phase fails instead of stopping (default: true)")
 	autoRunCmd.Flags().StringVar(&seedDomain, "domain", "", "Target domain (seeds initial credential)")
 	autoRunCmd.Flags().StringVar(&seedUser, "user", "", "Username (seeds initial credential)")
 	autoRunCmd.Flags().StringVar(&seedPass, "password", "", "Password (seeds initial credential)")

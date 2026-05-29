@@ -1,6 +1,6 @@
 # AdPack Usage Guide
 
-Complete command reference for adpack v0.5.0.
+Complete command reference for adpack v0.5.0 (14 phases).
 
 ## Quick Start
 
@@ -40,7 +40,7 @@ Flags:
 adpack run <phase> [flags]
 ```
 
-Phases: `discovery`, `enumeration`, `credential_acq`, `session_harvest`, `graph_analysis`, `lateral`, `validation`, `privesc`, `persistence`
+Phases: `initial_access`, `discovery`, `enumeration`, `credential_acq`, `session_harvest`, `graph_analysis`, `lateral`, `validation`, `privesc`, `persistence`, `cloud_enum`, `cloud_cred_acq`, `cloud_privesc`, `cloud_pillage`
 
 Flags:
 - `-t, --target` — Target IP or hostname
@@ -205,12 +205,36 @@ adpack validate config            # Validate config file
 adpack validate setup             # Full setup validation (tools + config)
 ```
 
+## Initial Access
+
+```bash
+adpack initial teams --target <user> --domain <domain> --url <webhook>  # Teams phishing
+adpack initial device-code --tenant <tenant>                            # Device code auth
+adpack initial consent-phish --tenant <tenant>                          # OAuth consent phishing
+```
+
+## Cloud Attacks
+
+```bash
+adpack cloud enum --tenant <tenant> [--username <u> --password <p>]     # Enumerate Entra ID tenant
+adpack cloud cred-acq --tenant <tenant> --userlist <file> --password <p> # O365 password spray
+adpack cloud privesc [--tenant <tenant>]                                 # Cloud privilege escalation analysis
+adpack cloud pillage [--search <terms>]                                  # Search mail/SPO/Teams via Graph API
+```
+
 ## BloodHound Integration
 
 ```bash
 adpack bloodhound collect --dc-ip <ip> --user <u> --password <p> --domain <d>
-adpack ingest <file>              # Import BloodHound JSON
-adpack query <cypher>             # Run Cypher query against Neo4j
+adpack ingest <file>                       # Import BloodHound JSON
+adpack query --list-presets                # List available preset queries
+adpack query --preset da-sessions          # Run a preset query
+adpack query --preset shortest-da          # Shortest paths to DA
+adpack query --preset kerberoastable       # Kerberoastable users
+adpack query --preset asrep-roastable      # AS-REP roastable users
+adpack query --preset dcsync-rights        # DCSync capable principals
+adpack query --preset adcs-esc1            # ESC1 certificate templates
+adpack query "MATCH (n) RETURN count(n)"   # Raw Cypher query (with --json for jq)
 ```
 
 ## Utility Commands

@@ -72,17 +72,10 @@ timing:
   max_concurrent: 10
 
 # BloodHound Neo4j / Viper C2 configuration (optional).
-# Required for Cypher queries via `adpack query`.
 viper:
-  # Enable Neo4j connection
   enabled: false
-  # Neo4j bolt host
   host: "localhost"
-  # Neo4j bolt port
   port: 7687
-  # Neo4j username
   username: ""
-  # Neo4j password
   password: ""
-  # Enable TLS for Neo4j connection
   tls: false

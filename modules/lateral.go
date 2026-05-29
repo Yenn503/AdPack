@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,14 +47,14 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 
 	host, found := selectTarget(state, targetHost)
 	if !found {
-		fmt.Println("[!] No target available for lateral movement")
+		slog.Warn("No target available for lateral movement")
 		result.Success = false
 		return result
 	}
 
 	domain, user, pass, hash := getDomainCredential(state, host.Domain)
 	if domain == "" || user == "" {
-		fmt.Println("[!] No valid credentials for lateral movement")
+		slog.Warn("No valid credentials for lateral movement")
 		result.Success = false
 		return result
 	}
@@ -65,20 +66,20 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 	authRejected := false
 
 	for _, m := range lateralMatrix {
-		fmt.Printf("[*] Trying %s on %s...\n", m.Name, host.IP)
+		slog.Debug("Trying lateral movement method on host", "method", m.Name, "host", host.IP)
 		ok, evidence, err := probeLateralMethod(ctx, host, domain, user, pass, hash, m)
 		if err != nil {
 			// Auth-rejected on first probe → no point hammering the rest.
 			if strings.Contains(err.Error(), "auth rejected") {
-				fmt.Printf("  ✗  %s auth rejected — aborting matrix\n", m.Name)
+				slog.Warn("Auth rejected — aborting matrix", "method", m.Name)
 				authRejected = true
 				break
 			}
-			fmt.Printf("  ✗  %s failed: %v\n", m.Name, err)
+			slog.Warn("Lateral method failed", "method", m.Name, "error", err)
 			continue
 		}
 		if !ok {
-			fmt.Printf("  ✗  %s did not produce exec evidence\n", m.Name)
+			slog.Warn("Lateral method did not produce exec evidence", "method", m.Name)
 			continue
 		}
 		anySuccess = true
@@ -97,7 +98,7 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 			RawOutput: evidence,
 			Timestamp: time.Now(),
 		})
-		fmt.Printf("  ✓  %s succeeded\n", m.Name)
+		slog.Info("Lateral method succeeded", "method", m.Name)
 	}
 	if anySuccess {
 		result.Hosts = append(result.Hosts, state.Hosts...)
@@ -107,7 +108,7 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 	case authRejected:
 		result.Success = false
 	case !anySuccess:
-		fmt.Printf("  ✗  All protocols failed\n")
+		slog.Warn("All lateral protocols failed")
 		result.Success = false
 	}
 	return result

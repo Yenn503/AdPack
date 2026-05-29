@@ -28,6 +28,7 @@ type ReportData struct {
 	Creds       []Credential
 	Hosts       []Host
 	Phases      map[Phase]PhaseStatus
+	PhaseMitre  map[Phase]string
 }
 
 func GenerateReportData(state *ADState) *ReportData {
@@ -47,6 +48,7 @@ func GenerateReportData(state *ADState) *ReportData {
 		Creds:       state.Creds,
 		Hosts:       state.Hosts,
 		Phases:      state.Phases,
+		PhaseMitre:  PhaseMitre,
 	}
 }
 
@@ -96,6 +98,13 @@ func GenerateMDReport(data *ReportData, output string) error {
 	for _, f := range data.Findings {
 		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", f.Severity, f.Title, f.MITRE, f.Detail))
 	}
+	sb.WriteString("\n## Phase MITRE ATT&CK Mappings\n\n")
+	sb.WriteString("| Phase | MITRE Technique IDs |\n|---|---|\n")
+	for _, p := range AllPhases {
+		if id, ok := data.PhaseMitre[p]; ok {
+			sb.WriteString(fmt.Sprintf("| %s | %s |\n", p, id))
+		}
+	}
 	sb.WriteString("\n## Credentials\n\n")
 	for _, c := range data.Creds {
 		sb.WriteString(fmt.Sprintf("- `%s\\%s` (%s) %s\n", c.Domain, c.Username, c.Type, c.Source))
@@ -128,6 +137,9 @@ th{background:#161b22;text-align:left;padding:8px}td{padding:8px;border-bottom:1
 <h2>Findings</h2>
 <table><tr><th>Severity</th><th>Title</th><th>MITRE ID</th><th>Detail</th></tr>
 {{range .Findings}}<tr><td class="{{.Severity | lower}}">{{.Severity}}</td><td>{{.Title}}</td><td>{{.MITRE}}</td><td>{{.Detail}}</td></tr>{{end}}</table>
+<h2>Phase MITRE ATT&CK Mappings</h2>
+<table><tr><th>Phase</th><th>MITRE ID</th></tr>
+{{range $phase, $id := .PhaseMitre}}<tr><td>{{$phase}}</td><td>{{$id}}</td></tr>{{end}}</table>
 <h2>Credentials</h2>
 <ul>{{range .Creds}}<li><code>{{.Domain}}\{{.Username}}</code> ({{.Type}}) — {{.Source}}</li>{{end}}</ul>
 </body></html>`
