@@ -327,7 +327,23 @@ var runCmd = &cobra.Command{
 			success = result.Success
 
 		case core.PhaseCloudInitialAccess:
-			slog.Warn("Cloud initial access not supported via `adpack run` — use `adpack initial` instead")
+			slog.Warn("Cloud initial access not supported via `adpack run` — use `adpack initial <subcommand>` instead")
+			state.Phases[phase] = core.PhaseSkipped
+
+		case core.PhaseCloudEnum:
+			slog.Warn("Cloud phases not supported via `adpack run` — use `adpack cloud enum` instead")
+			state.Phases[phase] = core.PhaseSkipped
+
+		case core.PhaseCloudCredAcq:
+			slog.Warn("Cloud phases not supported via `adpack run` — use `adpack cloud cred-acq` instead")
+			state.Phases[phase] = core.PhaseSkipped
+
+		case core.PhaseCloudPrivesc:
+			slog.Warn("Cloud phases not supported via `adpack run` — use `adpack cloud privesc` instead")
+			state.Phases[phase] = core.PhaseSkipped
+
+		case core.PhaseCloudPillage:
+			slog.Warn("Cloud phases not supported via `adpack run` — use `adpack cloud pillage` instead")
 			state.Phases[phase] = core.PhaseSkipped
 
 		default:
@@ -355,9 +371,24 @@ var runCmd = &cobra.Command{
 		state, _ = DB.LoadState()
 		next := state.NextPhase()
 		if next != nil {
-			fmt.Printf("\n  %s  adpack run %s\n",
+			var runHint string
+			switch *next {
+			case core.PhaseCloudInitialAccess:
+				runHint = "adpack initial <teams|device-code|consent-phish>"
+			case core.PhaseCloudEnum:
+				runHint = "adpack cloud enum"
+			case core.PhaseCloudCredAcq:
+				runHint = "adpack cloud cred-acq"
+			case core.PhaseCloudPrivesc:
+				runHint = "adpack cloud privesc"
+			case core.PhaseCloudPillage:
+				runHint = "adpack cloud pillage"
+			default:
+				runHint = "adpack run " + string(*next)
+			}
+			fmt.Printf("\n  %s  %s\n",
 				lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("Next:"),
-				string(*next))
+				runHint)
 		}
 
 		return nil

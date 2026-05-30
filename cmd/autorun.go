@@ -332,6 +332,26 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 					utils.StepOk("Hybrid bridge analysis complete")
 				}
 
+			case core.PhaseCloudEnum:
+				utils.Step("Skipping cloud_enum in autorun (interactive)")
+				utils.StepInfo("Run: adpack cloud enum")
+				success = true
+
+			case core.PhaseCloudCredAcq:
+				utils.Step("Skipping cloud_cred_acq in autorun (interactive)")
+				utils.StepInfo("Run: adpack cloud cred-acq")
+				success = true
+
+			case core.PhaseCloudPrivesc:
+				utils.Step("Skipping cloud_privesc in autorun (interactive)")
+				utils.StepInfo("Run: adpack cloud privesc")
+				success = true
+
+			case core.PhaseCloudPillage:
+				utils.Step("Skipping cloud_pillage in autorun (interactive)")
+				utils.StepInfo("Run: adpack cloud pillage")
+				success = true
+
 			default:
 				return fmt.Errorf("phase %q has no implementation", rec.Phase)
 			}

@@ -335,10 +335,10 @@ var PhaseMitre = map[Phase]string{
 	PhaseImpact:             "T1485, T1560, T1041",
 	PhaseHybridBridge:       "T1606, T1550, T1528",
 	PhaseCloudInitialAccess: "T1566, T1528, T1550",
-	PhaseCloudEnum:          "T1525, T1087, T1615",
+	PhaseCloudEnum:          "T1526, T1087, T1615",
 	PhaseCloudCredAcq:       "T1110, T1528",
-	PhaseCloudPrivesc:       "T1078, T1484, T1525",
-	PhaseCloudPillage:       "T1530, T1213, T1114, T1210",
+	PhaseCloudPrivesc:       "T1078, T1078.004, T1526",
+	PhaseCloudPillage:       "T1530, T1213, T1114",
 }
 
 func (p Phase) Dependencies() []Phase {

@@ -71,9 +71,24 @@ var nextCmd = &cobra.Command{
 		}
 
 		// Run hint
-		fmt.Printf("  %s  adpack run %s\n",
+		var runHint string
+		switch rec.Phase {
+		case core.PhaseCloudInitialAccess:
+			runHint = "adpack initial <teams|device-code|consent-phish>"
+		case core.PhaseCloudEnum:
+			runHint = "adpack cloud enum"
+		case core.PhaseCloudCredAcq:
+			runHint = "adpack cloud cred-acq"
+		case core.PhaseCloudPrivesc:
+			runHint = "adpack cloud privesc"
+		case core.PhaseCloudPillage:
+			runHint = "adpack cloud pillage"
+		default:
+			runHint = "adpack run " + string(rec.Phase)
+		}
+		fmt.Printf("  %s  %s\n",
 			lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("Run:"),
-			string(rec.Phase))
+			runHint)
 
 		return nil
 	},
