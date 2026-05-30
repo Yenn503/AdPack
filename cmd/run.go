@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -316,6 +317,18 @@ var runCmd = &cobra.Command{
 				}
 				printResult("Persistence mechanisms deployed", 0)
 			}
+
+		case core.PhaseImpact:
+			result := modules.RunImpact(state)
+			success = result.Success
+
+		case core.PhaseHybridBridge:
+			result := modules.RunHybridBridge(state)
+			success = result.Success
+
+		case core.PhaseCloudInitialAccess:
+			slog.Warn("Cloud initial access not supported via `adpack run` — use `adpack initial` instead")
+			state.Phases[phase] = core.PhaseSkipped
 
 		default:
 			return fmt.Errorf("phase %q has no implementation", phase)

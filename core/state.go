@@ -283,50 +283,67 @@ type CloudResource struct {
 type Phase string
 
 const (
-	PhaseDiscovery      Phase = "discovery"
-	PhaseEnumeration    Phase = "enumeration"
-	PhaseCredentialAcq  Phase = "credential_acq"
-	PhaseSessionHarvest Phase = "session_harvest"
-	PhaseGraphAnalysis  Phase = "graph_analysis"
-	PhaseLateral        Phase = "lateral"
-	PhaseValidation     Phase = "validation"
-	PhasePrivEsc        Phase = "privesc"
-	PhasePersistence    Phase = "persistence"
-	PhaseInitialAccess  Phase = "initial_access"
-	PhaseCloudEnum      Phase = "cloud_enum"
-	PhaseCloudCredAcq   Phase = "cloud_cred_acq"
-	PhaseCloudPrivesc   Phase = "cloud_privesc"
-	PhaseCloudPillage   Phase = "cloud_pillage"
+	PhaseDiscovery          Phase = "discovery"
+	PhaseEnumeration        Phase = "enumeration"
+	PhaseCredentialAcq      Phase = "credential_acq"
+	PhaseSessionHarvest     Phase = "session_harvest"
+	PhaseGraphAnalysis      Phase = "graph_analysis"
+	PhaseLateral            Phase = "lateral"
+	PhaseValidation         Phase = "validation"
+	PhasePrivEsc            Phase = "privesc"
+	PhasePersistence        Phase = "persistence"
+	PhaseImpact             Phase = "impact"
+	PhaseHybridBridge       Phase = "hybrid_bridge"
+	PhaseCloudInitialAccess Phase = "cloud_initial_access"
+	PhaseCloudEnum          Phase = "cloud_enum"
+	PhaseCloudCredAcq       Phase = "cloud_cred_acq"
+	PhaseCloudPrivesc       Phase = "cloud_privesc"
+	PhaseCloudPillage       Phase = "cloud_pillage"
 )
 
 var AllPhases = []Phase{
-	PhaseDiscovery, PhaseEnumeration, PhaseCredentialAcq,
-	PhaseSessionHarvest, PhaseGraphAnalysis, PhaseValidation,
-	PhasePrivEsc, PhaseLateral, PhasePersistence,
-	PhaseCloudEnum, PhaseCloudCredAcq, PhaseCloudPrivesc, PhaseCloudPillage,
-	PhaseInitialAccess, // last — NextPhase() has explicit empty-state check for this
+	// On-prem AD DAG (independent of cloud)
+	PhaseDiscovery,
+	PhaseEnumeration,
+	PhaseCredentialAcq,
+	PhaseValidation,
+	PhaseSessionHarvest,
+	PhaseGraphAnalysis,
+	PhasePrivEsc,
+	PhaseLateral,
+	PhasePersistence,
+	PhaseImpact,
+	PhaseHybridBridge,
+	// Cloud Entra ID DAG (fully independent)
+	PhaseCloudInitialAccess,
+	PhaseCloudEnum,
+	PhaseCloudCredAcq,
+	PhaseCloudPrivesc,
+	PhaseCloudPillage,
 }
 
 var PhaseMitre = map[Phase]string{
-	PhaseDiscovery:      "T1087, T1049, T1016, T1482",
-	PhaseEnumeration:    "T1069, T1087, T1482",
-	PhaseCredentialAcq:  "T1003, T1558, T1110",
-	PhaseSessionHarvest: "T1033",
-	PhaseGraphAnalysis:  "T1087, T1069",
-	PhaseValidation:     "T1078",
-	PhasePrivEsc:        "T1068, T1134, T1546",
-	PhaseLateral:        "T1021, T1570",
-	PhasePersistence:    "T1098, T1136, T1505",
-	PhaseInitialAccess:  "T1566, T1528, T1550",
-	PhaseCloudEnum:      "T1525, T1087, T1615",
-	PhaseCloudCredAcq:   "T1110, T1528",
-	PhaseCloudPrivesc:   "T1078, T1484, T1525",
-	PhaseCloudPillage:   "T1530, T1213, T1114, T1210",
+	PhaseDiscovery:          "T1087, T1049, T1016, T1482",
+	PhaseEnumeration:        "T1069, T1087, T1482",
+	PhaseCredentialAcq:      "T1003, T1558, T1110",
+	PhaseSessionHarvest:     "T1033",
+	PhaseGraphAnalysis:      "T1087, T1069",
+	PhaseValidation:         "T1078",
+	PhasePrivEsc:            "T1068, T1134, T1546",
+	PhaseLateral:            "T1021, T1570",
+	PhasePersistence:        "T1098, T1136, T1505",
+	PhaseImpact:             "T1485, T1560, T1041",
+	PhaseHybridBridge:       "T1606, T1550, T1528",
+	PhaseCloudInitialAccess: "T1566, T1528, T1550",
+	PhaseCloudEnum:          "T1525, T1087, T1615",
+	PhaseCloudCredAcq:       "T1110, T1528",
+	PhaseCloudPrivesc:       "T1078, T1484, T1525",
+	PhaseCloudPillage:       "T1530, T1213, T1114, T1210",
 }
 
 func (p Phase) Dependencies() []Phase {
 	switch p {
-	case PhaseInitialAccess:
+	case PhaseCloudInitialAccess:
 		return nil
 	case PhaseDiscovery:
 		return nil
@@ -346,8 +363,12 @@ func (p Phase) Dependencies() []Phase {
 		return []Phase{PhaseEnumeration, PhaseGraphAnalysis}
 	case PhasePersistence:
 		return []Phase{PhaseCredentialAcq, PhasePrivEsc}
+	case PhaseImpact:
+		return []Phase{PhaseLateral, PhasePersistence}
+	case PhaseHybridBridge:
+		return []Phase{PhaseCredentialAcq, PhaseCloudEnum}
 	case PhaseCloudEnum:
-		return []Phase{PhaseInitialAccess}
+		return []Phase{PhaseCloudInitialAccess}
 	case PhaseCloudCredAcq:
 		return []Phase{PhaseCloudEnum}
 	case PhaseCloudPrivesc:
@@ -412,8 +433,8 @@ func (s *ADState) DetectGaps() []Gap {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var g []Gap
-	if len(s.Hosts) == 0 && len(s.Tokens) == 0 {
-		g = append(g, Gap{PhaseInitialAccess, "high", "No initial access established — run `adpack initial` for Teams phishing or device code auth"})
+	if len(s.Tokens) == 0 && len(s.CloudResources) == 0 {
+		g = append(g, Gap{PhaseCloudInitialAccess, "medium", "No cloud tokens — run `adpack initial device-code` or `adpack cloud initial` for Entra ID access"})
 	}
 	if len(s.Hosts) == 0 {
 		g = append(g, Gap{PhaseDiscovery, "high", "No hosts discovered"})
@@ -451,11 +472,13 @@ func (s *ADState) DetectGaps() []Gap {
 	if len(s.Tokens) > 0 && len(s.CloudResources) == 0 {
 		g = append(g, Gap{PhaseCloudEnum, "medium", "Cloud tokens obtained but no cloud resources enumerated"})
 	}
+	if s.Phases[PhaseLateral] == PhaseComplete && s.Phases[PhasePersistence] == PhaseComplete && s.Phases[PhaseImpact] != PhaseComplete {
+		g = append(g, Gap{PhaseImpact, "medium", "Lateral and persistence complete — define objective and execute impact"})
+	}
+	if len(s.Creds) > 0 && len(s.CloudResources) > 0 && s.Phases[PhaseHybridBridge] != PhaseComplete {
+		g = append(g, Gap{PhaseHybridBridge, "medium", "On-prem creds and cloud resources both available — try hybrid bridge (AADConnect, PRT, SeamlessSSO)"})
+	}
 	return g
-}
-
-func (s *ADState) hasAnyCreds() bool {
-	return len(s.Creds) > 0
 }
 
 func (s *ADState) NextPhase() *Phase {
@@ -463,14 +486,7 @@ func (s *ADState) NextPhase() *Phase {
 	defer s.mu.RUnlock()
 
 	// If state is empty (no hosts, no creds, no tokens), suggest initial access first
-	if len(s.Hosts) == 0 && !s.hasAnyCreds() && len(s.Tokens) == 0 {
-		if s.Phases[PhaseInitialAccess] != PhaseComplete &&
-			s.Phases[PhaseInitialAccess] != PhaseSkipped &&
-			s.Phases[PhaseInitialAccess] != PhaseFailed {
-			p := PhaseInitialAccess
-			return &p
-		}
-	}
+	hasCloudActivity := len(s.Tokens) > 0 || len(s.CloudResources) > 0
 
 	// Fast-track: if we have DA creds validated, jump to persistence or lateral movement
 	hasDA := false
@@ -528,6 +544,10 @@ func (s *ADState) NextPhase() *Phase {
 		return true
 	}
 	for _, p := range AllPhases {
+		// Skip cloud phases unless there's cloud activity
+		if !hasCloudActivity && (p == PhaseCloudInitialAccess || p == PhaseHybridBridge) {
+			continue
+		}
 		st := s.Phases[p]
 		if st == PhaseComplete || st == PhaseSkipped || st == PhaseFailed {
 			continue

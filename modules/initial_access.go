@@ -59,7 +59,7 @@ func RunTeamsPhish(ctx context.Context, state *core.ADState, config tools.TeamsP
 			slog.Info("Teams phish success indicator", "detail", trimmed)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type:       core.EvCredAcquired,
-				Phase:      core.PhaseInitialAccess,
+				Phase:      core.PhaseCloudInitialAccess,
 				Source:     "teams_phish",
 				Key:        "teams_phish_result",
 				Value:      trimmed,
@@ -70,7 +70,7 @@ func RunTeamsPhish(ctx context.Context, state *core.ADState, config tools.TeamsP
 	}
 
 	if state != nil {
-		state.Phases[core.PhaseInitialAccess] = core.PhaseComplete
+		state.Phases[core.PhaseCloudInitialAccess] = core.PhaseComplete
 	}
 	slog.Info("Teams phishing complete", "results", len(result.Evidence))
 	return result
@@ -80,7 +80,7 @@ func RunDeviceCodeAuth(ctx context.Context, state *core.ADState, client string) 
 	result := &core.ToolResult{Success: true}
 
 	if !tools.TokenTactics.Available() {
-		slog.Warn("TokenTactics not available — install with: Install-Module TokenTactics")
+		slog.Warn("roadtx not available — install with: pipx install roadtx")
 		return result
 	}
 
@@ -89,13 +89,14 @@ func RunDeviceCodeAuth(ctx context.Context, state *core.ADState, client string) 
 	}
 
 	slog.Info("starting device code auth", "client", client)
-	stdout, err := tools.TokenTactics.RunDeviceCodeAuth(ctx, client)
+	cr, err := tools.TokenTactics.RunDeviceCodeAuth(ctx, client, "")
 	if err != nil {
 		slog.Error("device code auth failed", "error", err)
 		result.Success = false
 		return result
 	}
 
+	stdout := cr.Stdout
 	result.RawOutput = stdout
 	fmt.Println("=== Device Code Authentication ===")
 	fmt.Println(stdout)
@@ -128,14 +129,14 @@ func RunDeviceCodeAuth(ctx context.Context, state *core.ADState, client string) 
 		})
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type:       core.EvCredAcquired,
-			Phase:      core.PhaseInitialAccess,
+			Phase:      core.PhaseCloudInitialAccess,
 			Source:     "device_code_auth",
 			Key:        "device_code",
 			Value:      userCode,
 			Confidence: 0.8,
 			Timestamp:  time.Now(),
 		})
-		state.Phases[core.PhaseInitialAccess] = core.PhaseComplete
+		state.Phases[core.PhaseCloudInitialAccess] = core.PhaseComplete
 	}
 	return result
 }
@@ -194,14 +195,14 @@ func RunOAuthConsentPhish(ctx context.Context, state *core.ADState, tokens *tool
 	if state != nil {
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
 			Type:       core.EvCredAcquired,
-			Phase:      core.PhaseInitialAccess,
+			Phase:      core.PhaseCloudInitialAccess,
 			Source:     "oauth_consent",
 			Key:        "oauth_consent",
 			Value:      "OAuth consent phish completed",
 			Confidence: 0.7,
 			Timestamp:  time.Now(),
 		})
-		state.Phases[core.PhaseInitialAccess] = core.PhaseComplete
+		state.Phases[core.PhaseCloudInitialAccess] = core.PhaseComplete
 	}
 	return result
 }

@@ -33,6 +33,9 @@ var cloudEnumCmd = &cobra.Command{
 		if !result.Success {
 			return fmt.Errorf("cloud enumeration failed")
 		}
+		if err := DB.SaveState(state); err != nil {
+			return fmt.Errorf("save state: %w", err)
+		}
 		fmt.Println("[+] Cloud enumeration complete")
 		return nil
 	},
@@ -50,6 +53,9 @@ var cloudCredAcqCmd = &cobra.Command{
 		if !result.Success {
 			return fmt.Errorf("cloud credential acquisition failed")
 		}
+		if err := DB.SaveState(state); err != nil {
+			return fmt.Errorf("save state: %w", err)
+		}
 		fmt.Println("[+] Cloud credential acquisition complete")
 		return nil
 	},
@@ -66,6 +72,9 @@ var cloudPrivescCmd = &cobra.Command{
 		result := modules.RunCloudPrivesc(context.Background(), state, cloudTenant)
 		if !result.Success {
 			return fmt.Errorf("cloud privesc analysis failed")
+		}
+		if err := DB.SaveState(state); err != nil {
+			return fmt.Errorf("save state: %w", err)
 		}
 		fmt.Println("[+] Cloud privesc analysis complete")
 		return nil
@@ -87,6 +96,9 @@ var cloudPillageCmd = &cobra.Command{
 		result := modules.RunCloudPillage(context.Background(), state, terms)
 		if !result.Success {
 			return fmt.Errorf("cloud pillage failed")
+		}
+		if err := DB.SaveState(state); err != nil {
+			return fmt.Errorf("save state: %w", err)
 		}
 		fmt.Println("[+] Cloud pillage complete")
 		return nil

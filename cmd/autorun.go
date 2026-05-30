@@ -316,6 +316,22 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 					utils.StepOk("Persistence mechanisms deployed")
 				}
 
+			case core.PhaseImpact:
+				utils.Step("Executing mission objective...")
+				result := modules.RunImpact(state)
+				if result.Success {
+					success = true
+					utils.StepOk("Impact phase complete")
+				}
+
+			case core.PhaseHybridBridge:
+				utils.Step("Probing hybrid identity bridge...")
+				result := modules.RunHybridBridge(state)
+				if result.Success {
+					success = true
+					utils.StepOk("Hybrid bridge analysis complete")
+				}
+
 			default:
 				return fmt.Errorf("phase %q has no implementation", rec.Phase)
 			}

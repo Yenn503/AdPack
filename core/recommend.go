@@ -47,6 +47,10 @@ func (e *Engine) Evaluate() Recommendation {
 		rec.Rationale = "Check ACL abuse, ADCS, RBCD, GPP for privilege escalation."
 	case PhasePersistence:
 		rec.Rationale = "Establish persistence: krbtgt, DSRM, skeleton, admin SDHolder."
+	case PhaseImpact:
+		rec.Rationale = "Lateral and persistence complete. Execute mission objective: exfil, ransom, or cleanup."
+	case PhaseHybridBridge:
+		rec.Rationale = "On-prem credentials and cloud resources available. Pivot across the identity bridge: AADConnect, PRT, SeamlessSSO, Golden SAML."
 	}
 	return rec
 }
@@ -71,7 +75,11 @@ func PhaseStrategies(p Phase) []string {
 		return []string{"acl_analyze", "gpp_check", "adcs_abuse", "rbcd_check"}
 	case PhasePersistence:
 		return []string{"krbtgt_reset", "dsrm", "admin_sdholder", "silver_ticket"}
-	case PhaseInitialAccess:
+	case PhaseImpact:
+		return []string{"exfil_over_c2", "data_stage", "objective_verify"}
+	case PhaseHybridBridge:
+		return []string{"aadconnect_extract", "prt_extraction", "seamless_sso_forge", "golden_saml"}
+	case PhaseCloudInitialAccess:
 		return []string{"teams_phish", "device_code_auth", "oauth_consent_phish"}
 	case PhaseCloudEnum:
 		return []string{"graphrunner_recon", "aadinternals_enum", "roadrecon_dump"}

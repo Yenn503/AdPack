@@ -3,63 +3,88 @@ package tools
 import (
 	"adpack/utils"
 	"context"
-	"encoding/json"
 	"fmt"
+	"os/exec"
+	"strings"
 )
 
 type tokenTacticsTool struct{}
 
 var TokenTactics = tokenTacticsTool{}
 
-type AzureToken struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
-	Resource     string `json:"resource"`
-	ClientID     string `json:"client_id"`
-}
-
 func (tokenTacticsTool) Name() string { return "TokenTactics" }
 
-func (tokenTacticsTool) Available() bool { return utils.PSModuleInstalled("TokenTactics") }
+func (tokenTacticsTool) Available() bool {
+	_, err := exec.LookPath("roadtx")
+	return err == nil
+}
 
-func (tokenTacticsTool) RunDeviceCodeAuth(ctx context.Context, client string) (string, error) {
-	cmd := fmt.Sprintf("Get-AzureToken -Client %s", client)
-	result, err := utils.RunPSModule(ctx, "TokenTactics", cmd, nil)
-	if err != nil {
-		return "", fmt.Errorf("token tactics device code auth failed: %w", err)
+func (t tokenTacticsTool) RunDeviceCodeAuth(ctx context.Context, clientID, tenantID string) (utils.CmdResult, error) {
+	if tenantID == "" {
+		tenantID = "organizations"
 	}
-	return result.Stdout, nil
+	args := []string{"deviceauth", "-c", clientID, "-t", tenantID, "--timeout", "120"}
+	cr := utils.RunCommandCtx(ctx, "roadtx", args)
+	if !cr.Success {
+		return cr, fmt.Errorf("roadtx deviceauth failed: %s", cr.Stderr)
+	}
+	return cr, nil
 }
 
-var tokenTacticsRefreshCmd = map[string]string{
-	"MSGraph":         "Invoke-RefreshToMSGraphToken",
-	"Outlook":         "Invoke-RefreshToOutlookToken",
-	"AzureManagement": "Invoke-RefreshToAzureManagementToken",
+func (t tokenTacticsTool) RunRefreshToken(ctx context.Context, refreshToken, clientID string) (utils.CmdResult, error) {
+	cr := utils.RunCommandCtx(ctx, "roadtx", []string{"gettoken", "-c", clientID, "-r", refreshToken})
+	if !cr.Success {
+		return cr, fmt.Errorf("roadtx refresh token failed: %s", cr.Stderr)
+	}
+	return cr, nil
 }
 
-func (tokenTacticsTool) RunRefreshToken(ctx context.Context, domain, refreshToken, resource string) (*AzureToken, error) {
-	cmdName, ok := tokenTacticsRefreshCmd[resource]
+func (t tokenTacticsTool) RunTokenToList(ctx context.Context, accessToken string) (utils.CmdResult, error) {
+	cr := utils.RunCommandCtx(ctx, "roadtx", []string{"decode", accessToken})
+	if !cr.Success {
+		return cr, fmt.Errorf("roadtx decode token failed: %s", cr.Stderr)
+	}
+	return cr, nil
+}
+
+func (t tokenTacticsTool) RunTokenToPRT(ctx context.Context, refreshToken, clientID string) (utils.CmdResult, error) {
+	cr := utils.RunCommandCtx(ctx, "roadtx", []string{"gettoken", "-c", clientID, "-r", refreshToken, "-s", "https://login.microsoftonline.com/common/userrealm/"})
+	if !cr.Success {
+		return cr, fmt.Errorf("roadtx PRT failed: %s", cr.Stderr)
+	}
+	return cr, nil
+}
+
+func (t tokenTacticsTool) RunTokenToSessionKey(ctx context.Context, refreshToken, clientID string) (utils.CmdResult, error) {
+	cr := utils.RunCommandCtx(ctx, "roadtx", []string{"sessionkey", "-r", refreshToken, "-c", clientID})
+	if !cr.Success {
+		return cr, fmt.Errorf("roadtx session key failed: %s", cr.Stderr)
+	}
+	return cr, nil
+}
+
+func (t tokenTacticsTool) RunTokenToAccessToken(ctx context.Context, refreshToken, clientID, resource string) (utils.CmdResult, error) {
+	resourceMap := map[string]string{
+		"graph":      "https://graph.microsoft.com",
+		"azure":      "https://management.azure.com",
+		"outlook":    "https://outlook.office.com",
+		"sharepoint": "https://sharepoint.com",
+	}
+	target, ok := resourceMap[strings.ToLower(resource)]
 	if !ok {
-		return nil, fmt.Errorf("unknown resource: %s", resource)
+		target = resource
 	}
-	cmd := fmt.Sprintf(`%s -domain "%s" -refreshToken "%s" | ConvertTo-Json`, cmdName, domain, refreshToken)
-	result, err := utils.RunPSModule(ctx, "TokenTactics", cmd, nil)
-	if err != nil {
-		return nil, fmt.Errorf("token tactics refresh failed: %w", err)
+	cr := utils.RunCommandCtx(ctx, "roadtx", []string{"gettoken", "-c", clientID, "-r", refreshToken, "-s", target})
+	if !cr.Success {
+		return cr, fmt.Errorf("roadtx access token failed: %s", cr.Stderr)
 	}
-	var token AzureToken
-	if err := json.Unmarshal([]byte(result.Stdout), &token); err != nil {
-		return nil, fmt.Errorf("parsing token response: %w", err)
-	}
-	return &token, nil
+	return cr, nil
 }
 
-func (tokenTacticsTool) ClearTokens(ctx context.Context) error {
-	_, err := utils.RunPSModule(ctx, "TokenTactics", "Invoke-ClearToken -Token All", nil)
-	if err != nil {
-		return fmt.Errorf("token tactics clear tokens failed: %w", err)
+func (t tokenTacticsTool) RunTokenToPRTWithSessionKey(ctx context.Context, refreshToken, clientID, sessionKey string) (utils.CmdResult, error) {
+	cr := utils.RunCommandCtx(ctx, "roadtx", []string{"gettoken", "-c", clientID, "-r", refreshToken, "-s", "https://login.microsoftonline.com/common/userrealm/", "-k", sessionKey})
+	if !cr.Success {
+		return cr, fmt.Errorf("roadtx PRT with session key failed: %s", cr.Stderr)
 	}
-	return nil
+	return cr, nil
 }

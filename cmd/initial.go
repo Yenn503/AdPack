@@ -41,6 +41,9 @@ var initialTeamsCmd = &cobra.Command{
 		if !result.Success {
 			return fmt.Errorf("teams phish failed")
 		}
+		if err := DB.SaveState(state); err != nil {
+			return fmt.Errorf("save state: %w", err)
+		}
 		fmt.Println("[+] Teams phishing complete")
 		return nil
 	},
@@ -61,6 +64,9 @@ var initialDeviceCodeCmd = &cobra.Command{
 		result := modules.RunDeviceCodeAuth(context.Background(), state, client)
 		if !result.Success {
 			return fmt.Errorf("device code auth failed")
+		}
+		if err := DB.SaveState(state); err != nil {
+			return fmt.Errorf("save state: %w", err)
 		}
 		fmt.Println("[+] Device code auth complete")
 		return nil
@@ -90,6 +96,9 @@ var initialConsentCmd = &cobra.Command{
 		if !result.Success {
 			return fmt.Errorf("OAuth consent phish failed")
 		}
+		if err := DB.SaveState(state); err != nil {
+			return fmt.Errorf("save state: %w", err)
+		}
 		fmt.Println("[+] OAuth consent phishing complete")
 		return nil
 	},
@@ -106,7 +115,7 @@ func init() {
 	initialTeamsCmd.Flags().StringVarP(&initialTeamsMessage, "message", "m", "", "Phishing message text")
 	initialTeamsCmd.Flags().StringVarP(&initialTeamsAttachment, "attachment", "a", "", "Attachment path")
 
-	initialDeviceCodeCmd.Flags().StringVarP(&initialDeviceCodeClient, "client", "c", "MSGraph", "OAuth client (MSGraph, Outlook, AzureManagement)")
+	initialDeviceCodeCmd.Flags().StringVarP(&initialDeviceCodeClient, "client", "", "MSGraph", "OAuth client (MSGraph, Outlook, AzureManagement)")
 
 	initialConsentCmd.Flags().StringVarP(&initialConsentAppURL, "app-url", "u", "", "OAuth app URL for consent phish")
 }

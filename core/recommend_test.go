@@ -27,8 +27,8 @@ func TestEvaluate_NoHosts(t *testing.T) {
 
 	rec := engine.Evaluate()
 
-	if rec.Phase != PhaseInitialAccess {
-		t.Errorf("Expected PhaseInitialAccess for empty state, got %s", rec.Phase)
+	if rec.Phase != PhaseDiscovery {
+		t.Errorf("Expected PhaseDiscovery for empty state, got %s", rec.Phase)
 	}
 	if len(rec.Gaps) == 0 {
 		t.Error("Expected gaps to be detected")
@@ -38,7 +38,8 @@ func TestEvaluate_NoHosts(t *testing.T) {
 func TestEvaluate_HostsButNoUsers(t *testing.T) {
 	state := &ADState{
 		Phases: map[Phase]PhaseStatus{
-			PhaseDiscovery: PhaseComplete,
+			PhaseCloudInitialAccess: PhaseComplete,
+			PhaseDiscovery:          PhaseComplete,
 		},
 		Hosts: []Host{{IP: "10.0.0.1", IsDC: true}},
 		Users: []User{},
@@ -55,8 +56,9 @@ func TestEvaluate_HostsButNoUsers(t *testing.T) {
 func TestEvaluate_UsersButNoCreds(t *testing.T) {
 	state := &ADState{
 		Phases: map[Phase]PhaseStatus{
-			PhaseDiscovery:   PhaseComplete,
-			PhaseEnumeration: PhaseComplete,
+			PhaseCloudInitialAccess: PhaseComplete,
+			PhaseDiscovery:          PhaseComplete,
+			PhaseEnumeration:        PhaseComplete,
 		},
 		Hosts: []Host{{IP: "10.0.0.1", IsDC: true}},
 		Users: []User{{Username: "admin"}},
@@ -74,20 +76,21 @@ func TestEvaluate_UsersButNoCreds(t *testing.T) {
 func TestEvaluate_AllComplete(t *testing.T) {
 	state := &ADState{
 		Phases: map[Phase]PhaseStatus{
-			PhaseDiscovery:      PhaseComplete,
-			PhaseEnumeration:    PhaseComplete,
-			PhaseCredentialAcq:  PhaseComplete,
-			PhaseValidation:     PhaseComplete,
-			PhaseSessionHarvest: PhaseComplete,
-			PhaseGraphAnalysis:  PhaseComplete,
-			PhaseLateral:        PhaseComplete,
-			PhasePrivEsc:        PhaseComplete,
-			PhasePersistence:    PhaseComplete,
-			PhaseCloudEnum:      PhaseSkipped,
-			PhaseCloudCredAcq:   PhaseSkipped,
-			PhaseCloudPrivesc:   PhaseSkipped,
-			PhaseCloudPillage:   PhaseSkipped,
-			PhaseInitialAccess:  PhaseComplete,
+			PhaseDiscovery:          PhaseComplete,
+			PhaseEnumeration:        PhaseComplete,
+			PhaseCredentialAcq:      PhaseComplete,
+			PhaseValidation:         PhaseComplete,
+			PhaseSessionHarvest:     PhaseComplete,
+			PhaseGraphAnalysis:      PhaseComplete,
+			PhaseLateral:            PhaseComplete,
+			PhasePrivEsc:            PhaseComplete,
+			PhasePersistence:        PhaseComplete,
+			PhaseImpact:             PhaseComplete,
+			PhaseCloudEnum:          PhaseSkipped,
+			PhaseCloudCredAcq:       PhaseSkipped,
+			PhaseCloudPrivesc:       PhaseSkipped,
+			PhaseCloudPillage:       PhaseSkipped,
+			PhaseCloudInitialAccess: PhaseComplete,
 		},
 		Hosts: []Host{{IP: "10.0.0.1"}},
 		Users: []User{{Username: "admin"}},
@@ -116,6 +119,8 @@ func TestPhaseStrategies(t *testing.T) {
 		{PhaseLateral, 1},
 		{PhasePrivEsc, 1},
 		{PhasePersistence, 1},
+		{PhaseImpact, 1},
+		{PhaseHybridBridge, 1},
 	}
 
 	for _, tt := range tests {

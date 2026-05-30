@@ -96,15 +96,16 @@ func TestNextPhase_Discovery(t *testing.T) {
 	if next == nil {
 		t.Fatal("NextPhase returned nil")
 	}
-	if *next != PhaseInitialAccess {
-		t.Errorf("Expected PhaseInitialAccess for empty state, got %s", *next)
+	if *next != PhaseDiscovery {
+		t.Errorf("Expected PhaseDiscovery for empty state, got %s", *next)
 	}
 }
 
 func TestNextPhase_Enumeration(t *testing.T) {
 	state := &ADState{
 		Phases: map[Phase]PhaseStatus{
-			PhaseDiscovery: PhaseComplete,
+			PhaseCloudInitialAccess: PhaseComplete,
+			PhaseDiscovery:          PhaseComplete,
 		},
 		Hosts: []Host{{IP: "10.0.0.1"}},
 		Users: []User{},
@@ -123,8 +124,9 @@ func TestNextPhase_Enumeration(t *testing.T) {
 func TestNextPhase_CredentialAcq(t *testing.T) {
 	state := &ADState{
 		Phases: map[Phase]PhaseStatus{
-			PhaseDiscovery:   PhaseComplete,
-			PhaseEnumeration: PhaseComplete,
+			PhaseCloudInitialAccess: PhaseComplete,
+			PhaseDiscovery:          PhaseComplete,
+			PhaseEnumeration:        PhaseComplete,
 		},
 		Hosts: []Host{{IP: "10.0.0.1"}},
 		Users: []User{{Username: "admin"}},
@@ -144,20 +146,21 @@ func TestNextPhase_CredentialAcq(t *testing.T) {
 func TestNextPhase_AllComplete(t *testing.T) {
 	state := &ADState{
 		Phases: map[Phase]PhaseStatus{
-			PhaseDiscovery:      PhaseComplete,
-			PhaseEnumeration:    PhaseComplete,
-			PhaseCredentialAcq:  PhaseComplete,
-			PhaseValidation:     PhaseComplete,
-			PhaseSessionHarvest: PhaseComplete,
-			PhaseGraphAnalysis:  PhaseComplete,
-			PhaseLateral:        PhaseComplete,
-			PhasePrivEsc:        PhaseComplete,
-			PhasePersistence:    PhaseComplete,
-			PhaseCloudEnum:      PhaseSkipped,
-			PhaseCloudCredAcq:   PhaseSkipped,
-			PhaseCloudPrivesc:   PhaseSkipped,
-			PhaseCloudPillage:   PhaseSkipped,
-			PhaseInitialAccess:  PhaseComplete,
+			PhaseDiscovery:          PhaseComplete,
+			PhaseEnumeration:        PhaseComplete,
+			PhaseCredentialAcq:      PhaseComplete,
+			PhaseValidation:         PhaseComplete,
+			PhaseSessionHarvest:     PhaseComplete,
+			PhaseGraphAnalysis:      PhaseComplete,
+			PhaseLateral:            PhaseComplete,
+			PhasePrivEsc:            PhaseComplete,
+			PhasePersistence:        PhaseComplete,
+			PhaseImpact:             PhaseComplete,
+			PhaseCloudEnum:          PhaseSkipped,
+			PhaseCloudCredAcq:       PhaseSkipped,
+			PhaseCloudPrivesc:       PhaseSkipped,
+			PhaseCloudPillage:       PhaseSkipped,
+			PhaseCloudInitialAccess: PhaseComplete,
 		},
 	}
 
@@ -177,11 +180,13 @@ func TestPhaseDependencies(t *testing.T) {
 		{PhaseEnumeration, []Phase{PhaseDiscovery}},
 		{PhaseCredentialAcq, []Phase{PhaseEnumeration}},
 		{PhaseValidation, []Phase{PhaseCredentialAcq}},
-		{PhaseInitialAccess, []Phase{}},
-		{PhaseCloudEnum, []Phase{PhaseInitialAccess}},
+		{PhaseCloudInitialAccess, []Phase{}},
+		{PhaseCloudEnum, []Phase{PhaseCloudInitialAccess}},
 		{PhaseCloudCredAcq, []Phase{PhaseCloudEnum}},
 		{PhaseCloudPrivesc, []Phase{PhaseCloudEnum}},
 		{PhaseCloudPillage, []Phase{PhaseCloudCredAcq, PhaseCloudPrivesc}},
+		{PhaseImpact, []Phase{PhaseLateral, PhasePersistence}},
+		{PhaseHybridBridge, []Phase{PhaseCredentialAcq, PhaseCloudEnum}},
 	}
 
 	for _, tt := range tests {

