@@ -9,6 +9,7 @@ import (
 
 	"adpack/core"
 	"adpack/tools"
+	"adpack/utils"
 )
 
 // ValidationResult tracks validation across multiple protocols
@@ -45,6 +46,8 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 		result.Success = false
 		return result
 	}
+
+	utils.Section("✅", "Validation", "credential verification against targets")
 
 	// If target specified, validate against that host only
 	if targetHost != "" {
@@ -86,6 +89,7 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 		}
 
 		slog.Debug("Validating credential", "index", i+1, "total", len(state.Creds), "domain", cred.Domain, "username", cred.Username)
+		utils.Attempt("🔑", fmt.Sprintf("%s\\%s", cred.Domain, cred.Username), fmt.Sprintf("cred %d/%d", i+1, len(state.Creds)))
 
 		valResult := validateCredential(cred, hosts)
 
@@ -123,6 +127,7 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 			}
 
 			slog.Info("Valid on protocols", "protocols", strings.Join(protocols, ", "), "admin", adminStatus != "")
+			utils.StepOk(fmt.Sprintf("%s\\%s — valid on %s", cred.Domain, cred.Username, strings.Join(protocols, ", ")))
 			slog.Info("Accessible hosts count", "count", len(valResult.Hosts))
 
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
@@ -137,6 +142,7 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 			})
 		} else {
 			slog.Warn("Invalid or inaccessible")
+			utils.StepWarn(fmt.Sprintf("%s\\%s — not valid on any host", cred.Domain, cred.Username))
 
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type:       core.EvCredValidated,
@@ -151,6 +157,7 @@ func RunValidation(state *core.ADState, targetHost string) *core.ToolResult {
 	}
 
 	slog.Info("Validation complete", "valid", validatedCount+alreadyValidated, "total", len(state.Creds), "admin", adminCount)
+	utils.StepOk(fmt.Sprintf("Validation complete — %d valid (+%d previously), %d admin", validatedCount, alreadyValidated, adminCount))
 
 	result.Success = (validatedCount + alreadyValidated) > 0
 	return result

@@ -3,9 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"adpack/core"
 	"adpack/modules"
@@ -89,7 +89,7 @@ var runCmd = &cobra.Command{
 		}
 
 		// Phase header
-		printPhaseHeader(phase)
+		printPhaseHeader(phase, state)
 
 		// Resume: restore phase execution tracking
 		if resume {
@@ -132,6 +132,7 @@ var runCmd = &cobra.Command{
 		}
 
 		var success bool
+		start := time.Now()
 
 		switch phase {
 		case core.PhaseDiscovery:
@@ -319,7 +320,7 @@ var runCmd = &cobra.Command{
 			}
 
 		case core.PhaseImpact:
-			result := modules.RunImpact(state)
+			result := modules.RunImpact(state, evasionProfile)
 			success = result.Success
 
 		case core.PhaseHybridBridge:
@@ -327,23 +328,23 @@ var runCmd = &cobra.Command{
 			success = result.Success
 
 		case core.PhaseCloudInitialAccess:
-			slog.Warn("Cloud initial access not supported via `adpack run` — use `adpack initial <subcommand>` instead")
+			utils.PhaseSkipped(string(phase), "cloud initial access is interactive", "adpack initial <teams|device-code|consent-phish>")
 			state.Phases[phase] = core.PhaseSkipped
 
 		case core.PhaseCloudEnum:
-			slog.Warn("Cloud phases not supported via `adpack run` — use `adpack cloud enum` instead")
+			utils.PhaseSkipped(string(phase), "cloud phases run through the cloud command surface", "adpack cloud enum")
 			state.Phases[phase] = core.PhaseSkipped
 
 		case core.PhaseCloudCredAcq:
-			slog.Warn("Cloud phases not supported via `adpack run` — use `adpack cloud cred-acq` instead")
+			utils.PhaseSkipped(string(phase), "cloud phases run through the cloud command surface", "adpack cloud cred-acq")
 			state.Phases[phase] = core.PhaseSkipped
 
 		case core.PhaseCloudPrivesc:
-			slog.Warn("Cloud phases not supported via `adpack run` — use `adpack cloud privesc` instead")
+			utils.PhaseSkipped(string(phase), "cloud phases run through the cloud command surface", "adpack cloud privesc")
 			state.Phases[phase] = core.PhaseSkipped
 
 		case core.PhaseCloudPillage:
-			slog.Warn("Cloud phases not supported via `adpack run` — use `adpack cloud pillage` instead")
+			utils.PhaseSkipped(string(phase), "cloud phases run through the cloud command surface", "adpack cloud pillage")
 			state.Phases[phase] = core.PhaseSkipped
 
 		default:
@@ -351,6 +352,7 @@ var runCmd = &cobra.Command{
 		}
 
 		// Update phase execution tracking
+		elapsed := time.Since(start).Round(time.Millisecond)
 		if success {
 			exec.Complete = true
 			state.Phases[phase] = core.PhaseComplete
@@ -362,9 +364,9 @@ var runCmd = &cobra.Command{
 		// Footer
 		fmt.Println()
 		if success {
-			fmt.Println(utils.SuccessStyle.Render(fmt.Sprintf("  ✓  Phase %s complete", phase)))
+			utils.PhaseComplete(elapsed)
 		} else {
-			fmt.Println(utils.ErrorStyle.Render(fmt.Sprintf("  ✗  Phase %s failed", phase)))
+			utils.PhaseFailed(elapsed)
 		}
 
 		// Show what's next
@@ -395,15 +397,144 @@ var runCmd = &cobra.Command{
 	},
 }
 
-func printPhaseHeader(phase core.Phase) {
-	bar := strings.Repeat("─", 50)
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(utils.ColorSecondary).Render("  " + bar))
-	fmt.Printf("  %s  %s\n",
-		lipgloss.NewStyle().Bold(true).Foreground(utils.ColorPrimary).Render("PHASE"),
-		lipgloss.NewStyle().Bold(true).Render(strings.ToUpper(string(phase))))
-	fmt.Println(lipgloss.NewStyle().Foreground(utils.ColorSecondary).Render("  " + bar))
-	fmt.Println()
+func printPhaseHeader(phase core.Phase, state *core.ADState) {
+	rationale := phaseRationale(phase, state)
+	stats := phaseStats(phase, state)
+	combined := rationale
+	if stats != "" {
+		if combined != "" {
+			combined += "  |  "
+		}
+		combined += stats
+	}
+	utils.PhaseHeader(1, string(phase), combined)
+}
+
+func phaseRationale(phase core.Phase, _ *core.ADState) string {
+	switch phase {
+	case core.PhaseDiscovery:
+		return "Network sweep and port scan to identify domain-joined systems"
+	case core.PhaseEnumeration:
+		return "LDAP enumeration of users, groups, computers, and AD objects"
+	case core.PhaseCredentialAcq:
+		return "Credential dumping via minidump, DCSync, SAM, and DPAPI"
+	case core.PhaseValidation:
+		return "Verify acquired credentials against domain controllers"
+	case core.PhaseSessionHarvest:
+		return "Enumerate active user logon sessions for lateral movement targets"
+	case core.PhaseGraphAnalysis:
+		return "BloodHound collection and privilege path analysis"
+	case core.PhasePrivEsc:
+		return "Escalate privileges via ACL abuse, RBCD, ADCS, or Kerberos attacks"
+	case core.PhaseLateral:
+		return "Credential-driven lateral movement using WMI, WinRM, PsExec, or SMB"
+	case core.PhasePersistence:
+		return "Deploy persistence: scheduled tasks, DSRM, golden/silver tickets"
+	case core.PhaseImpact:
+		return "Execute mission objectives — exfil, ransom, or destroy"
+	case core.PhaseHybridBridge:
+		return "Map on-prem to cloud identity bridge and federation trust"
+	case core.PhaseCloudInitialAccess:
+		return "Entra ID initial access via device code or consent phish"
+	case core.PhaseCloudEnum:
+		return "Enumerate Entra ID tenant structure and security posture"
+	case core.PhaseCloudCredAcq:
+		return "Acquire cloud credentials via password spray or token theft"
+	case core.PhaseCloudPrivesc:
+		return "Escalate cloud roles: Global Admin, Privileged Role Admin"
+	case core.PhaseCloudPillage:
+		return "Exfiltrate mail, SharePoint, OneDrive, and Teams data"
+	}
+	return ""
+}
+
+func phaseStats(phase core.Phase, state *core.ADState) string {
+	hosts := len(state.Hosts)
+	creds := len(state.Creds)
+	users := len(state.Users)
+	comps := len(state.Computers)
+	groups := len(state.Groups)
+	var parts []string
+	switch phase {
+	case core.PhaseDiscovery:
+		if hosts > 0 {
+			parts = append(parts, fmt.Sprintf("%d hosts known", hosts))
+		}
+	case core.PhaseEnumeration:
+		if users > 0 {
+			parts = append(parts, fmt.Sprintf("%d users", users))
+		}
+		if comps > 0 {
+			parts = append(parts, fmt.Sprintf("%d computers", comps))
+		}
+		if groups > 0 {
+			parts = append(parts, fmt.Sprintf("%d groups", groups))
+		}
+		if hosts > 0 {
+			parts = append(parts, fmt.Sprintf("%d hosts", hosts))
+		}
+	case core.PhaseCredentialAcq:
+		if creds > 0 {
+			parts = append(parts, fmt.Sprintf("%d credentials held", creds))
+		}
+		if hosts > 0 {
+			parts = append(parts, fmt.Sprintf("%d hosts", hosts))
+		}
+	case core.PhaseValidation:
+		if creds > 0 {
+			parts = append(parts, fmt.Sprintf("%d credentials to verify", creds))
+		}
+	case core.PhaseSessionHarvest:
+		if hosts > 0 {
+			parts = append(parts, fmt.Sprintf("%d hosts", hosts))
+		}
+	case core.PhaseGraphAnalysis:
+		if hosts > 0 {
+			parts = append(parts, fmt.Sprintf("%d hosts", hosts))
+		}
+		if creds > 0 {
+			parts = append(parts, fmt.Sprintf("%d credentials", creds))
+		}
+	case core.PhasePrivEsc:
+		if creds > 0 {
+			parts = append(parts, fmt.Sprintf("%d credentials", creds))
+		}
+		if hosts > 0 {
+			parts = append(parts, fmt.Sprintf("%d hosts", hosts))
+		}
+	case core.PhaseLateral:
+		if creds > 0 {
+			parts = append(parts, fmt.Sprintf("%d credentials", creds))
+		}
+		if hosts > 0 {
+			parts = append(parts, fmt.Sprintf("%d hosts", hosts))
+		}
+	case core.PhasePersistence:
+		if creds > 0 {
+			parts = append(parts, fmt.Sprintf("%d credentials", creds))
+		}
+		if hosts > 0 {
+			parts = append(parts, fmt.Sprintf("%d DCs accounted", countDC(state)))
+		}
+	case core.PhaseImpact:
+		if hosts > 0 {
+			parts = append(parts, fmt.Sprintf("%d hosts in scope", hosts))
+		}
+		if creds > 0 {
+			parts = append(parts, fmt.Sprintf("%d credentials", creds))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func countDC(state *core.ADState) int {
+	n := 0
+	for _, h := range state.Hosts {
+		if h.IsDC {
+			n++
+		}
+	}
+	return n
 }
 
 func printResult(label string, count int) {

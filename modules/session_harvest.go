@@ -3,20 +3,28 @@ package modules
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"adpack/core"
+	"adpack/utils"
 )
 
 func RunSessionHarvest(ctx context.Context, provider core.DirectoryProvider, state *core.ADState) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 
+	utils.Section("🪪", "Session Harvest", "user session enumeration")
+	for _, h := range state.Hosts {
+		utils.Attempt("🪪", h.IP, "querying sessions via SMB")
+	}
+
 	slog.Debug("Harvesting sessions...")
 	sessions, err := provider.EnumerateSessions(ctx)
 	if err != nil {
 		slog.Warn("Session harvest failed", "error", err)
+		utils.StepWarn(fmt.Sprintf("Session harvest failed: %s", err))
 		result.Success = false
 		return result
 	}
@@ -127,5 +135,6 @@ func RunSessionHarvest(ctx context.Context, provider core.DirectoryProvider, sta
 	snapshot, _ := json.Marshal(stats)
 	slog.Info("Identity drift snapshot", "snapshot", string(snapshot))
 	slog.Info("Harvested sessions", "count", len(result.Sessions))
+	utils.StepOk(fmt.Sprintf("Harvested %d session(s)", len(result.Sessions)))
 	return result
 }

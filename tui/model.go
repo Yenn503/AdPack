@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"adpack/core"
+	"adpack/internal/cracker"
 	"adpack/modules"
 	"adpack/storage"
 	"adpack/utils"
@@ -52,6 +53,7 @@ type phaseFinishedMsg struct {
 type model struct {
 	db            *storage.DB
 	state         *core.ADState
+	crackQueue    *cracker.HashQueue
 	currentView   view
 	ready         bool
 	spinner       spinner.Model
@@ -197,7 +199,7 @@ func newProgress() progress.Model {
 	)
 }
 
-func New(db *storage.DB) tea.Model {
+func New(db *storage.DB, crackQueue *cracker.HashQueue) tea.Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(utils.ColorPrimary)
@@ -211,17 +213,18 @@ func New(db *storage.DB) tea.Model {
 	vp.Style = lipgloss.NewStyle()
 
 	return model{
-		db:       db,
-		state:    state,
-		spinner:  s,
-		viewport: vp,
-		gapsList: newGapsList(),
-		recList:  newRecList(),
-		prog:     newProgress(),
-		help:     help.New(),
-		keys:     keys,
-		err:      nil,
-		phaseCh:  make(chan tea.Msg, 1024),
+		db:         db,
+		state:      state,
+		crackQueue: crackQueue,
+		spinner:    s,
+		viewport:   vp,
+		gapsList:   newGapsList(),
+		recList:    newRecList(),
+		prog:       newProgress(),
+		help:       help.New(),
+		keys:       keys,
+		err:        nil,
+		phaseCh:    make(chan tea.Msg, 1024),
 	}
 }
 
@@ -907,9 +910,8 @@ func (m model) transportView() string {
 	var b strings.Builder
 	b.WriteString(utils.TitleStyle.Render("Transport Configuration"))
 	b.WriteString("\n\n")
+
 	b.WriteString(utils.InfoStyle.Render("Transport type: local"))
-	b.WriteString("\n")
-	b.WriteString(utils.MutedStyle.Render("Transport configuration will be enhanced with TransportFactory in a future update."))
 	b.WriteString("\n\n")
 
 	hostCount := len(m.state.Hosts)
@@ -921,6 +923,13 @@ func (m model) transportView() string {
 				dc = " [DC]"
 			}
 			b.WriteString(fmt.Sprintf("  %s%s  %s\n", h.IP, dc, h.Hostname))
+		}
+	}
+
+	b.WriteString(fmt.Sprintf("\nAD Sessions: %d\n", len(m.state.Sessions)))
+	if len(m.state.Sessions) > 0 {
+		for _, s := range m.state.Sessions {
+			b.WriteString(fmt.Sprintf("  User=%s Host=%s\n", s.Username, s.Host))
 		}
 	}
 
@@ -1012,7 +1021,11 @@ func (m model) statusView() string {
 		len(m.state.Sessions), m.state.BH.Collected)
 
 	b.WriteString(utils.InfoStyle.Render(stats))
-	b.WriteString(fmt.Sprintf("  Campaign: %d/9 phases  %s\n\n", completed, m.prog.View()))
+	b.WriteString(fmt.Sprintf("  Campaign: %d/%d phases  %s\n\n", completed, len(core.AllPhases), m.prog.View()))
+	b.WriteString(m.crackStatsView())
+	b.WriteString("\n")
+	b.WriteString(m.phaseRationaleView())
+	b.WriteString("\n")
 	b.WriteString(m.statusTable.View())
 
 	if len(m.state.Edges) > 0 {
@@ -1043,6 +1056,74 @@ func (m model) statusView() string {
 		}
 	}
 
+	return b.String()
+}
+
+func (m model) crackStatsView() string {
+	if m.crackQueue == nil {
+		return ""
+	}
+
+	stats := m.crackQueue.Stats()
+
+	running := ""
+	if stats.IsRunning {
+		running = utils.CrackActive.Render(" ● ACTIVE")
+	} else if stats.TotalEnqueued > 0 {
+		running = utils.MutedStyle.Render(" ○ IDLE")
+	} else {
+		return ""
+	}
+
+	var b strings.Builder
+
+	detail := fmt.Sprintf("Enqueued: %d  |  Cracked: %d  |  Pending: %d%s",
+		stats.TotalEnqueued, stats.TotalCracked, stats.TotalPending, running)
+
+	if len(stats.ByType) > 0 {
+		var parts []string
+		for _, ht := range []cracker.HashType{cracker.HashKRB5TGS, cracker.HashKRB5ASREP, cracker.HashNTLM} {
+			if ts, ok := stats.ByType[ht]; ok {
+				parts = append(parts, fmt.Sprintf("%s: %d pend", ts.HashType, ts.Pending))
+			}
+		}
+		if len(parts) > 0 {
+			detail += "  |  " + strings.Join(parts, "  ")
+		}
+	}
+
+	b.WriteString(utils.CrackPanel.Render(utils.CrackLabel.Render("▌ Crack Queue") + "\n" + detail))
+	return b.String()
+}
+
+func (m model) phaseRationaleView() string {
+	engine := core.NewEngine(m.state)
+	rec := engine.Evaluate()
+
+	if rec.Phase == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	status := m.state.Phases[rec.Phase]
+	statusStr := "untouched"
+	if status == core.PhaseComplete {
+		statusStr = "complete"
+	} else if status == core.PhaseInProgress {
+		statusStr = "in-progress"
+	} else if status == core.PhaseFailed {
+		statusStr = "failed"
+	} else if status == core.PhaseSkipped {
+		statusStr = "skipped"
+	}
+
+	b.WriteString(utils.PhaseBox.Render(
+		fmt.Sprintf("%s %s\n%s",
+			utils.PhaseLabel.Render("▌ Next Phase"),
+			utils.PhaseName.Render(string(rec.Phase)+" ("+statusStr+")"),
+			utils.MutedStyle.Render(rec.Rationale),
+		),
+	))
 	return b.String()
 }
 

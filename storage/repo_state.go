@@ -555,6 +555,40 @@ func (db *DB) SaveState(s *core.ADState) error {
 		}
 	}
 
+	// Tokens: full replace
+	if _, err := tx.Exec("DELETE FROM tokens"); err != nil {
+		return fmt.Errorf("save state clear tokens: %w", err)
+	}
+	stmtToken, err := tx.Preparex(`INSERT INTO tokens(type,resource,client_id,tenant,username,secret,refresh_token,scope,expires_at,source,validated) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return fmt.Errorf("save state tokens prepare: %w", err)
+	}
+	for _, t := range s.Tokens {
+		encSecret, _ := db.Encrypt(t.Secret)
+		encRefresh, _ := db.Encrypt(t.RefreshToken)
+		expires := ""
+		if !t.ExpiresAt.IsZero() {
+			expires = t.ExpiresAt.Format(time.RFC3339)
+		}
+		if _, err := stmtToken.Exec(t.Type, t.Resource, t.ClientID, t.Tenant, t.Username, encSecret, encRefresh, t.Scope, expires, t.Source, boolInt(t.Validated)); err != nil {
+			return fmt.Errorf("save state token: %w", err)
+		}
+	}
+
+	// Cloud resources: full replace
+	if _, err := tx.Exec("DELETE FROM cloud_resources"); err != nil {
+		return fmt.Errorf("save state clear cloud resources: %w", err)
+	}
+	stmtCR, err := tx.Preparex(`INSERT INTO cloud_resources(type,name,object_id,tenant,properties,discovered_by) VALUES(?,?,?,?,?,?)`)
+	if err != nil {
+		return fmt.Errorf("save state cloud resources prepare: %w", err)
+	}
+	for _, r := range s.CloudResources {
+		if _, err := stmtCR.Exec(r.Type, r.Name, r.ObjectID, r.Tenant, r.Properties, r.DiscoveredBy); err != nil {
+			return fmt.Errorf("save state cloud resource: %w", err)
+		}
+	}
+
 	return tx.Commit()
 }
 
@@ -602,6 +636,14 @@ func (db *DB) LoadState() (*core.ADState, error) {
 		return nil, err
 	}
 	s.Edges, err = db.LoadEdges()
+	if err != nil {
+		return nil, err
+	}
+	s.Tokens, err = db.LoadTokens()
+	if err != nil {
+		return nil, err
+	}
+	s.CloudResources, err = db.LoadCloudResources()
 	if err != nil {
 		return nil, err
 	}
@@ -695,4 +737,74 @@ func (db *DB) UpdateHost(ip string, updates map[string]interface{}) error {
 	args = append(args, ip)
 	_, err := db.Exec(fmt.Sprintf("UPDATE hosts SET %s WHERE ip=?", strings.Join(sets, ",")), args...)
 	return err
+}
+
+func (db *DB) LoadTokens() ([]core.Token, error) {
+	var rows []struct {
+		ID           int    `db:"id"`
+		Type         string `db:"type"`
+		Resource     string `db:"resource"`
+		ClientID     string `db:"client_id"`
+		Tenant       string `db:"tenant"`
+		Username     string `db:"username"`
+		Secret       string `db:"secret"`
+		RefreshToken string `db:"refresh_token"`
+		Scope        string `db:"scope"`
+		ExpiresAt    string `db:"expires_at"`
+		Source       string `db:"source"`
+		Validated    int    `db:"validated"`
+	}
+	if err := db.Select(&rows, "SELECT * FROM tokens"); err != nil {
+		return nil, err
+	}
+	tokens := make([]core.Token, 0, len(rows))
+	for _, r := range rows {
+		sec, _ := db.Decrypt(r.Secret)
+		ref, _ := db.Decrypt(r.RefreshToken)
+		var expires time.Time
+		if r.ExpiresAt != "" {
+			expires, _ = time.Parse(time.RFC3339, r.ExpiresAt)
+		}
+		tokens = append(tokens, core.Token{
+			Type:         r.Type,
+			Resource:     r.Resource,
+			ClientID:     r.ClientID,
+			Tenant:       r.Tenant,
+			Username:     r.Username,
+			Secret:       sec,
+			RefreshToken: ref,
+			Scope:        r.Scope,
+			ExpiresAt:    expires,
+			Source:       r.Source,
+			Validated:    r.Validated == 1,
+		})
+	}
+	return tokens, nil
+}
+
+func (db *DB) LoadCloudResources() ([]core.CloudResource, error) {
+	var rows []struct {
+		ID           int    `db:"id"`
+		Type         string `db:"type"`
+		Name         string `db:"name"`
+		ObjectID     string `db:"object_id"`
+		Tenant       string `db:"tenant"`
+		Properties   string `db:"properties"`
+		DiscoveredBy string `db:"discovered_by"`
+	}
+	if err := db.Select(&rows, "SELECT * FROM cloud_resources"); err != nil {
+		return nil, err
+	}
+	res := make([]core.CloudResource, 0, len(rows))
+	for _, r := range rows {
+		res = append(res, core.CloudResource{
+			Type:         r.Type,
+			Name:         r.Name,
+			ObjectID:     r.ObjectID,
+			Tenant:       r.Tenant,
+			Properties:   r.Properties,
+			DiscoveredBy: r.DiscoveredBy,
+		})
+	}
+	return res, nil
 }

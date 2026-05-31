@@ -11,6 +11,7 @@ import (
 
 	"adpack/core"
 	"adpack/tools"
+	"adpack/utils"
 )
 
 func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.ToolResult {
@@ -22,8 +23,11 @@ func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.
 		return result
 	}
 
+	utils.Section("🛰️", "Discovery", "network scanning and host probing")
+
 	// Phase 1: Add the explicit target host from CLI flag
 	if targetHost != "" {
+		utils.Attempt("🖥️", targetHost, "probing target host")
 		host := probeHost(ctx, state, targetHost)
 		result.Hosts = append(result.Hosts, host)
 		result.Evidence = append(result.Evidence, core.EvidenceEntry{
@@ -32,6 +36,7 @@ func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.
 			Confidence: 1.0, Timestamp: time.Now(),
 		})
 		slog.Info("Host added from target flag", "host", targetHost)
+		utils.StepOk(fmt.Sprintf("Host added from target flag: %s", targetHost))
 	}
 
 	// Phase 2: Subnet scan to discover additional hosts
@@ -64,6 +69,7 @@ func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.
 			if alreadyKnown {
 				continue
 			}
+			utils.Attempt("🖥️", ip, "scanning discovered host")
 			h := probeHost(ctx, state, ip)
 			result.Hosts = append(result.Hosts, h)
 			result.Evidence = append(result.Evidence, core.EvidenceEntry{
@@ -73,6 +79,10 @@ func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.
 			})
 			slog.Info("Discovered host", "hostname", h.Hostname, "ip", ip)
 		}
+	}
+
+	if len(result.Hosts) > 0 {
+		utils.StepOk(fmt.Sprintf("Discovery complete — %d host(s) found", len(result.Hosts)))
 	}
 
 	return result

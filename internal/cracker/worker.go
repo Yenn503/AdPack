@@ -38,7 +38,33 @@ func (w *CrackWorker) Run() {
 		if result == "" {
 			continue
 		}
+		w.queue.TrackCracked(job)
 		w.queue.events <- CrackEvent{Type: "crack_complete", Job: job, Result: result}
+	}
+}
+
+func (w *CrackWorker) RunContext(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			job := w.queue.Dequeue()
+			if job == nil {
+				time.Sleep(time.Second)
+				continue
+			}
+			result, err := w.crack(job)
+			if err != nil {
+				w.queue.events <- CrackEvent{Type: "crack_complete", Job: job, Error: err}
+				continue
+			}
+			if result == "" {
+				continue
+			}
+			w.queue.TrackCracked(job)
+			w.queue.events <- CrackEvent{Type: "crack_complete", Job: job, Result: result}
+		}
 	}
 }
 

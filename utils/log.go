@@ -80,18 +80,18 @@ func (h *coloredHandler) Handle(_ context.Context, r slog.Record) error {
 	// Level badge
 	switch r.Level {
 	case slog.LevelDebug:
-		buf.WriteString(MutedStyle.Render("[DBG]"))
+		buf.WriteString(MutedStyle.Render("· DBG"))
 	case slog.LevelInfo:
-		buf.WriteString(InfoStyle.Render("[INF]"))
+		buf.WriteString(InfoStyle.Render("ℹ INF"))
 	case slog.LevelWarn:
-		buf.WriteString(WarningStyle.Render("[WRN]"))
+		buf.WriteString(WarningStyle.Render("⚠ WRN"))
 	case slog.LevelError:
-		buf.WriteString(ErrorStyle.Render("[ERR]"))
+		buf.WriteString(ErrorStyle.Render("✗ ERR"))
 	}
 	buf.WriteString(" ")
 
 	// Message
-	buf.WriteString(r.Message)
+	buf.WriteString(styleLogMessage(r.Level, r.Message))
 
 	// Attributes
 	r.Attrs(func(a slog.Attr) bool {
@@ -114,6 +114,19 @@ func (h *coloredHandler) Handle(_ context.Context, r slog.Record) error {
 	buf.WriteString("\n")
 	_, err := io.WriteString(h.w, buf.String())
 	return err
+}
+
+func styleLogMessage(level slog.Level, msg string) string {
+	switch level {
+	case slog.LevelWarn:
+		return WarningStyle.Render(msg)
+	case slog.LevelError:
+		return ErrorStyle.Render(msg)
+	case slog.LevelDebug:
+		return MutedStyle.Render(msg)
+	default:
+		return msg
+	}
 }
 
 func (h *coloredHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -34,6 +35,7 @@ import (
 	"adpack/internal/runtime"
 	"adpack/internal/transport/local"
 	"adpack/internal/transport/proxy"
+	slivertransport "adpack/internal/transport/sliver"
 	"adpack/modules"
 	"adpack/storage"
 	"adpack/utils"
@@ -58,6 +60,8 @@ var (
 	wordlistFlag    string
 	rulesFlag       string
 	crackTimeoutF   int
+	verboseLogging  bool
+	logDirFlag      string
 )
 
 var (
@@ -104,6 +108,7 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 		if DB != nil {
 			return nil
 		}
+		utils.InitLogging(logDirFlag, verboseLogging)
 		var err error
 		Cfg, err = config.Load(cfgFile)
 		if err != nil {
@@ -135,6 +140,8 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 			signal.Stop(sigCh)
 		}()
 
+		modules.LootDir = Cfg.LootDir
+
 		if crackQueue == nil {
 			crackQueue = cracker.NewHashQueue()
 
@@ -165,7 +172,7 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 				crackWorker.Run()
 			}()
 			crackMat = cracker.NewCredentialMaterializer(crackQueue, func(cred cracker.CrackedCredential) {
-				fmt.Printf("[+] CRACKED: %s\\%s -> %s\n", cred.Domain, cred.Username, cred.Secret)
+				utils.StepOk(fmt.Sprintf("🔓 CRACKED %s\\%s → %s", cred.Domain, cred.Username, cred.Secret))
 				// Use CredHash type so the UPSERT matches the original hash credential row
 				// (Conflicts on type+username+domain+target: CredHash matches AS-REP/Kerberoast/NTLM hashes).
 				// The trust-preserving UPSERT keeps Validated=true and overwrites Secret with the plaintext.
@@ -198,6 +205,7 @@ Workflow: discovery -> enumeration -> credential_acq -> session_harvest
 func Execute() {
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
+	defer utils.CloseLogging()
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -207,14 +215,27 @@ func Execute() {
 func init() {
 	modules.ExecutorFactory = executorbackend.New
 	modules.TransportFactory = func(target core.HostRef, domain, user, pass, hash string) core.Transport {
-		proxyAddr := Cfg.ProxyAddress
-		if proxyAddr == "" {
-			proxyAddr = os.Getenv("ADPACK_PROXY")
+		if Cfg == nil {
+			slog.Warn("TransportFactory: Cfg is nil, using default transport")
+			return local.New(target, domain, user, pass, hash)
 		}
-		if proxyAddr != "" {
-			return proxy.New(target, domain, user, pass, hash, proxyAddr)
+		mode := Cfg.Transport
+		if mode == "" {
+			mode = os.Getenv("ADPACK_TRANSPORT")
 		}
-		return local.New(target, domain, user, pass, hash)
+		switch mode {
+		case "sliver":
+			return slivertransport.New(Cfg.Sliver.ConfigPath, Cfg.Sliver.ServerAddr)
+		default:
+			proxyAddr := Cfg.ProxyAddress
+			if proxyAddr == "" {
+				proxyAddr = os.Getenv("ADPACK_PROXY")
+			}
+			if proxyAddr != "" {
+				return proxy.New(target, domain, user, pass, hash, proxyAddr)
+			}
+			return local.New(target, domain, user, pass, hash)
+		}
 	}
 	modules.RuntimeFactory = func() core.RuntimeProvider {
 		return runtime.NewSupervisor()
@@ -272,6 +293,8 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	rootCmd.PersistentFlags().StringVarP(&dbPath, "db", "d", "", "database path (default ~/.adpack/state.db)")
+	rootCmd.PersistentFlags().BoolVarP(&verboseLogging, "verbose", "v", false, "enable verbose diagnostic logging")
+	rootCmd.PersistentFlags().StringVar(&logDirFlag, "log-dir", "", "write structured JSON logs to this directory")
 	rootCmd.PersistentFlags().StringVar(&hashcatPathFlag, "hashcat-path", "", "path to hashcat binary (overrides config)")
 	rootCmd.PersistentFlags().StringVar(&wordlistFlag, "wordlist", "", "path to wordlist (overrides config)")
 	rootCmd.PersistentFlags().StringVar(&rulesFlag, "rules", "", "comma-separated hashcat rule files (overrides config)")

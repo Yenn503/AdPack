@@ -12,10 +12,12 @@ const (
 )
 
 type HashQueue struct {
-	mu     sync.Mutex
-	items  []*CrackJob
-	seen   map[string]time.Time
-	events chan CrackEvent
+	mu            sync.Mutex
+	items         []*CrackJob
+	seen          map[string]time.Time
+	events        chan CrackEvent
+	totalEnqueued int
+	totalCracked  int
 }
 
 func NewHashQueue() *HashQueue {
@@ -55,6 +57,7 @@ func (q *HashQueue) Enqueue(job *CrackJob) error {
 	}
 	q.items = append(q.items, job)
 	q.seen[job.Hash] = time.Now()
+	q.totalEnqueued++
 	q.mu.Unlock()
 	q.events <- CrackEvent{Type: "hash_enqueued", Job: job}
 	return nil
@@ -85,4 +88,43 @@ func (q *HashQueue) Len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.items)
+}
+
+func (q *HashQueue) Stats() CrackStats {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	stats := CrackStats{
+		TotalEnqueued: q.totalEnqueued,
+		TotalCracked:  q.totalCracked,
+		TotalPending:  q.totalEnqueued - q.totalCracked,
+		IsRunning:     len(q.items) > 0,
+		ByType:        make(map[HashType]*CrackTypeStats),
+	}
+
+	for _, item := range q.items {
+		if _, ok := stats.ByType[item.HashType]; !ok {
+			stats.ByType[item.HashType] = &CrackTypeStats{HashType: item.HashType}
+		}
+		stats.ByType[item.HashType].Total++
+		stats.ByType[item.HashType].Pending++
+	}
+
+	return stats
+}
+
+func (q *HashQueue) TrackCracked(job *CrackJob) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.totalCracked++
+	for i, item := range q.items {
+		if item.Hash == job.Hash {
+			q.items = append(q.items[:i], q.items[i+1:]...)
+			break
+		}
+	}
+}
+
+func (q *HashQueue) IsRunning() bool {
+	return q.Len() > 0
 }

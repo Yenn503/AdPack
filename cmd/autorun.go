@@ -138,6 +138,7 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 			DB.SavePhases(state)
 
 			success := false
+			skipped := false
 			start := time.Now()
 
 			switch rec.Phase {
@@ -318,7 +319,10 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 
 			case core.PhaseImpact:
 				utils.Step("Executing mission objective...")
-				result := modules.RunImpact(state)
+				result := modules.RunImpact(state, evasionProfile)
+				for _, ev := range result.Evidence {
+					DB.SaveEvidence(ev)
+				}
 				if result.Success {
 					success = true
 					utils.StepOk("Impact phase complete")
@@ -327,30 +331,33 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 			case core.PhaseHybridBridge:
 				utils.Step("Probing hybrid identity bridge...")
 				result := modules.RunHybridBridge(state)
+				for _, ev := range result.Evidence {
+					DB.SaveEvidence(ev)
+				}
 				if result.Success {
 					success = true
 					utils.StepOk("Hybrid bridge analysis complete")
 				}
 
+			case core.PhaseCloudInitialAccess:
+				utils.PhaseSkipped(string(core.PhaseCloudInitialAccess), "interactive operator action required", "adpack initial <teams|device-code|consent-phish>")
+				skipped = true
+
 			case core.PhaseCloudEnum:
-				utils.Step("Skipping cloud_enum in autorun (interactive)")
-				utils.StepInfo("Run: adpack cloud enum")
-				success = true
+				utils.PhaseSkipped(string(core.PhaseCloudEnum), "interactive Graph authentication/tooling required", "adpack cloud enum")
+				skipped = true
 
 			case core.PhaseCloudCredAcq:
-				utils.Step("Skipping cloud_cred_acq in autorun (interactive)")
-				utils.StepInfo("Run: adpack cloud cred-acq")
-				success = true
+				utils.PhaseSkipped(string(core.PhaseCloudCredAcq), "interactive spray guardrails required", "adpack cloud cred-acq")
+				skipped = true
 
 			case core.PhaseCloudPrivesc:
-				utils.Step("Skipping cloud_privesc in autorun (interactive)")
-				utils.StepInfo("Run: adpack cloud privesc")
-				success = true
+				utils.PhaseSkipped(string(core.PhaseCloudPrivesc), "interactive cloud role review required", "adpack cloud privesc")
+				skipped = true
 
 			case core.PhaseCloudPillage:
-				utils.Step("Skipping cloud_pillage in autorun (interactive)")
-				utils.StepInfo("Run: adpack cloud pillage")
-				success = true
+				utils.PhaseSkipped(string(core.PhaseCloudPillage), "interactive data-access approval required", "adpack cloud pillage")
+				skipped = true
 
 			default:
 				return fmt.Errorf("phase %q has no implementation", rec.Phase)
@@ -358,7 +365,15 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 
 			elapsed := time.Since(start).Round(time.Millisecond)
 
-			if success {
+			if skipped {
+				state.Phases[rec.Phase] = core.PhaseSkipped
+				if state.SkipReasons == nil {
+					state.SkipReasons = make(map[core.Phase]core.SkipReason)
+				}
+				state.SkipReasons[rec.Phase] = core.SkipReason("MANUAL_REQUIRED")
+				DB.SavePhases(state)
+				utils.PhaseComplete(elapsed)
+			} else if success {
 				state.Phases[rec.Phase] = core.PhaseComplete
 				DB.SavePhases(state)
 				utils.PhaseComplete(elapsed)
@@ -400,7 +415,7 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 						freshState.Phases[p] = core.PhaseUntouched
 					}
 				}
-				utils.StepInfo(fmt.Sprintf("New creds appeared (%d total) — re-running credential acquisition (re-run %d/3)", credsAtLastRun, credAcqReruns))
+				utils.StepInfo(fmt.Sprintf("New creds appeared (%d total) — re-running credential acquisition (re-run %d/2)", credsAtLastRun, credAcqReruns))
 				DB.SavePhases(freshState)
 				state.Phases = freshState.Phases
 			}

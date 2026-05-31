@@ -66,13 +66,16 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 	maxIter := 5
 	lpeAttempted := make(map[string]bool)
 
+	utils.Section("🚀", "Privilege Escalation", "path to highest privileges")
+
 	for iter := 0; iter < maxIter; iter++ {
 		credsBefore := len(state.Creds)
 		edgesBefore := len(state.Edges)
 
 		exec := ExecutorFactory(core.HostRef{Name: host.IP, Domain: host.Domain}, domain, user, pass, hash)
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		var iterCleanups []func()
+		iterCleanups = append(iterCleanups, cancel)
 
 		// ── Runtime services (Responder + Relay, non-stealth only) ──
 		var runtime core.RuntimeProvider
@@ -145,8 +148,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 				utils.StepOk(fmt.Sprintf("Coercer started, targeting %d host(s)", len(coercerTargets)))
 			}
 
-			// Stop all services on return
-			defer runtime.StopAll()
+			iterCleanups = append(iterCleanups, func() { _ = runtime.StopAll() })
 
 			// Consume events from all services into edge channel
 			go func() {
@@ -413,7 +415,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		utils.Step("Enumerating BloodHound graph (bloodhound-python)...")
 		bhDir, bhErr := os.MkdirTemp("", "adpack-bh-*")
 		if bhErr == nil {
-			defer os.RemoveAll(bhDir)
+			iterCleanups = append(iterCleanups, func() { os.RemoveAll(bhDir) })
 			bhDCIP := host.IP
 			bhDCHost := ""
 			if dc := findDC(state, domain); dc.IP != "" {
@@ -461,8 +463,14 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 			health := runtimeHealthSummary(runtime)
 			utils.StepInfo(fmt.Sprintf("Runtime: %s", health))
 		}
+		utils.Attempt("🗺️", host.IP, "Weighted path planning from controlled principals")
 		baselinePlans := runPlanning(state, result, availCaps)
 		latestPlans := baselinePlans
+		if len(baselinePlans) > 0 {
+			utils.StepOk(fmt.Sprintf("%d escalation path(s) found", len(baselinePlans)))
+		} else {
+			utils.StepInfo("No escalation paths found from controlled principals")
+		}
 
 		// ── SUB-PHASE 1: SYSTEM check (no dump yet — disarm Defender first) ──
 		gotSystem := doSystemCheck(ctx, state, host, exec, domain, user, pass, result, "system_check")
@@ -548,7 +556,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		if executePaths && len(latestPlans) > 0 {
 			slog.Debug("Executing best planned paths (reconciliation-gated)...")
 			ctx2, cancel2 := context.WithCancel(context.Background())
-			defer cancel2()
+			iterCleanups = append(iterCleanups, cancel2)
 			executed := ExecuteBestPaths(ctx2, state, latestPlans, host.IP, result)
 			if executed > 0 {
 				slog.Info("Path execution: steps completed", "count", executed)
@@ -569,6 +577,10 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 			}
 		}
 
+		for i := len(iterCleanups) - 1; i >= 0; i-- {
+			iterCleanups[i]()
+		}
+
 		delta := classifyDelta(credsBefore, edgesBefore, state)
 		slog.Debug("Privesc iteration complete", "iteration", iter+1, "total", maxIter, "delta", delta.String())
 
@@ -582,6 +594,7 @@ func RunPrivesc(state *core.ADState, targetHost string, evasionProfile string, e
 		}
 	}
 
+	utils.StepOk("Privilege escalation analysis complete")
 	return result
 }
 
@@ -743,7 +756,7 @@ func runGPOAbuse(ctx context.Context, state *core.ADState, host core.Host,
 			Domain: domain, Username: user, Password: pass,
 		}
 		gpCR, gpErr := tools.NetExec.Run(ctx, gpTarget, "-X", []string{"gpupdate /force"})
-		if gpErr == nil && tools.NxcCommandSucceeded(gpCR.Stdout+"\n"+gpCR.Stderr) {
+		if gpErr == nil && tools.NxcCommandSucceeded(gpCR.Stdout, gpCR.Stderr) {
 			slog.Debug("GPO abuse: gpupdate triggered via nxc")
 		} else {
 			slog.Debug("GPO abuse: gpupdate not possible (no admin) — waiting for periodic refresh")

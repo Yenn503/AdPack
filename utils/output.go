@@ -9,14 +9,70 @@ import (
 )
 
 func PhaseHeader(num int, name, rationale string) {
-	bar := strings.Repeat("─", 52)
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(ColorSecondary).Render("  " + bar))
-	fmt.Printf("  %s  %s\n",
-		lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render(fmt.Sprintf("[%d] %s", num, strings.ToUpper(name))),
-		lipgloss.NewStyle().Foreground(ColorMuted).Render(rationale))
-	fmt.Println(lipgloss.NewStyle().Foreground(ColorSecondary).Render("  " + bar))
-	fmt.Println()
+	title := PhaseTitle.Render(fmt.Sprintf("%s  PHASE %02d · %s", PhaseEmoji(name), num, strings.ToUpper(name)))
+	body := title
+	if strings.TrimSpace(rationale) != "" {
+		body = lipgloss.JoinVertical(lipgloss.Left, title, MutedStyle.Render(rationale))
+	}
+	fmt.Println(PhaseBox.Render(body))
+}
+
+func PhaseEmoji(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "discovery":
+		return "🛰️"
+	case "enumeration":
+		return "📇"
+	case "credential_acq":
+		return "🔑"
+	case "validation":
+		return "✅"
+	case "session_harvest":
+		return "🪪"
+	case "graph_analysis":
+		return "🕸️"
+	case "privesc":
+		return "🚀"
+	case "lateral":
+		return "↔️"
+	case "persistence":
+		return "⚓"
+	case "impact":
+		return "💥"
+	case "hybrid_bridge":
+		return "🌉"
+	case "cloud_initial_access":
+		return "🎣"
+	case "cloud_enum":
+		return "☁️"
+	case "cloud_cred_acq":
+		return "🔐"
+	case "cloud_privesc":
+		return "⬆️"
+	case "cloud_pillage":
+		return "📦"
+	default:
+		return "◆"
+	}
+}
+
+func Section(icon, title, detail string) {
+	line := fmt.Sprintf("%s  %s", icon, lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render(title))
+	if detail != "" {
+		line += "  " + MutedStyle.Render(detail)
+	}
+	fmt.Printf("\n  %s\n", line)
+}
+
+func Attempt(icon, target, detail string) {
+	fmt.Printf("    %s  %s  %s\n", icon, HostStyle.Render(target), MutedStyle.Render(detail))
+}
+
+func PhaseSkipped(phase, reason, command string) {
+	StepWarn(fmt.Sprintf("%s skipped: %s", phase, reason))
+	if command != "" {
+		StepInfo("Run manually: " + command)
+	}
 }
 
 func Step(msg string) {
@@ -32,7 +88,7 @@ func StepFail(msg string) {
 }
 
 func StepWarn(msg string) {
-	fmt.Printf("  %s  %s\n", WarnStyle.Render("!"), msg)
+	fmt.Printf("  %s  %s\n", WarnStyle.Render("⚠"), msg)
 }
 
 func StepInfo(msg string) {
@@ -63,17 +119,13 @@ func EdgeDisplay(source, accessRight, target string, exploit, noise float64) {
 }
 
 func PhaseComplete(elapsed time.Duration) {
-	fmt.Printf("\n  %s  %s  %s\n",
-		Check,
-		lipgloss.NewStyle().Foreground(ColorMuted).Render("complete"),
-		DimStyle.Render("· "+elapsed.Round(time.Millisecond).String()))
+	body := fmt.Sprintf("%s  %s  %s", Check, SuccessStyle.Render("complete"), DimStyle.Render(elapsed.Round(time.Millisecond).String()))
+	fmt.Println(PanelBox.Render(body))
 }
 
 func PhaseFailed(elapsed time.Duration) {
-	fmt.Printf("\n  %s  %s  %s\n",
-		Cross,
-		lipgloss.NewStyle().Foreground(ColorMuted).Render("failed"),
-		DimStyle.Render(elapsed.Round(time.Millisecond).String()))
+	body := fmt.Sprintf("%s  %s  %s", Cross, ErrorStyle.Render("failed"), DimStyle.Render(elapsed.Round(time.Millisecond).String()))
+	fmt.Println(PanelBox.Render(body))
 }
 
 func Summary(phasesRun, hosts, users, creds, validated int) {

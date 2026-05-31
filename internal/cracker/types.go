@@ -35,3 +35,18 @@ type CrackEvent struct {
 	Result string
 	Error  error
 }
+
+type CrackTypeStats struct {
+	HashType HashType
+	Total    int
+	Cracked  int
+	Pending  int
+}
+
+type CrackStats struct {
+	TotalEnqueued int
+	TotalCracked  int
+	TotalPending  int
+	ByType        map[HashType]*CrackTypeStats
+	IsRunning     bool
+}

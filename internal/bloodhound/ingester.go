@@ -47,6 +47,8 @@ func CollectAndIngest(ctx context.Context, cfg CollectConfig, state *core.ADStat
 
 	state.BH.Collected = true
 	state.BH.Ingested = true
+	countDAUsers(p, cfg.Domain, state)
+	markAdminUsers(state)
 
 	return nil
 }
@@ -63,6 +65,8 @@ func IngestFromDirectory(dir, domain string, state *core.ADState) error {
 	bhState := p.ConvertToState(strings.ToLower(domain))
 	mergeState(state, bhState)
 	state.BH.Ingested = true
+	countDAUsers(p, domain, state)
+	markAdminUsers(state)
 	return nil
 }
 
@@ -77,6 +81,8 @@ func IngestFromFiles(usersJSON, groupsJSON, computersJSON, domainsJSON []byte, d
 	bhState := p.ConvertToState(strings.ToLower(domain))
 	mergeState(state, bhState)
 	state.BH.Ingested = true
+	countDAUsers(p, domain, state)
+	markAdminUsers(state)
 	return nil
 }
 
@@ -219,6 +225,98 @@ func mergeState(target, src *core.ADState) {
 		if !seenEdges[key] {
 			seenEdges[key] = true
 			target.Edges = append(target.Edges, e)
+		}
+	}
+}
+
+// countDAUsers walks parsed BloodHound groups to find Domain Admins and
+// counts their direct User members, setting BH.DACount and BH.DAUsers.
+func countDAUsers(p *ParsedData, domain string, state *core.ADState) {
+	var daMembers []string
+	seen := make(map[string]bool)
+	domainUpper := strings.ToUpper(domain)
+	daSuffix := "DOMAIN ADMINS@" + domainUpper
+
+	foundDA := false
+	for _, g := range p.Groups {
+		if !strings.HasSuffix(strings.ToUpper(g.Properties.Name), daSuffix) {
+			continue
+		}
+		foundDA = true
+		for _, m := range g.Members {
+			if m.ObjectType != "User" {
+				continue
+			}
+			principal := p.SIDMap[m.ObjectIdentifier]
+			if principal == "" || seen[principal] {
+				continue
+			}
+			seen[principal] = true
+			_, name := splitPrincipal(principal)
+			daMembers = append(daMembers, name)
+		}
+	}
+
+	if !foundDA {
+		// Fallback: match groups containing "DOMAIN ADMINS" in the name
+		daPattern := "DOMAIN ADMINS"
+		for _, g := range p.Groups {
+			principal := p.SIDMap[g.ObjectIdentifier]
+			if principal == "" {
+				continue
+			}
+			_, gName := splitPrincipal(principal)
+			if !strings.Contains(strings.ToUpper(gName), daPattern) {
+				continue
+			}
+			if seen[principal] {
+				continue
+			}
+			seen[principal] = true
+			for _, m := range g.Members {
+				if m.ObjectType != "User" {
+					continue
+				}
+				memberPrincipal := p.SIDMap[m.ObjectIdentifier]
+				if memberPrincipal == "" || seen[memberPrincipal] {
+					continue
+				}
+				seen[memberPrincipal] = true
+				_, name := splitPrincipal(memberPrincipal)
+				daMembers = append(daMembers, name)
+			}
+		}
+	}
+
+	state.BH.DAUsers = strings.Join(daMembers, ", ")
+	state.BH.DACount = len(daMembers)
+
+	daSet := make(map[string]bool, len(daMembers))
+	for _, name := range daMembers {
+		daSet[strings.ToUpper(name)] = true
+	}
+	for i := range state.Users {
+		if daSet[strings.ToUpper(state.Users[i].Username)] {
+			state.Users[i].IsDA = true
+		}
+	}
+}
+
+// markAdminUsers sets IsAdmin=true on any user that has an AdminTo edge
+// (meaning BloodHound confirmed they are a local admin on at least one machine).
+func markAdminUsers(state *core.ADState) {
+	adminNames := make(map[string]bool)
+	for _, e := range state.Edges {
+		if e.AccessRight != "AdminTo" {
+			continue
+		}
+		parts := strings.SplitN(e.SourcePrincipal, "\\", 2)
+		name := parts[len(parts)-1]
+		adminNames[strings.ToUpper(name)] = true
+	}
+	for i := range state.Users {
+		if adminNames[strings.ToUpper(state.Users[i].Username)] || state.Users[i].IsDA {
+			state.Users[i].IsAdmin = true
 		}
 	}
 }

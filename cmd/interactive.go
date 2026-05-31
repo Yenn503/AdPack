@@ -17,7 +17,7 @@ var interactiveCmd = &cobra.Command{
 		if DB == nil {
 			return fmt.Errorf("database not initialized")
 		}
-		p := tea.NewProgram(tui.New(DB))
+		p := tea.NewProgram(tui.New(DB, crackQueue))
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)

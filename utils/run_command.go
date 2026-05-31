@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
+	"math"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,6 +59,38 @@ func RunCommandCtx(ctx context.Context, name string, args []string) CmdResult {
 	return r
 }
 
+// RunCommandRetry runs a command with exponential backoff + jitter.
+// Returns the first successful result. maxRetries=3, base=1s, max=30s.
+func RunCommandRetry(name string, args []string, maxRetries int) CmdResult {
+	if maxRetries < 1 {
+		maxRetries = 3
+	}
+	baseSleep := time.Second
+	maxSleep := 30 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		slog.Debug("run command", "tool", name, "attempt", attempt+1, "max", maxRetries+1)
+		r := RunCommand(name, args...)
+		if r.Success {
+			return r
+		}
+		if attempt == maxRetries {
+			slog.Warn("command failed after retries", "tool", name, "attempts", attempt+1, "error", r.Stderr)
+			return r
+		}
+		// Exponential backoff + jitter: sleep = min(base * 2^attempt + rand(0,base), max)
+		sleep := baseSleep * time.Duration(math.Pow(2, float64(attempt)))
+		jitter := time.Duration(rand.Int63n(int64(baseSleep)))
+		sleep += jitter
+		if sleep > maxSleep {
+			sleep = maxSleep
+		}
+		slog.Debug("retrying after backoff", "tool", name, "sleep", sleep, "attempt", attempt+1)
+		time.Sleep(sleep)
+	}
+	return CmdResult{Success: false}
+}
+
 // ResolveLocalPath finds a local artifact file by checking:
 //  1. CWD directly (name as-is)
 //  2. exe/ subdirectory of CWD
@@ -99,6 +134,14 @@ func ResolveLocalPath(name string) string {
 				break
 			}
 			dir = parent
+		}
+	}
+	// Fallback: check PATH via exec.LookPath (covers /usr/local/bin, etc.)
+	// This is the same resolution as FindTool/ToolAvailable — it's a bug if
+	// Deploy can't find a binary that ToolAvailable reports as present.
+	if p, err := exec.LookPath(name); err == nil {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
 		}
 	}
 	return ""

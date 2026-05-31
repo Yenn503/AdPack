@@ -34,6 +34,10 @@ func (noopTransport) Download(_ context.Context, _ core.HostRef, _ string) ([]by
 
 func (noopTransport) Type() string { return "noop" }
 
+// LootDir is the directory where exfiltrated data is staged.
+// Set by cmd/root.go from config. Defaults to ~/.adpack/loot.
+var LootDir string
+
 // RuntimeFactory is injected by cmd/ to provide a RuntimeProvider for modules.
 // If nil, runtime-dependent features are skipped (headless/offline mode).
 var RuntimeFactory func() core.RuntimeProvider

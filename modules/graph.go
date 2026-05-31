@@ -6,15 +6,17 @@ import (
 	"time"
 
 	"adpack/core"
+	"adpack/utils"
 )
 
 func RunGraphAnalysis(ctx context.Context, provider core.DirectoryProvider) *core.ToolResult {
 	result := &core.ToolResult{Success: true}
 
-	fmt.Println("[*] Enumerating computers...")
+	utils.Section("🕸️", "Graph Analysis", "BloodHound power path discovery")
+	utils.StepInfo("Enumerating computers from LDAP...")
 	computers, err := provider.EnumerateComputers(ctx)
 	if err != nil {
-		fmt.Printf("[!] Computer enumeration failed: %v\n", err)
+		utils.StepWarn(fmt.Sprintf("Computer enumeration failed: %v", err))
 	} else {
 		result.Computers = append(result.Computers, computers...)
 		for _, c := range computers {
@@ -29,13 +31,14 @@ func RunGraphAnalysis(ctx context.Context, provider core.DirectoryProvider) *cor
 				Timestamp: time.Now(),
 			})
 		}
-		fmt.Printf("[+] %d computers enumerated\n", len(computers))
+		utils.StepOk(fmt.Sprintf("%d computers enumerated", len(computers)))
+		utils.Finding("Computers", fmt.Sprintf("%d machines found", len(computers)))
 	}
 
-	fmt.Println("[*] Enumerating GPOs...")
+	utils.StepInfo("Enumerating GPOs from LDAP...")
 	gpos, err := provider.EnumerateGPOs(ctx)
 	if err != nil {
-		fmt.Printf("[!] GPO enumeration failed: %v\n", err)
+		utils.StepWarn(fmt.Sprintf("GPO enumeration failed: %v", err))
 	} else {
 		result.GPOs = append(result.GPOs, gpos...)
 		for _, g := range gpos {
@@ -50,13 +53,14 @@ func RunGraphAnalysis(ctx context.Context, provider core.DirectoryProvider) *cor
 				Timestamp: time.Now(),
 			})
 		}
-		fmt.Printf("[+] %d GPOs enumerated\n", len(gpos))
+		utils.StepOk(fmt.Sprintf("%d GPOs enumerated", len(gpos)))
+		utils.Finding("GPOs", fmt.Sprintf("%d policies found", len(gpos)))
 	}
 
-	fmt.Println("[*] Enumerating ADCS certificate templates...")
+	utils.StepInfo("Enumerating ADCS certificate templates...")
 	templates, err := provider.EnumerateADCSTemplates(ctx)
 	if err != nil {
-		fmt.Printf("[!] ADCS enumeration failed: %v\n", err)
+		utils.StepWarn(fmt.Sprintf("ADCS enumeration failed: %v", err))
 	} else {
 		result.ADCS = append(result.ADCS, templates...)
 		for _, t := range templates {
@@ -71,8 +75,10 @@ func RunGraphAnalysis(ctx context.Context, provider core.DirectoryProvider) *cor
 				Timestamp: time.Now(),
 			})
 		}
-		fmt.Printf("[+] %d ADCS templates found\n", len(templates))
+		utils.StepOk(fmt.Sprintf("%d ADCS templates found", len(templates)))
+		utils.Finding("ADCS Templates", fmt.Sprintf("%d certificate templates", len(templates)))
 	}
 
+	utils.StepOk("Graph analysis complete")
 	return result
 }

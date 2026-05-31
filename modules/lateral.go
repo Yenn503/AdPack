@@ -59,6 +59,9 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 		return result
 	}
 
+	utils.Section("↔️", "Lateral Movement", "credential-driven access expansion")
+	utils.Attempt("🎯", host.IP, fmt.Sprintf("as %s\\%s via %d methods", domain, user, len(lateralMatrix)))
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -71,18 +74,22 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 		if err != nil {
 			// Auth-rejected on first probe → no point hammering the rest.
 			if strings.Contains(err.Error(), "auth rejected") {
+				utils.StepWarn(fmt.Sprintf("%s: auth rejected on %s — aborting matrix", m.Name, host.IP))
 				slog.Warn("Auth rejected — aborting matrix", "method", m.Name)
 				authRejected = true
 				break
 			}
+			utils.StepWarn(fmt.Sprintf("%s: failed on %s — %v", m.Name, host.IP, err))
 			slog.Warn("Lateral method failed", "method", m.Name, "error", err)
 			continue
 		}
 		if !ok {
+			utils.StepWarn(fmt.Sprintf("%s: no exec evidence on %s", m.Name, host.IP))
 			slog.Warn("Lateral method did not produce exec evidence", "method", m.Name)
 			continue
 		}
 		anySuccess = true
+		utils.StepOk(fmt.Sprintf("%s succeeded on %s", m.Name, host.IP))
 		if m.Protocol == "mssql" {
 			markOpenPort(state, host.IP, 1433)
 			if h, found := selectTarget(state, host.IP); found {
@@ -108,8 +115,11 @@ func RunLateral(state *core.ADState, targetHost string) *core.ToolResult {
 	case authRejected:
 		result.Success = false
 	case !anySuccess:
+		utils.StepWarn("All lateral protocols failed — no movement possible")
 		slog.Warn("All lateral protocols failed")
 		result.Success = false
+	default:
+		utils.StepOk(fmt.Sprintf("Lateral movement to %s complete", host.IP))
 	}
 	return result
 }
@@ -167,7 +177,7 @@ func probeLateralMethod(ctx context.Context, host core.Host, domain, user, pass,
 	if !tools.NxcAuthSucceeded(combined, user) {
 		return false, combined, fmt.Errorf("auth banner not positive")
 	}
-	if !tools.NxcCommandSucceeded(combined) {
+	if !tools.NxcCommandSucceeded(r.Stdout, r.Stderr) {
 		return false, combined, nil
 	}
 	return true, combined, nil

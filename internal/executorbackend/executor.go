@@ -255,7 +255,7 @@ func runFailover(ctx context.Context, target tools.NetExecTarget, command string
 		}
 
 		// Process exited zero AND we have positive evidence of execution.
-		if tools.NxcCommandSucceeded(combined) {
+		if tools.NxcCommandSucceeded(r.Stdout, r.Stderr) {
 			return &last, nil
 		}
 		// Otherwise treat as a soft failure of this method (e.g. non-admin

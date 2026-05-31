@@ -358,6 +358,29 @@ func migrate(db *sqlx.DB) error {
 		outbound_trust INTEGER DEFAULT 0
 	);
 	INSERT OR IGNORE INTO bloodhound_meta(id,collected,ingested) VALUES(1,0,0);
+	CREATE TABLE IF NOT EXISTS tokens (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		type TEXT NOT NULL,
+		resource TEXT NOT NULL DEFAULT '',
+		client_id TEXT NOT NULL DEFAULT '',
+		tenant TEXT NOT NULL DEFAULT '',
+		username TEXT NOT NULL DEFAULT '',
+		secret TEXT NOT NULL DEFAULT '',
+		refresh_token TEXT NOT NULL DEFAULT '',
+		scope TEXT NOT NULL DEFAULT '',
+		expires_at TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT '',
+		validated INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE IF NOT EXISTS cloud_resources (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		type TEXT NOT NULL,
+		name TEXT NOT NULL,
+		object_id TEXT NOT NULL DEFAULT '',
+		tenant TEXT NOT NULL DEFAULT '',
+		properties TEXT NOT NULL DEFAULT '',
+		discovered_by TEXT NOT NULL DEFAULT ''
+	);
 	CREATE TABLE IF NOT EXISTS edges (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		source_principal TEXT NOT NULL,

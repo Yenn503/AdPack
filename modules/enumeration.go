@@ -9,6 +9,7 @@ import (
 
 	"adpack/core"
 	"adpack/tools"
+	"adpack/utils"
 )
 
 func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
@@ -20,6 +21,8 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 		result.Success = false
 		return result
 	}
+
+	utils.Section("📇", "Enumeration", "LDAP AD object discovery")
 
 	// Use state creds if available
 	dbDomain, dbUser, dbPass, _ := getCredential(state)
@@ -49,6 +52,7 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 	}
 
 	slog.Debug("Enumerating users on host", "ip", host.IP, "domain", domain)
+	utils.StepInfo(fmt.Sprintf("Querying LDAP on %s (%s) as %s\\%s", host.IP, host.Hostname, domain, user))
 
 	ctx := context.Background()
 	r, err := tools.NetExec.Run(ctx, target, "--users", nil)
@@ -84,8 +88,10 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 		}
 
 		slog.Info("Enumerated users", "count", len(users))
+		utils.StepOk(fmt.Sprintf("Found %d user(s) via LDAP", len(users)))
 		if len(descCreds) > 0 {
 			slog.Info("Found credential(s) in user descriptions", "count", len(descCreds))
+			utils.StepOk(fmt.Sprintf("Found %d credential(s) in user descriptions", len(descCreds)))
 		}
 	} else {
 		errMsg := ""
@@ -95,6 +101,7 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 			errMsg = r.Stderr
 		}
 		slog.Warn("Enumeration failed", "error", errMsg)
+		utils.StepWarn(fmt.Sprintf("LDAP enumeration failed on %s: %s", host.IP, errMsg))
 		result.Success = false
 	}
 

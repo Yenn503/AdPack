@@ -3,24 +3,21 @@ package utils
 import "charm.land/lipgloss/v2"
 
 var (
-	// Vibrant primary palette — no white
-	ColorPrimary       = lipgloss.Color("#00E5FF") // Electric Cyan
-	ColorSecondary     = lipgloss.Color("#82B1FF") // Soft Blue
-	ColorMuted         = lipgloss.Color("#546E7A") // Blue Grey
-	ColorHighlight     = lipgloss.Color("#FFD740") // Bright Amber
-	ColorTextOnPrimary = lipgloss.Color("#0D1117") // Deep Navy
+	ColorPrimary       = lipgloss.Color("#00E5FF")
+	ColorSecondary     = lipgloss.Color("#82B1FF")
+	ColorMuted         = lipgloss.Color("#546E7A")
+	ColorHighlight     = lipgloss.Color("#FFD740")
+	ColorTextOnPrimary = lipgloss.Color("#0D1117")
 
-	// Semantic event colors — rich and vibrant
-	ColorSuccess = lipgloss.Color("#00E676") // Bright Green
-	ColorWarning = lipgloss.Color("#FF9100") // Deep Orange
-	ColorError   = lipgloss.Color("#FF1744") // Vivid Red
-	ColorInfo    = lipgloss.Color("#448AFF") // Bright Blue
-	ColorCyan    = lipgloss.Color("#18FFFF") // Pure Cyan
-	ColorPurple  = lipgloss.Color("#B388FF") // Soft Purple
-	ColorPink    = lipgloss.Color("#FF80AB") // Pink accent
-	ColorLime    = lipgloss.Color("#C6FF00") // Lime accent
+	ColorSuccess = lipgloss.Color("#00E676")
+	ColorWarning = lipgloss.Color("#FF9100")
+	ColorError   = lipgloss.Color("#FF1744")
+	ColorInfo    = lipgloss.Color("#448AFF")
+	ColorCyan    = lipgloss.Color("#18FFFF")
+	ColorPurple  = lipgloss.Color("#B388FF")
+	ColorPink    = lipgloss.Color("#FF80AB")
+	ColorLime    = lipgloss.Color("#C6FF00")
 
-	// Common Styles
 	BaseStyle = lipgloss.NewStyle().Foreground(ColorHighlight)
 
 	TitleStyle = lipgloss.NewStyle().
@@ -35,7 +32,6 @@ var (
 			BorderForeground(ColorSecondary).
 			Padding(0, 1)
 
-	// Logging & Output Styles
 	InfoStyle    = lipgloss.NewStyle().Foreground(ColorInfo).Bold(true)
 	SuccessStyle = lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true)
 	ErrorStyle   = lipgloss.NewStyle().Foreground(ColorError).Bold(true)
@@ -52,7 +48,6 @@ var (
 			MarginBottom(1).
 			MarginTop(1)
 
-	// Phase output styles
 	PhaseBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorSecondary).
@@ -65,10 +60,6 @@ var (
 			Foreground(ColorPrimary).
 			Padding(0, 1)
 
-	PhaseMeta = lipgloss.NewStyle().
-			Foreground(ColorMuted)
-
-	// Step indicators
 	StepStyle  = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
 	FoundStyle = lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true)
 	FailStyle  = lipgloss.NewStyle().Foreground(ColorError).Bold(true)
@@ -76,35 +67,18 @@ var (
 	MutedStyle = lipgloss.NewStyle().Foreground(ColorMuted)
 	DimStyle   = lipgloss.NewStyle().Foreground(ColorMuted).Faint(true)
 
-	// Badge styles
-	BadgeSuccess = lipgloss.NewStyle().
-			Foreground(ColorSuccess).
-			Bold(true)
+	BadgeSuccess = lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true)
+	BadgeWarning = lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
+	BadgeError   = lipgloss.NewStyle().Foreground(ColorError).Bold(true)
+	BadgeInfo    = lipgloss.NewStyle().Foreground(ColorInfo).Bold(true)
+	BadgeCount   = lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true)
 
-	BadgeWarning = lipgloss.NewStyle().
-			Foreground(ColorWarning).
-			Bold(true)
-
-	BadgeError = lipgloss.NewStyle().
-			Foreground(ColorError).
-			Bold(true)
-
-	BadgeInfo = lipgloss.NewStyle().
-			Foreground(ColorInfo).
-			Bold(true)
-
-	BadgeCount = lipgloss.NewStyle().
-			Foreground(ColorHighlight).
-			Bold(true)
-
-	// Value styles
 	ValStyle    = lipgloss.NewStyle().Foreground(ColorWarning)
 	KeyStyle    = lipgloss.NewStyle().Foreground(ColorHighlight)
 	PathStyle   = lipgloss.NewStyle().Foreground(ColorCyan)
 	HostStyle   = lipgloss.NewStyle().Foreground(ColorSecondary)
 	DomainStyle = lipgloss.NewStyle().Foreground(ColorPurple)
 
-	// Layout helpers
 	Divider = lipgloss.NewStyle().
 		Foreground(ColorSecondary).
 		Render("  " + "─")
@@ -132,7 +106,56 @@ var (
 		Bold(true).
 		Render("●")
 
-	EmptyDot = lipgloss.NewStyle().
+	CrackPanel = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorHighlight).
+			Padding(0, 2).
+			MarginTop(1).
+			MarginBottom(1)
+
+	CrackLabel = lipgloss.NewStyle().
+			Foreground(ColorCyan).
+			Bold(true)
+
+	CrackCount = lipgloss.NewStyle().
+			Foreground(ColorHighlight).
+			Bold(true)
+
+	CrackPending = lipgloss.NewStyle().
+			Foreground(ColorMuted)
+
+	CrackActive = lipgloss.NewStyle().
+			Foreground(ColorSuccess).
+			Bold(true)
+
+	CrackBar = lipgloss.NewStyle().
+			Foreground(ColorHighlight)
+
+	PanelBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorSecondary).
+			Padding(0, 2).
+			MarginTop(1).
+			MarginBottom(1)
+
+	TableHeader = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorSecondary).
+			Padding(0, 1)
+
+	TableRow = lipgloss.NewStyle().
+			Foreground(ColorHighlight)
+
+	TableDivider = lipgloss.NewStyle().
 			Foreground(ColorMuted).
-			Render("○")
+			Faint(true)
+
+	PhaseLabel = lipgloss.NewStyle().
+			Foreground(ColorPrimary).
+			Bold(true)
+
+	PhaseName = lipgloss.NewStyle().
+			Foreground(ColorHighlight).
+			Bold(true).
+			Italic(true)
 )
