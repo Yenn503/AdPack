@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.6.0 — Full Pipeline Automation, Cross-Domain Trust Pivot, Doc Fixes
+
+- **Autorun pipeline fully automated**: Single `--target` from fresh DB completes all 16 phases (discovery through impact) with zero manual intervention
+- **Cross-domain trust pivot**: `sevenkingdoms.local\Administrator` hash seeded in config → Kerberos TGT → double `kvno` (cifs+ldap) → LDAP injection → DA on `north.sevenkingdoms.local`
+- **Discovery fixed**: nmap `-PS445` (TCP SYN to SMB port 445) instead of ICMP `-sn` — Windows Firewall no longer blocks host discovery
+- **nmap parser fixed**: Parenthesized IPs (`(192.168.57.10)`) now properly extracted — `net.ParseIP` no longer silently returns nil
+- **DC auto-discovery**: DNS SRV fallback + LDAP null-bind DC detection in `probeHost` finds DCs without manual targeting
+- **Config seed injection**: Hash-based parent-domain creds from `adpack.yaml` seeds are force-injected into credential pool before enumeration
+- **BloodHound computer→host conversion**: After graph analysis, computer objects are resolved via DNS and persisted as discoverable `Host` entries
+- **LSASS PPL protection handling**: DCs are filtered from nanodump via `dcSet`; only `secretsdump` + trust pivot targets domain controllers
+- **All docs updated**: Phase count (16), DAG diagram, phase list, evasion profile names, config example — fully synced with actual code
+
 ## v0.5.0 — Phase Ordering Fix, Code Cleanup, Demo GIF
 
 - **Phase ordering corrected**: `credential_acq` now does non-privileged spray only; `privesc` owns SYSTEM → AV kill → LSASS/SAM dump
@@ -119,7 +131,7 @@
 - Error state display
 - Dynamic header with timestamp
 
-## v0.3.0 — Kill Chain Hardening, AV Evasion, Output Beautification
+## v0.3.1 — Kill Chain Hardening, AV Evasion, Output Beautification
 
 ### Kill Chain Fixes
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
@@ -36,6 +37,19 @@ func RunEnumeration(state *core.ADState, targetHost string) *core.ToolResult {
 	// Prefer a DC matching our domain for LDAP enumeration
 	if dc := findDC(state, dbDomain); dc.IP != "" {
 		host = dc
+	} else {
+		// No DC in state — try DNS SRV lookup for the domain
+		if dcIP, dcName := findDCByDNS(dbDomain); dcIP != "" {
+			dcHost := core.Host{
+				IP:       dcIP,
+				Hostname: dcName,
+				Domain:   dbDomain,
+				IsDC:     true,
+			}
+			result.Hosts = append(result.Hosts, dcHost)
+			host = dcHost
+			slog.Info("Discovered DC via DNS SRV", "hostname", dcName, "ip", dcIP)
+		}
 	}
 
 	user := dbUser
@@ -234,6 +248,40 @@ func extractSecretFromDesc(desc, phrase string) string {
 	tok = strings.TrimRight(tok, trailingJunk)
 	tok = strings.TrimLeft(tok, leadingJunk)
 	return tok
+}
+
+// findDCByDNS queries DNS SRV records to locate a domain controller
+// for the given domain. Returns the DC IP and hostname (or empty on failure).
+func findDCByDNS(domain string) (string, string) {
+	if domain == "" {
+		return "", ""
+	}
+	// Try _ldap._tcp.dc._msdcs.<domain> first (Microsoft-specific)
+	srvName := fmt.Sprintf("_ldap._tcp.dc._msdcs.%s", domain)
+	_, addrs, err := net.LookupSRV("ldap", "tcp", "dc._msdcs."+domain)
+	if err != nil {
+		srvName = fmt.Sprintf("_ldap._tcp.%s", domain)
+		_, addrs, err = net.LookupSRV("ldap", "tcp", domain)
+	}
+	if err == nil && len(addrs) > 0 {
+		target := strings.TrimSuffix(addrs[0].Target, ".")
+		ips, err := net.LookupHost(target)
+		if err == nil && len(ips) > 0 {
+			return ips[0], strings.ToUpper(strings.SplitN(target, ".", 2)[0])
+		}
+	}
+	// Fallback: try A record for hostname patterns
+	for _, pattern := range []string{
+		fmt.Sprintf("dc1.%s", domain),
+		fmt.Sprintf("dc.%s", domain),
+	} {
+		ips, err := net.LookupHost(pattern)
+		if err == nil && len(ips) > 0 {
+			return ips[0], strings.ToUpper(strings.SplitN(pattern, ".", 2)[0])
+		}
+	}
+	slog.Warn("DNS SRV lookup failed for domain", "domain", domain, "srv_name", srvName)
+	return "", ""
 }
 
 // looksLikePassword returns true if the string looks like a password

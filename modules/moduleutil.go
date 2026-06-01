@@ -3,6 +3,8 @@ package modules
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"adpack/core"
@@ -65,4 +67,24 @@ func findDC(state *core.ADState, domain string) core.Host {
 		}
 	}
 	return fallback
+}
+
+// ResolveHostIP resolves a hostname to its IP address via DNS.
+// Tries <hostname>.<domain> first, then bare <hostname>.
+// Returns empty string on failure.
+func ResolveHostIP(hostname, domain string) string {
+	candidates := []string{hostname}
+	if domain != "" {
+		candidates = []string{
+			strings.ToLower(hostname + "." + domain),
+			hostname,
+		}
+	}
+	for _, name := range candidates {
+		addrs, err := net.LookupHost(name)
+		if err == nil && len(addrs) > 0 {
+			return addrs[0]
+		}
+	}
+	return ""
 }

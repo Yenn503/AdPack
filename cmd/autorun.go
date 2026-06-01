@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -102,6 +103,46 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 					utils.InfoStyle.Render("→"), seedDomain, seedUser)
 			}
 		}
+		// Seed ALL config entries (including hash-based parent-domain creds)
+		if Cfg != nil {
+			for _, s := range Cfg.Seeds {
+				if s.Domain == "" || s.User == "" {
+					continue
+				}
+				if s.User == seedUser && s.Domain == seedDomain {
+					continue
+				}
+				dbCreds2, _ := DB.LoadCreds()
+				already2 := false
+				for _, c := range dbCreds2 {
+					if c.Domain == s.Domain && c.Username == s.User {
+						already2 = true
+						break
+					}
+				}
+				if already2 {
+					continue
+				}
+				if s.Hash != "" {
+					DB.SaveCred(core.Credential{
+						Type: core.CredHash, Username: s.User,
+						Domain: s.Domain, Hash: s.Hash,
+						Source: "config_seed", Validated: false,
+					})
+					fmt.Printf("  %s  Seeded hash: %s\\%s\n",
+						utils.InfoStyle.Render("→"), s.Domain, s.User)
+				}
+				if s.Password != "" {
+					DB.SaveCred(core.Credential{
+						Type: core.CredPlaintext, Username: s.User,
+						Domain: s.Domain, Secret: s.Password,
+						Source: "config_seed", Validated: false,
+					})
+					fmt.Printf("  %s  Seeded password: %s\\%s\n",
+						utils.InfoStyle.Render("→"), s.Domain, s.User)
+				}
+			}
+		}
 
 		phasesRun := 0
 		var credsAtLastRun int
@@ -173,6 +214,11 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 					}
 					for _, ev := range result.Evidence {
 						DB.SaveEvidence(ev)
+					}
+					for _, h := range result.Hosts {
+						if err := DB.SaveHost(h); err == nil {
+							slog.Info("Saved host from enumeration", "ip", h.IP, "hostname", h.Hostname)
+						}
 					}
 					success = true
 					utils.StepOk(fmt.Sprintf("%d user(s) enumerated", len(result.Users)))
@@ -261,6 +307,38 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 				if result.Success {
 					for _, c := range result.Computers {
 						DB.SaveComputer(c)
+						// Convert AD computer to Host entry so impact/lateral
+						// can target it. The computer name (e.g. WINTERFELL$)
+						// is resolved to a hostname by stripping the trailing $.
+						if c.Name != "" {
+							hostname := strings.TrimSuffix(c.Name, "$")
+							host := core.Host{
+								Hostname: hostname,
+								Domain:   c.Domain,
+								IsDC:     c.IsDC,
+							}
+							// Resolve IP from DNS if not already in state
+							if netIP := modules.ResolveHostIP(hostname, c.Domain); netIP != "" {
+								host.IP = netIP
+							}
+							// Only save if IP is non-empty and not duplicate
+							if host.IP != "" {
+								dup := false
+								for _, h2 := range state.Hosts {
+									if h2.IP == host.IP {
+										dup = true
+										break
+									}
+								}
+								if !dup {
+									if err := DB.SaveHost(host); err == nil {
+										state.Hosts = append(state.Hosts, host)
+										slog.Info("Added host from computer object",
+											"hostname", hostname, "ip", host.IP, "domain", host.Domain)
+									}
+								}
+							}
+						}
 					}
 					for _, g := range result.GPOs {
 						DB.SaveGPO(g)

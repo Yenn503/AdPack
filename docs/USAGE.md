@@ -1,6 +1,6 @@
 # AdPack Usage Guide
 
-Complete command reference for adpack v0.5.0 (14 phases).
+Complete command reference for adpack v0.6.0 (16 phases).
 
 ## Quick Start
 
@@ -40,11 +40,11 @@ Flags:
 adpack run <phase> [flags]
 ```
 
-Phases: `initial_access`, `discovery`, `enumeration`, `credential_acq`, `session_harvest`, `graph_analysis`, `lateral`, `validation`, `privesc`, `persistence`, `cloud_enum`, `cloud_cred_acq`, `cloud_privesc`, `cloud_pillage`
+Phases: `discovery`, `enumeration`, `credential_acq`, `validation`, `session_harvest`, `graph_analysis`, `privesc`, `lateral`, `persistence`, `impact`, `hybrid_bridge`, `cloud_initial_access`, `cloud_enum`, `cloud_cred_acq`, `cloud_privesc`, `cloud_pillage`
 
 Flags:
 - `-t, --target` — Target IP or hostname
-- `-e, --evasion` — Evasion profile (standard, bypass, custom)
+- `-e, --evasion` — Evasion profile (native, pplshade, phantomkiller)
 - `--resume` — Resume partially-completed phase
 - `--dry-run` — Preview without executing
 - `--provider-log <file>` — Write provider events as JSONL

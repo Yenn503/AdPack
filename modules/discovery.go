@@ -47,8 +47,12 @@ func RunDiscovery(state *core.ADState, targetHost string, cidrs []string) *core.
 			subnets = []string{s}
 		}
 	}
+	if len(subnets) > 0 {
+		slog.Info("Subnet scan", "subnets", subnets)
+	}
 	for _, subnet := range subnets {
 		discovered := nmapPingSweep(subnet)
+		slog.Info("nmap ping sweep results", "subnet", subnet, "count", len(discovered), "ips", discovered)
 		for _, ip := range discovered {
 			// Skip already-known hosts (both result.Hosts and state.Hosts)
 			alreadyKnown := false
@@ -182,7 +186,10 @@ func deriveSubnet(targetIP string) string {
 }
 
 func nmapPingSweep(subnet string) []string {
-	cmd := exec.Command("nmap", "-sn", "-T4", "--host-timeout", "10s", subnet)
+	// Use -PS445 (TCP SYN to port 445/SMB) instead of -sn (ICMP echo)
+	// because Windows Firewall blocks ICMP by default but SMB (445)
+	// is open on all domain-joined Windows machines.
+	cmd := exec.Command("nmap", "-sn", "-PS445", "-T4", "--host-timeout", "10s", subnet)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -190,8 +197,18 @@ func nmapPingSweep(subnet string) []string {
 	var ips []string
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.Contains(line, "Nmap scan report for") {
-			parts := strings.Fields(line)
-			for _, p := range parts {
+			// Extract IP from format: "Nmap scan report for hostname (IP)"
+			if idx := strings.LastIndex(line, "("); idx >= 0 {
+				candidate := line[idx+1:]
+				candidate = strings.TrimRight(candidate, ")")
+				if net.ParseIP(candidate) != nil {
+					ips = append(ips, candidate)
+					continue
+				}
+			}
+			// Fallback: try each whitespace-delimited token
+			for _, p := range strings.Fields(line) {
+				p = strings.Trim(p, "()")
 				if net.ParseIP(p) != nil {
 					ips = append(ips, p)
 				}

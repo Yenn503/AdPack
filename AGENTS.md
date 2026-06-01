@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-AdPack is a state-aware Active Directory attack orchestration tool written in Go. It chains 14 attack phases with automatic state tracking, privilege escalation path planning, and credential management.
+AdPack is a state-aware Active Directory attack orchestration tool written in Go. It chains 16 attack phases with automatic state tracking, privilege escalation path planning, and credential management.
 
 Repository: `https://github.com/Yenn503/AdPack`
 
@@ -24,27 +24,35 @@ View current state: `adpack status`. Gaps are detected by `ADState.DetectGaps()`
 
 ## Phases and DAG
 
-14 phases with dependency ordering defined in `Phase.Dependencies()` (`core/state.go:275`):
+16 phases with dependency ordering defined in `Phase.Dependencies()` (`core/state.go:344`):
 
 ```
-initial_access -> discovery -> enumeration -> credential_acq -> session_harvest -> graph_analysis
-                                                                                         |
-                                                                                         v
-                                                                                 validation
-                                                                                         |
-                                                                                         v
-                                                                          privesc -> credential_acq (re-run) -> lateral -> persistence
-
-initial_access -> cloud_enum -> cloud_cred_acq -> cloud_privesc -> cloud_pillage
+discovery -> enumeration -> credential_acq
+                                |
+              ┌─────────────────┼─────────────────┐
+              ↓                 ↓                 ↓
+        validation     session_harvest      graph_analysis
+                           ↓                    ↓
+                        lateral              privesc
+                           ↓                    ↓
+                        impact ←── persistence ←┘
+                                ↓
+                          hybrid_bridge ← cloud_enum ← cloud_initial_access
+                                              ↓
+                                    ┌─────────────────┐
+                                    ↓                 ↓
+                              cloud_cred_acq   cloud_privesc
+                                    ↓                 ↓
+                                    └──→ cloud_pillage ←┘
 ```
 
-Cloud phases fork from initial_access and run in parallel with on-prem phases. Phase execution order is determined dynamically by `ADState.NextPhase()` which checks dependency completion, credential status, and fast-tracks to lateral/persistence when DA creds are held.
+Cloud phases start from `cloud_initial_access` and are discovered via `NextPhase()` alongside on-prem phases. Execution order is determined dynamically by `ADState.NextPhase()` which checks dependency completion, credential status, and fast-tracks to lateral/persistence when DA creds are held.
 
 ### New Phase Descriptions
 
 | Phase | Description |
 |-------|-------------|
-| `initial_access` | Teams phishing, device code auth, OAuth consent phishing. Gets the first foothold. |
+| `cloud_initial_access` | Teams phishing, device code auth, OAuth consent phishing. Gets the first cloud foothold. |
 | `cloud_enum` | Enumerate Entra ID tenant (users, groups, apps, CAPs) |
 | `cloud_cred_acq` | Cloud credential acquisition (O365 password spray) |
 | `cloud_privesc` | Cloud privilege escalation analysis (Global Admin, Azure roles) |

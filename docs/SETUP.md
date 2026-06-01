@@ -1,6 +1,6 @@
 # AdPack Setup Guide
 
-Installation and environment setup for adpack v0.5.0.
+Installation and environment setup for adpack v0.6.0.
 
 ## Prerequisites
 
@@ -138,29 +138,43 @@ chmod 700 ~/.adpack
 Create `~/.adpack/config.yaml`:
 
 ```yaml
-db_path: "/home/user/.adpack/state.db"
+domain: "corp.local"
+profile: "native"
 
+db_path: ""
+nmap_args: ["-T4", "-sn"]
 nxc_path: "netexec"
 bh_python: "bloodhound-python"
-certipy_path: "certipy"
-impacket_dir: "/usr/share/doc/python3-impacket/examples"
+
+seeds:
+  - domain: "corp.local"
+    user: "jsmith"
+    password: "Password1"
+    hash: ""
 
 cracking:
-  hashcat_path: "hashcat"
+  hashcat_path: "/usr/bin/hashcat"
   wordlist: "/usr/share/wordlists/rockyou.txt"
-  rules: []
-  timeout: 300
+  rules: ["/usr/share/hashcat/rules/best64.rule"]
+  timeout_seconds: 600
 
 proxy_address: ""
+
+scope:
+  - "10.0.0.0/8"
+
+timing:
+  delay_ms: 0
+  jitter: 0.0
+  max_concurrent: 10
 
 viper:
   enabled: false
   host: "localhost"
   port: 7687
-
-evasion:
-  default_profile: "native"
-  auto_av_kill: true
+  username: ""
+  password: ""
+  tls: false
 ```
 
 ## Tool Binary Status

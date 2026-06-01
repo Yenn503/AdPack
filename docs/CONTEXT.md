@@ -6,7 +6,7 @@ Domain language, architecture, and design decisions for adpack.
 
 ### Core Concepts
 
-- **Phase**: A discrete stage in the AD attack lifecycle. 14 phases from initial access to cloud pillage.
+- **Phase**: A discrete stage in the AD attack lifecycle. 16 phases from discovery through cloud pillage.
 - **State (ADState)**: The accumulated knowledge about the target environment — hosts, users, creds, sessions, edges, phase progress.
 - **Gap**: A missing prerequisite detected by state analysis (e.g., "no hosts discovered", "no credentials validated").
 - **Edge (PrivilegeEdge)**: A directed privilege relationship between two AD principals (e.g., GenericAll, DCSync, HasSession).
@@ -21,21 +21,19 @@ Domain language, architecture, and design decisions for adpack.
 ### Phase Dependency DAG
 
 ```
-initial_access
-  └─ discovery
-       └─ enumeration
-            ├─ credential_acq (non-priv)
-            │    ├─ session_harvest
-            │    ├─ graph_analysis
-            │    │    └─ validation
+discovery
+  └─ enumeration
+       └─ credential_acq
+            ├─ validation
+            ├─ session_harvest
+            │    └─ lateral
+            ├─ graph_analysis
             │    └─ privesc
-            │         ├─ credential_acq (re-run / spray)
-            │         ├─ lateral
-            │         │    └─ persistence
-            └─ (enumeration feeds all downstream)
-
-Cloud (parallel fork from initial_access):
-initial_access → cloud_enum → cloud_cred_acq → cloud_privesc → cloud_pillage
+            │         ├─ persistence ── impact
+            │         └─ lateral ── impact
+            └─ hybrid_bridge ← cloud_enum ← cloud_initial_access
+                                   ├─ cloud_cred_acq ── cloud_pillage
+                                   └─ cloud_privesc  ──┘
 ```
 
 ### Credential Types
@@ -143,7 +141,7 @@ See `config.example.yaml` for the full reference. Key sections:
 - `cracking`: Hashcat configuration (path, wordlist, rules, timeout)
 - `proxy_address`: SOCKS5 proxy for transport routing
 - `viper`: Neo4j connection for BloodHound graph queries
-- `evasion`: Default evasion profile and auto AV kill toggle
+- `profile`: Default evasion profile (native, pplshade, phantomkiller)
 - `scope`: Optional CIDR whitelist for attack targets
 
 ## Testing

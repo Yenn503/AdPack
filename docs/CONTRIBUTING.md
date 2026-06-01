@@ -81,7 +81,7 @@ func init() {
 
 1. Create `internal/transport/<name>/<name>.go`
 2. Implement the `core.Transport` interface:
-   - `Execute(ctx, target, command) (string, error)`
+   - `Exec(ctx, target, command) (string, error)`
    - `Upload(ctx, target, localPath, remotePath) error`
    - `Download(ctx, target, remotePath, localPath) error`
 3. Wire into `cmd/root.go` `TransportFactory`
@@ -105,7 +105,7 @@ Test files follow Go convention: `<name>_test.go` alongside the source file.
 
 ## Before Submitting
 
-1. Run `go build -o bin/adpack.exe .` — must compile clean
+1. Run `go build -o adpack .` — must compile clean
 2. Run `go vet ./...` — no warnings
 3. Run `go test ./...` — all tests pass
 4. Update documentation if adding/changing commands

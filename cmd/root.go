@@ -65,7 +65,7 @@ var (
 )
 
 var (
-	version = "v0.5.0"
+	version = "v0.6.0"
 	rootCtx context.Context
 	cancel  context.CancelFunc
 )
