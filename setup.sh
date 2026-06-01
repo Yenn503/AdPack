@@ -409,6 +409,8 @@ main() {
     # Initial access and cloud post-exploitation tools
     install_teamsphisher || true; install_tokentactics || true; install_graphrunner || true; install_aadinternals || true
     build_adpack; create_config; update_path
+    export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$HOME/tools:$ORIG_CWD/exe
+    hash -r 2>/dev/null || true
     echo ""; verify_installations; test_adpack; print_summary
     log "adpack setup completed"
 }

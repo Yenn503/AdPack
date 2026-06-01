@@ -1,17 +1,18 @@
 package sliver
 
 import (
+	"adpack/core"
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-
-	"adpack/core"
 )
 
 type Transport struct {
@@ -51,7 +52,9 @@ func New(configPath, serverAddr string) *Transport {
 		configPath = filepath.Join(home, ".sliver-client", "configs", "default.cfg")
 	}
 	rcDir := filepath.Join(os.TempDir(), "adpack-sliver")
-	os.MkdirAll(rcDir, 0700)
+	if err := os.MkdirAll(rcDir, 0700); err != nil {
+		slog.Warn("sliver: create rc dir", "error", err)
+	}
 	return &Transport{
 		configPath: configPath,
 		serverAddr: serverAddr,
@@ -98,7 +101,7 @@ func (t *Transport) Upload(ctx context.Context, target core.HostRef, data []byte
 	}
 	defer os.Remove(tmpFile)
 
-	remotePath := filepath.Join(remoteDir, remoteName)
+	remotePath := path.Join(remoteDir, remoteName)
 	rc := fmt.Sprintf("use %s\nupload %s %s\nexit\n", sessionID, tmpFile, remotePath)
 	if _, err := t.runRC(ctx, rc, 60*time.Second); err != nil {
 		return "", fmt.Errorf("sliver upload: %w", err)

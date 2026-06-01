@@ -2,7 +2,7 @@
   <img src="AdPackBanner.jpg" alt="AdPack Banner" width="100%">
 </p>
 
-<h3 align="center">Active Directory attack orchestration with state tracking</h3>
+<h3 align="center">Watch it find the network, steal the keys, break the trust, and own everything — automatically</h3>
 
 <p align="center">
   <a href="LICENSE">
@@ -31,7 +31,17 @@
 
 ## Overview
 
-Adpack runs AD attacks across 16 phases — discovery through cloud pillage. It tracks hosts, users, creds, tokens, and sessions in SQLite, shows what's missing, and chains phases together automatically.
+AdPack runs Active Directory and cloud security assessments from a single pipeline. It takes a set of starting credentials and works through each phase, tracking what it finds and figuring out what to do next. Not a checklist — it keeps going until it gets everything it can.
+
+The pipeline has three independent tracks:
+
+- **On-prem AD (Phases 1–10):** Scans the network for domain controllers, queries LDAP to map users and groups, then goes after credentials — password sprays, Kerberoasting, LSASS dumps, NTDS.dit extractions. It tests every credential across SMB, LDAP, and WinRM to see what works, then hunts sessions, builds a BloodHound graph, and chases privilege escalation paths until it owns the domain. Once it has Domain Admin, it moves laterally across every machine, drops persistence, and pivots across forest trusts to compromise child and parent domains.
+
+- **Cloud / Entra ID (Phases 12–16):** Runs independently against an Entra ID tenant — no on-prem required. Teams phishing, OAuth consent phishing, and device code auth for initial access, then tenant enumeration, password spraying, privilege escalation, and data pillaging from mail, SharePoint, and Teams.
+
+- **Hybrid Bridge (Phase 11):** The only connection between the two tracks. If both on-prem and cloud access exist, it checks whether on-prem Domain Admins sync to Entra ID Global Admins, or whether cloud access can be used to pivot back to on-prem. It only activates when it has creds on both sides.
+
+Every step is tracked in an encrypted SQLite database. Run `status` to see what it has found, `next` to see what it can try next, and `autorun` to chain everything together.
 
 ### Quick Start
 
@@ -49,7 +59,7 @@ adpack autorun --target 10.0.0.5 \
 ### Example Output
 
 <p align="center">
-  <img src="adpack-demo.gif" alt="adpack autorun demo">
+  <img src="adpack-demo.gif" alt="adpack autorun demo against DREAD-GOAD light VMs (3 VMs, 2 forests)">
 </p>
 
 ### Manual Workflow
@@ -102,29 +112,33 @@ Extracted hashes queue into background hashcat workers. Cracked creds land in th
 
 16 ordered phases with dependency-grounded execution:
 
-```
-01. Discovery ──→ 02. Enumeration ──→ 03. Credential Acquisition ──→ 04. Validation
-                              │
-                    ┌─────────┼────────────┐
-                    │         │            │
-              05. Session   06. Graph     11. Hybrid Bridge
-                  Harvest    Analysis          ↑
-                    │         │                │
-                    │     07. Privesc          │
-                    │         │                │
-                08. Lateral  09. Persistence   │
-                    │         │                │
-                    └─────→ 10. Impact         │
-                                               │
-             12. Cloud Initial Access          │
-                     ↓                        │
-             13. Cloud Enumeration ────────────┘
-                     ↓
-         ┌────────────────────┐
-         ↓                    ↓
-  14. Cloud Cred Acq   15. Cloud Privesc
-         ↓                    ↓
-         └──→ 16. Cloud Pillage
+```mermaid
+flowchart TB
+    subgraph On-Prem["On-Prem AD"]
+        direction TB
+        D["01. Discovery"] --> E["02. Enumeration"]
+        E --> CA["03. Credential Acquisition"]
+        CA --> V["04. Validation"]
+        CA --> SH["05. Session Harvest"]
+        CA --> GA["06. Graph Analysis"]
+        GA --> PR["07. Privesc"]
+        SH --> L["08. Lateral"]
+        PR --> PE["09. Persistence"]
+        L --> I["10. Impact"]
+        PE --> I
+    end
+
+    subgraph Cloud["Cloud / Entra ID"]
+        direction TB
+        CIA["12. Cloud Initial Access"] --> CEN["13. Cloud Enumeration"]
+        CEN --> CCA["14. Cloud Cred Acq"]
+        CEN --> CPR["15. Cloud Privesc"]
+        CCA --> CPI["16. Cloud Pillage"]
+        CPR --> CPI
+    end
+
+    CA -.-> HB["11. Hybrid Bridge"]
+    CEN -.-> HB
 ```
 
 ---

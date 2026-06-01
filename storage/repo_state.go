@@ -564,8 +564,14 @@ func (db *DB) SaveState(s *core.ADState) error {
 		return fmt.Errorf("save state tokens prepare: %w", err)
 	}
 	for _, t := range s.Tokens {
-		encSecret, _ := db.Encrypt(t.Secret)
-		encRefresh, _ := db.Encrypt(t.RefreshToken)
+		encSecret, err := db.Encrypt(t.Secret)
+		if err != nil {
+			return fmt.Errorf("save state encrypt token secret: %w", err)
+		}
+		encRefresh, err := db.Encrypt(t.RefreshToken)
+		if err != nil {
+			return fmt.Errorf("save state encrypt token refresh: %w", err)
+		}
 		expires := ""
 		if !t.ExpiresAt.IsZero() {
 			expires = t.ExpiresAt.Format(time.RFC3339)
@@ -759,11 +765,20 @@ func (db *DB) LoadTokens() ([]core.Token, error) {
 	}
 	tokens := make([]core.Token, 0, len(rows))
 	for _, r := range rows {
-		sec, _ := db.Decrypt(r.Secret)
-		ref, _ := db.Decrypt(r.RefreshToken)
+		sec, err := db.Decrypt(r.Secret)
+		if err != nil {
+			return nil, fmt.Errorf("load tokens decrypt secret: %w", err)
+		}
+		ref, err := db.Decrypt(r.RefreshToken)
+		if err != nil {
+			return nil, fmt.Errorf("load tokens decrypt refresh: %w", err)
+		}
 		var expires time.Time
 		if r.ExpiresAt != "" {
-			expires, _ = time.Parse(time.RFC3339, r.ExpiresAt)
+			expires, err = time.Parse(time.RFC3339, r.ExpiresAt)
+			if err != nil {
+				return nil, fmt.Errorf("load tokens parse expires: %w", err)
+			}
 		}
 		tokens = append(tokens, core.Token{
 			Type:         r.Type,

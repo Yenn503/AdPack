@@ -322,10 +322,16 @@ var runCmd = &cobra.Command{
 		case core.PhaseImpact:
 			result := modules.RunImpact(state, evasionProfile)
 			success = result.Success
+			for _, ev := range result.Evidence {
+				DB.SaveEvidence(ev)
+			}
 
 		case core.PhaseHybridBridge:
 			result := modules.RunHybridBridge(state)
 			success = result.Success
+			for _, ev := range result.Evidence {
+				DB.SaveEvidence(ev)
+			}
 
 		case core.PhaseCloudInitialAccess:
 			utils.PhaseSkipped(string(phase), "cloud initial access is interactive", "adpack initial <teams|device-code|consent-phish>")

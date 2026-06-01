@@ -14,8 +14,12 @@ var AADInternals = aadInternalsTool{}
 func (aadInternalsTool) Name() string { return "AADInternals" }
 
 func (aadInternalsTool) Available() bool {
-	_, err := exec.LookPath("az")
-	return err == nil
+	for _, bin := range []string{"az", "python3", "bash"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func gruntCall(ctx context.Context, resource string) (utils.CmdResult, error) {
@@ -29,12 +33,16 @@ func gruntCall(ctx context.Context, resource string) (utils.CmdResult, error) {
 	return cr, nil
 }
 
-func (a aadInternalsTool) RunTenantEnum(ctx context.Context, username, password string) (utils.CmdResult, error) {
+func (a aadInternalsTool) RunTenantEnum(ctx context.Context) (utils.CmdResult, error) {
 	return gruntCall(ctx, "users")
 }
 
-func (a aadInternalsTool) RunSPEnum(ctx context.Context, username, password string) (utils.CmdResult, error) {
+func (a aadInternalsTool) RunSPEnum(ctx context.Context) (utils.CmdResult, error) {
 	return gruntCall(ctx, "servicePrincipals")
+}
+
+func (a aadInternalsTool) RunCAPEnum(ctx context.Context) (utils.CmdResult, error) {
+	return gruntCall(ctx, "identity/conditionalAccess/policies")
 }
 
 func (a aadInternalsTool) RunAADConnectExtract(ctx context.Context) (utils.CmdResult, error) {
@@ -53,8 +61,4 @@ func (a aadInternalsTool) RunADFSCertExtract(ctx context.Context) (utils.CmdResu
 		return cr, fmt.Errorf("aadinternals command failed: %s", cr.Stderr)
 	}
 	return cr, nil
-}
-
-func (a aadInternalsTool) RunCAPEnum(ctx context.Context, username, password string) (utils.CmdResult, error) {
-	return gruntCall(ctx, "identity/conditionalAccess/policies")
 }

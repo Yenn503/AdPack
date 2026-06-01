@@ -110,7 +110,10 @@ func extractAADConnectCreds(state *core.ADState, daCreds []credWithHost, result 
 		lootDir = filepath.Join(os.TempDir(), "adpack-hybrid")
 	}
 	lootDir = filepath.Join(lootDir, fmt.Sprintf("hybrid_%d", time.Now().Unix()))
-	os.MkdirAll(lootDir, 0700)
+	if err := os.MkdirAll(lootDir, 0700); err != nil {
+		slog.Error("hybrid bridge: create loot dir", "error", err)
+		return false
+	}
 
 	slog.Info("hybrid bridge: extracting AAD Connect credentials via nxc registry",
 		"dc", cred.Host)

@@ -269,10 +269,6 @@ func countDAUsers(p *ParsedData, domain string, state *core.ADState) {
 			if !strings.Contains(strings.ToUpper(gName), daPattern) {
 				continue
 			}
-			if seen[principal] {
-				continue
-			}
-			seen[principal] = true
 			for _, m := range g.Members {
 				if m.ObjectType != "User" {
 					continue

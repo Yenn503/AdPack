@@ -105,6 +105,7 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 		}
 		// Seed ALL config entries (including hash-based parent-domain creds)
 		if Cfg != nil {
+			dbCreds2, _ := DB.LoadCreds()
 			for _, s := range Cfg.Seeds {
 				if s.Domain == "" || s.User == "" {
 					continue
@@ -112,7 +113,6 @@ past failed phases. Use --skip-fail=false to stop on failures.`,
 				if s.User == seedUser && s.Domain == seedDomain {
 					continue
 				}
-				dbCreds2, _ := DB.LoadCreds()
 				already2 := false
 				for _, c := range dbCreds2 {
 					if c.Domain == s.Domain && c.Username == s.User {

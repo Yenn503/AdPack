@@ -72,3 +72,17 @@ tools/*.sys
 *.tmp
 *.temp
 docs/superpowers/
+
+# Runtime artifacts
+*.ccache
+creds.json
+*_hashes.txt
+ntds_*.txt
+sessionresume_*
+
+# IDE project files
+.codegraph/
+
+# Planning docs
+docs/specs/
+docs/plans/
